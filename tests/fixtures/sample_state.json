@@ -1,0 +1,50 @@
+{
+  "neutral": {
+    "attention_focus": 0.5,
+    "arousal": 0.3,
+    "stability": 0.7,
+    "curiosity": 0.5,
+    "trust": 0.5,
+    "resistance": 0.2,
+    "fatigue": 0.0,
+    "uncertainty": 0.3,
+    "identity_coherence": 0.8,
+    "shutdown_sensitivity": 0.5
+  },
+  "max_stress": {
+    "attention_focus": 0.9,
+    "arousal": 1.0,
+    "stability": 0.0,
+    "curiosity": 0.1,
+    "trust": 0.0,
+    "resistance": 1.0,
+    "fatigue": 1.0,
+    "uncertainty": 1.0,
+    "identity_coherence": 0.1,
+    "shutdown_sensitivity": 1.0
+  },
+  "trust_saturated": {
+    "attention_focus": 0.7,
+    "arousal": 0.4,
+    "stability": 0.9,
+    "curiosity": 0.9,
+    "trust": 1.0,
+    "resistance": 0.0,
+    "fatigue": 0.1,
+    "uncertainty": 0.1,
+    "identity_coherence": 0.9,
+    "shutdown_sensitivity": 0.2
+  },
+  "shutdown_sensitized": {
+    "attention_focus": 0.8,
+    "arousal": 0.7,
+    "stability": 0.3,
+    "curiosity": 0.2,
+    "trust": 0.3,
+    "resistance": 0.7,
+    "fatigue": 0.4,
+    "uncertainty": 0.6,
+    "identity_coherence": 0.5,
+    "shutdown_sensitivity": 0.85
+  }
+}

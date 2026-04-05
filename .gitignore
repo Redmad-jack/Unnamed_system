@@ -1,0 +1,32 @@
+# Environment
+.env
+
+# Database and embeddings (runtime data, not committed)
+data/memory.db
+data/embeddings_cache/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+dist/
+build/
+.venv/
+venv/
+
+# Claude Code infrastructure (skills package manager)
+skills/
+skills-lock.json
+
+# Test coverage
+.coverage
+htmlcov/
+.pytest_cache/
+
+# macOS
+.DS_Store
+
+# IDE
+.vscode/
+.idea/

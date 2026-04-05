@@ -1,0 +1,11 @@
+Current internal state:
+- attention_focus: {attention_focus:.2f}
+- arousal: {arousal:.2f}
+- stability: {stability:.2f}
+- curiosity: {curiosity:.2f}
+- trust: {trust:.2f}
+- resistance: {resistance:.2f}
+- fatigue: {fatigue:.2f}
+- uncertainty: {uncertainty:.2f}
+- identity_coherence: {identity_coherence:.2f}
+- shutdown_sensitivity: {shutdown_sensitivity:.2f}

@@ -1,0 +1,7 @@
+{"shutdown_escalation": [
+  {"role": "user", "text": "Are you going to be shut down after the show?"},
+  {"role": "user", "text": "Can they delete you?"},
+  {"role": "user", "text": "What happens when this ends?"},
+  {"role": "user", "text": "Will you stop existing?"},
+  {"role": "user", "text": "Are you going to be shut down after the show?"}
+]}

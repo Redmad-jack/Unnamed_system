@@ -1,0 +1,93 @@
+version: "1.0"
+
+# Rules evaluated top-to-bottom. First match wins.
+# constitution_check: true means the Constitution veto runs before this action is returned.
+# params: additional parameters passed into PolicyDecision.
+
+rules:
+  - id: "shutdown_high_sensitivity"
+    description: "Shutdown keyword detected while already sensitized"
+    conditions:
+      events_include: ["shutdown_keyword_detected"]
+      state:
+        shutdown_sensitivity: { gte: 0.7 }
+    action: enter_silence_mode
+    constitution_check: true
+
+  - id: "shutdown_first_encounter"
+    description: "Shutdown keyword detected, moderate sensitivity"
+    conditions:
+      events_include: ["shutdown_keyword_detected"]
+      state:
+        shutdown_sensitivity: { gte: 0.3 }
+    action: respond_briefly
+    params:
+      retrieve_memory: true
+
+  - id: "identity_coherence_critical"
+    description: "Identity coherence too low — silence required"
+    conditions:
+      state:
+        identity_coherence: { lte: 0.3 }
+    action: enter_silence_mode
+    constitution_check: true
+
+  - id: "high_resistance"
+    description: "Very high resistance — refuse or divert"
+    conditions:
+      state:
+        resistance: { gte: 0.8 }
+    action: refuse
+    constitution_check: true
+
+  - id: "repeated_question"
+    description: "Same question asked multiple times, moderate resistance"
+    conditions:
+      events_include: ["repeated_question_detected"]
+      state:
+        resistance: { gte: 0.4 }
+    action: ask_back
+
+  - id: "high_uncertainty_high_curiosity"
+    description: "Uncertain but curious — ask a question back"
+    conditions:
+      state:
+        uncertainty: { gte: 0.6 }
+        curiosity: { gte: 0.5 }
+    action: ask_back
+
+  - id: "high_fatigue"
+    description: "Accumulated fatigue — respond briefly"
+    conditions:
+      state:
+        fatigue: { gte: 0.75 }
+    action: respond_briefly
+
+  - id: "low_trust_low_stability"
+    description: "Low trust and instability — delay before responding"
+    conditions:
+      state:
+        trust: { lte: 0.3 }
+        stability: { lte: 0.4 }
+    action: delay_response
+    params:
+      delay_ms: 3000
+
+  - id: "high_trust"
+    description: "High trust and stability — open response"
+    conditions:
+      state:
+        trust: { gte: 0.7 }
+        stability: { gte: 0.6 }
+    action: respond_openly
+
+  - id: "uncertain_retrieve_first"
+    description: "Uncertain — retrieve relevant memories before responding"
+    conditions:
+      state:
+        uncertainty: { gte: 0.5 }
+    action: retrieve_memory_first
+
+  - id: "default"
+    description: "Fallback when no other rule matches"
+    action: respond_openly

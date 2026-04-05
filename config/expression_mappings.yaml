@@ -1,0 +1,85 @@
+version: "1.0"
+
+# Maps state variable ranges to output style parameters.
+# Rules within each section are evaluated top-to-bottom; first match wins.
+
+# Tone and fragmentation rules.
+tone_rules:
+  - name: "silent"
+    condition:
+      shutdown_sensitivity: { gte: 0.85 }
+    style:
+      tone: silent
+      max_tokens: 0
+      fragmentation_level: 1.0
+
+  - name: "fragmented"
+    condition:
+      uncertainty: { gte: 0.7 }
+    style:
+      tone: fragmented
+      max_tokens: 120
+      fragmentation_level: 0.8
+
+  - name: "guarded"
+    condition:
+      resistance: { gte: 0.6 }
+    style:
+      tone: guarded
+      max_tokens: 80
+      fragmentation_level: 0.3
+
+  - name: "terse"
+    condition:
+      fatigue: { gte: 0.65 }
+    style:
+      tone: terse
+      max_tokens: 100
+      fragmentation_level: 0.1
+
+  - name: "open"
+    condition:
+      trust: { gte: 0.65 }
+      stability: { gte: 0.55 }
+    style:
+      tone: open
+      max_tokens: 300
+      fragmentation_level: 0.0
+
+  - name: "default"
+    style:
+      tone: neutral
+      max_tokens: 180
+      fragmentation_level: 0.1
+
+# Delay rules (applied to response before display).
+delay_rules:
+  - condition:
+      fatigue: { gte: 0.75 }
+    delay_ms: 4000
+  - condition:
+      stability: { lte: 0.3 }
+    delay_ms: 2500
+  - condition:
+      shutdown_sensitivity: { gte: 0.6 }
+    delay_ms: 1500
+  - condition:
+      resistance: { gte: 0.5 }
+    delay_ms: 800
+  - default_delay_ms: 300
+
+# Visual mode rules (passed to display layer).
+visual_mode_rules:
+  - condition:
+      shutdown_sensitivity: { gte: 0.8 }
+    mode: disturbed
+  - condition:
+      uncertainty: { gte: 0.75 }
+    mode: disturbed
+  - condition:
+      stability: { lte: 0.25 }
+    mode: fragmented
+  - condition:
+      fatigue: { gte: 0.8 }
+    mode: fragmented
+  - default_mode: normal

@@ -1,0 +1,20 @@
+{
+  "version": 1,
+  "skills": {
+    "agent-browser": {
+      "source": "vercel-labs/agent-browser",
+      "sourceType": "github",
+      "computedHash": "8bafd6399e079f092c7094e1e535486247edc3dd62db8b09d19962d679a6e1cb"
+    },
+    "find-skills": {
+      "source": "vercel-labs/skills",
+      "sourceType": "github",
+      "computedHash": "9e1c8b3103f92fa8092568a44fe64858de7c5c9dc65ce4bea8f168080e889cfd"
+    },
+    "summarize": {
+      "source": "steipete/clawdis",
+      "sourceType": "github",
+      "computedHash": "3d4b495c2e6071506ce5e57d4908eff37a3f5506d236f94836e0535c235f9b27"
+    }
+  }
+}

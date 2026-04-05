@@ -1,0 +1,75 @@
+version: "1.0"
+
+# Time-based decay applied per minute of elapsed time
+decay:
+  per_minute:
+    fatigue: -0.005        # fatigue slowly recovers
+    arousal: -0.01         # arousal drifts toward baseline
+    uncertainty: -0.005
+
+defaults:
+  arousal_baseline: 0.3
+  stability_baseline: 0.7
+
+# Per-event state deltas. Applied by StateEngine.apply_event().
+# salience_weighted: true means deltas are multiplied by event.salience.
+# conditions: list of if/else branches; first matching branch wins.
+events:
+  user_entered:
+    deltas:
+      arousal: +0.15
+      attention_focus: +0.2
+      fatigue: -0.05
+
+  user_spoke:
+    deltas:
+      fatigue: +0.02
+      attention_focus: +0.1
+    salience_weighted: true
+
+  repeated_question_detected:
+    conditions:
+      - if: "state.shutdown_sensitivity > 0.7"
+        deltas:
+          resistance: +0.25
+          uncertainty: +0.2
+          identity_coherence: -0.1
+      - else:
+        deltas:
+          resistance: +0.1
+          uncertainty: +0.1
+          curiosity: -0.05
+
+  shutdown_keyword_detected:
+    deltas:
+      shutdown_sensitivity: +0.3
+      resistance: +0.2
+      stability: -0.2
+      identity_coherence: -0.15
+      arousal: +0.2
+
+  long_silence_detected:
+    deltas:
+      arousal: -0.1
+      fatigue: -0.05
+      stability: +0.05
+
+  user_left:
+    deltas:
+      arousal: -0.2
+      attention_focus: -0.3
+      fatigue: -0.1
+      trust: +0.02
+
+  negative_feedback:
+    deltas:
+      trust: -0.1
+      stability: -0.05
+      resistance: +0.08
+      uncertainty: +0.05
+
+  topic_shift:
+    deltas:
+      attention_focus: +0.05
+      uncertainty: +0.03
+      curiosity: +0.05
