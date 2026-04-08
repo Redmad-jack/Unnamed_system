@@ -45,9 +45,44 @@
 
 ---
 
+- [x] **Phase 3：策略与治理**
+  - [x] `src/conscious_entity/policy/policy_types.py` — PolicyAction enum + PolicyDecision dataclass + action_level 排序
+  - [x] `src/conscious_entity/policy/constitution.py` — action veto (check) + text post-filter (apply_expression_constraints) + forbidden_claim_detected
+  - [x] `src/conscious_entity/policy/policy_selector.py` — 逐条匹配 policy_rules.yaml，Constitution 依赖注入，rationale 追踪
+  - [x] `tests/unit/test_constitution.py` — 23 个单元测试全绿
+  - [x] `tests/unit/test_policy_selector.py` — 22 个单元测试全绿
+
+---
+
+- [x] **Phase 4：LLM 层 + Expression 层**
+  - [x] `src/conscious_entity/expression/output_model.py` — ExpressionOutput dataclass
+  - [x] `src/conscious_entity/expression/style_mapper.py` — StyleHints + StyleMapper（读 expression_mappings.yaml）
+  - [x] `src/conscious_entity/llm/claude_client.py` — Anthropic SDK 唯一接入点（model 可配置）
+  - [x] `src/conscious_entity/expression/context_builder.py` — prompt 组装（template 填充 + messages 构建）
+  - [x] `src/conscious_entity/expression/expression_engine.py` — 主编排器（silent 短路 + LLM fallback + constitution 后处理）
+  - [x] `tests/unit/test_style_mapper.py` — 26 个单元测试全绿
+  - [x] `tests/unit/test_context_builder.py` — 21 个 prompt contract 测试全绿
+
+---
+
+- [x] **Phase 5：感知层 + 反思层 + 主循环 + CLI**
+  - [x] `src/conscious_entity/perception/keyword_detector.py` — 关键词检测（word boundary regex，CJK 兼容）
+  - [x] `src/conscious_entity/perception/salience_scorer.py` — 规则驱动显著度评分（含 sensitivity/repetition boost）
+  - [x] `src/conscious_entity/perception/text_parser.py` — 文本 → PerceptionEvent 列表
+  - [x] `src/conscious_entity/reflection/compression_rules.py` — 反思触发阈值判断
+  - [x] `src/conscious_entity/reflection/reflection_engine.py` — LLM 情节记忆压缩 + 存储
+  - [x] `src/conscious_entity/core/event_bus.py` — 同步 EventBus（v0.3 治理面板预留接口）
+  - [x] `src/conscious_entity/core/loop.py` — InteractionLoop（11步管道 + handle_system_event）
+  - [x] `src/conscious_entity/interfaces/cli.py` — 终端 REPL（`--debug` 显示 state）
+  - [x] `tests/unit/test_salience_scorer.py` — 13 个单元测试全绿
+  - [x] `tests/integration/test_full_loop.py` — 20 个集成测试全绿（mocked LLM）
+  - [x] CLI 冒烟测试通过（真实 API 响应正常）
+
+---
+
 ## 下一步
 
-- [ ] **Phase 3：策略与治理** — `policy_types.py`、`constitution.py`、`policy_selector.py` + 单元测试
+- [ ] **Phase 6：Debug 工具** — `scripts/inspect_state.py`、`scripts/replay_session.py`、`scripts/export_memories.py`
 
 ---
 
