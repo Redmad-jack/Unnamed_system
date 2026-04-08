@@ -19,6 +19,15 @@
   - [x] `CLAUDE.md`
   - [x] `docs/progress.md`
   - [x] `docs/lessons.md`
+- [x] **Phase 0：环境搭建** — `pyproject.toml`、目录结构、5 个 YAML 配置文件、`prompts/`、`config_loader.py`、`db/migrations.py`、`tests/conftest.py`
+- [x] **Phase 1：状态机核心**
+  - [x] `src/conscious_entity/perception/event_types.py` — EventType + PerceptionEvent
+  - [x] `src/conscious_entity/db/connection.py` — SQLite 连接管理（WAL + foreign keys）
+  - [x] `scripts/init_db.py` — 数据库初始化脚本
+  - [x] `src/conscious_entity/state/state_core.py` — EntityState dataclass
+  - [x] `src/conscious_entity/state/state_engine.py` — 事件驱动状态更新 + 时间衰减
+  - [x] `src/conscious_entity/state/state_store.py` — SQLite 快照持久化
+  - [x] `tests/unit/test_state_engine.py` — 31 个单元测试全绿
 
 ---
 
@@ -26,12 +35,19 @@
 
 - 无
 
+- [x] **Phase 2：记忆系统**
+  - [x] `src/conscious_entity/memory/models.py` — ShortTermEntry, EpisodicMemory, ReflectiveSummary
+  - [x] `src/conscious_entity/memory/short_term.py` — ShortTermMemory（deque + count_repetitions）
+  - [x] `src/conscious_entity/memory/episodic_store.py` — store / get_recent / get_unreflected / mark_reflected
+  - [x] `src/conscious_entity/memory/reflective_store.py` — store / get_all / mark_superseded
+  - [x] `tests/unit/test_short_term_memory.py` — 11 个单元测试全绿
+  - [x] `tests/integration/test_episodic_store.py` — 11 个集成测试全绿（含 ReflectiveStore）
+
 ---
 
 ## 下一步
 
-- [ ] **Phase 0：环境搭建** — `pyproject.toml`、目录结构、YAML 配置文件、`config_loader.py`
-- [ ] **Phase 1：状态机核心** — `EntityState`、`StateEngine`、`StateStore`、数据库迁移
+- [ ] **Phase 3：策略与治理** — `policy_types.py`、`constitution.py`、`policy_selector.py` + 单元测试
 
 ---
 
