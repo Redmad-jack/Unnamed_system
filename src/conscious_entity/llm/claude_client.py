@@ -3,7 +3,9 @@ from __future__ import annotations
 import json
 import logging
 import os
+import time
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Optional
 
 import httpx
@@ -26,6 +28,14 @@ class ClaudeClientConfig:
     base_url: str | None
     messages_endpoint: str | None
     disable_system_proxy: bool
+
+
+@dataclass(frozen=True)
+class ClaudeCompletion:
+    text: str
+    stop_reason: str | None = None
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
 
 
 class ClaudeClient:
@@ -201,32 +211,77 @@ class ClaudeClient:
         Returns:
             Generated text string, or "" on failure (caller handles fallback).
         """
+        return self.complete_with_metadata(system, messages, max_tokens).text
+
+    def complete_with_metadata(
+        self,
+        system: str,
+        messages: list[dict],
+        max_tokens: int = 300,
+    ) -> ClaudeCompletion:
+        from conscious_entity.llm.stats_tracker import LLMCallRecord, get_tracker
+
+        start = time.monotonic()
+        completion = ClaudeCompletion(text="")
+        error_msg: str | None = None
+
         try:
             if self._messages_endpoint:
-                return self._complete_via_custom_endpoint(system, messages, max_tokens)
-
-            response = self._client.messages.create(
-                model=self._model,
-                max_tokens=max_tokens,
-                system=system,
-                messages=messages,
-            )
-            return response.content[0].text
+                completion = self._complete_via_custom_endpoint(system, messages, max_tokens)
+            else:
+                response = self._client.messages.create(
+                    model=self._model,
+                    max_tokens=max_tokens,
+                    system=system,
+                    messages=messages,
+                )
+                completion = ClaudeCompletion(
+                    text=self._collect_response_text(response.content),
+                    stop_reason=getattr(response, "stop_reason", None),
+                    prompt_tokens=(
+                        getattr(response.usage, "input_tokens", 0) or 0
+                        if hasattr(response, "usage") and response.usage
+                        else 0
+                    ),
+                    completion_tokens=(
+                        getattr(response.usage, "output_tokens", 0) or 0
+                        if hasattr(response, "usage") and response.usage
+                        else 0
+                    ),
+                )
         except Exception as exc:
+            error_msg = str(exc)
             logger.error(
                 "LLM call failed (model=%s, max_tokens=%d): %s",
                 self._model,
                 max_tokens,
                 exc,
             )
-            return ""
+        finally:
+            duration_ms = int((time.monotonic() - start) * 1000)
+            try:
+                get_tracker().record(
+                    LLMCallRecord(
+                        timestamp=datetime.now(),
+                        model=self._model,
+                        duration_ms=duration_ms,
+                        success=bool(completion.text),
+                        error=error_msg,
+                        prompt_tokens=completion.prompt_tokens,
+                        completion_tokens=completion.completion_tokens,
+                    )
+                )
+            except Exception:
+                pass  # stats recording is optional; never break the call path
+
+        return completion
 
     def _complete_via_custom_endpoint(
         self,
         system: str,
         messages: list[dict],
         max_tokens: int,
-    ) -> str:
+    ) -> ClaudeCompletion:
         if self._http_client is None or self._messages_endpoint is None:
             raise RuntimeError("Custom endpoint client is not initialized.")
 
@@ -241,7 +296,7 @@ class ClaudeClient:
             },
         )
         response.raise_for_status()
-        return self._extract_text_from_response(response)
+        return self._extract_completion_from_response(response)
 
     def _custom_endpoint_headers(self) -> dict[str, str]:
         headers = {
@@ -254,22 +309,28 @@ class ClaudeClient:
             headers["X-Api-Key"] = self._api_key
         return headers
 
-    def _extract_text_from_response(self, response: httpx.Response) -> str:
+    def _extract_completion_from_response(self, response: httpx.Response) -> ClaudeCompletion:
         payload: object
         try:
             payload = response.json()
         except (json.JSONDecodeError, ValueError):
-            return response.text.strip()
+            return ClaudeCompletion(text=response.text.strip())
 
-        text = self._extract_text_from_payload(payload)
-        if text is not None:
-            return text
+        completion = self._extract_completion_from_payload(payload)
+        if completion is not None:
+            return completion
 
-        return response.text.strip()
+        return ClaudeCompletion(text=response.text.strip())
 
     @classmethod
-    def _extract_text_from_payload(cls, payload: object) -> str | None:
+    def _extract_completion_from_payload(cls, payload: object) -> ClaudeCompletion | None:
         if isinstance(payload, dict):
+            stop_reason = cls._first_string(
+                payload.get("stop_reason"),
+                payload.get("finish_reason"),
+            )
+            prompt_tokens, completion_tokens = cls._extract_usage(payload.get("usage"))
+
             content = payload.get("content")
             if isinstance(content, list):
                 texts = []
@@ -279,30 +340,59 @@ class ClaudeClient:
                         if isinstance(text, str):
                             texts.append(text)
                 if texts:
-                    return "".join(texts)
+                    return ClaudeCompletion(
+                        text="".join(texts),
+                        stop_reason=stop_reason,
+                        prompt_tokens=prompt_tokens,
+                        completion_tokens=completion_tokens,
+                    )
             if isinstance(content, str):
-                return content
+                return ClaudeCompletion(
+                    text=content,
+                    stop_reason=stop_reason,
+                    prompt_tokens=prompt_tokens,
+                    completion_tokens=completion_tokens,
+                )
 
             output_text = payload.get("output_text")
             if isinstance(output_text, str):
-                return output_text
+                return ClaudeCompletion(
+                    text=output_text,
+                    stop_reason=stop_reason,
+                    prompt_tokens=prompt_tokens,
+                    completion_tokens=completion_tokens,
+                )
 
             choices = payload.get("choices")
             if isinstance(choices, list) and choices:
                 first_choice = choices[0]
                 if isinstance(first_choice, dict):
+                    choice_stop_reason = cls._first_string(
+                        first_choice.get("finish_reason"),
+                        stop_reason,
+                    )
                     message = first_choice.get("message")
                     if isinstance(message, dict):
                         message_content = message.get("content")
                         text = cls._extract_choice_content_text(message_content)
                         if text is not None:
-                            return text
+                            return ClaudeCompletion(
+                                text=text,
+                                stop_reason=choice_stop_reason,
+                                prompt_tokens=prompt_tokens,
+                                completion_tokens=completion_tokens,
+                            )
                     text = first_choice.get("text")
                     if isinstance(text, str):
-                        return text
+                        return ClaudeCompletion(
+                            text=text,
+                            stop_reason=choice_stop_reason,
+                            prompt_tokens=prompt_tokens,
+                            completion_tokens=completion_tokens,
+                        )
 
         if isinstance(payload, str):
-            return payload
+            return ClaudeCompletion(text=payload)
 
         return None
 
@@ -319,4 +409,35 @@ class ClaudeClient:
                         texts.append(text)
             if texts:
                 return "".join(texts)
+        return None
+
+    @staticmethod
+    def _collect_response_text(content: object) -> str:
+        if isinstance(content, list):
+            texts = []
+            for block in content:
+                text = getattr(block, "text", None)
+                if isinstance(text, str):
+                    texts.append(text)
+            if texts:
+                return "".join(texts)
+        return ""
+
+    @staticmethod
+    def _extract_usage(usage: object) -> tuple[int, int]:
+        if isinstance(usage, dict):
+            prompt_tokens = usage.get("input_tokens")
+            if prompt_tokens is None:
+                prompt_tokens = usage.get("prompt_tokens")
+            completion_tokens = usage.get("output_tokens")
+            if completion_tokens is None:
+                completion_tokens = usage.get("completion_tokens")
+            return int(prompt_tokens or 0), int(completion_tokens or 0)
+        return 0, 0
+
+    @staticmethod
+    def _first_string(*values: object) -> str | None:
+        for value in values:
+            if isinstance(value, str) and value:
+                return value
         return None

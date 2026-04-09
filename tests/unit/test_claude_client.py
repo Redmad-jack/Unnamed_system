@@ -17,13 +17,12 @@ from conscious_entity.llm.claude_client import (
 
 class _FakeAnthropic:
     last_init_kwargs: dict | None = None
+    response = None
 
     def __init__(self, **kwargs):
         type(self).last_init_kwargs = kwargs
         self.messages = types.SimpleNamespace(
-            create=lambda **_: types.SimpleNamespace(
-                content=[types.SimpleNamespace(text="mock response")]
-            )
+            create=lambda **_: type(self).response
         )
 
 
@@ -45,6 +44,11 @@ def fake_anthropic(monkeypatch):
     module = types.ModuleType("anthropic")
     module.Anthropic = _FakeAnthropic
     _FakeAnthropic.last_init_kwargs = None
+    _FakeAnthropic.response = types.SimpleNamespace(
+        content=[types.SimpleNamespace(text="mock response")],
+        stop_reason="end_turn",
+        usage=types.SimpleNamespace(input_tokens=11, output_tokens=7),
+    )
     monkeypatch.setitem(sys.modules, "anthropic", module)
     return _FakeAnthropic
 
@@ -290,3 +294,57 @@ class TestClaudeClientCustomEndpoint:
         ClaudeClient()
 
         assert fake_http_client.init_kwargs[0]["trust_env"] is False
+
+    def test_complete_with_metadata_exposes_sdk_stop_reason_and_usage(
+        self,
+        monkeypatch,
+        fake_anthropic,
+        fake_http_client,
+    ):
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "official-key")
+        fake_anthropic.response = types.SimpleNamespace(
+            content=[
+                types.SimpleNamespace(text="part one"),
+                types.SimpleNamespace(text=" + part two"),
+            ],
+            stop_reason="max_tokens",
+            usage=types.SimpleNamespace(input_tokens=21, output_tokens=34),
+        )
+
+        client = ClaudeClient()
+        completion = client.complete_with_metadata(
+            system="You are concise.",
+            messages=[{"role": "user", "content": "hi"}],
+            max_tokens=42,
+        )
+
+        assert completion.text == "part one + part two"
+        assert completion.stop_reason == "max_tokens"
+        assert completion.prompt_tokens == 21
+        assert completion.completion_tokens == 34
+
+    def test_complete_with_metadata_exposes_custom_endpoint_stop_reason(
+        self,
+        monkeypatch,
+        fake_http_client,
+    ):
+        fake_http_client.response = _FakeHTTPResponse(
+            payload={
+                "content": [{"type": "text", "text": "partial response"}],
+                "stop_reason": "max_tokens",
+                "usage": {"input_tokens": 13, "output_tokens": 29},
+            }
+        )
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "official-key")
+        monkeypatch.setenv("ENTITY_LLM_MESSAGES_ENDPOINT", "https://provider.example/custom/messages")
+
+        client = ClaudeClient()
+        completion = client.complete_with_metadata(
+            system="You are concise.",
+            messages=[{"role": "user", "content": "hi"}],
+        )
+
+        assert completion.text == "partial response"
+        assert completion.stop_reason == "max_tokens"
+        assert completion.prompt_tokens == 13
+        assert completion.completion_tokens == 29

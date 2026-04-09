@@ -144,7 +144,10 @@ def main() -> None:
             output = loop.run_turn(raw)
 
             if output.text:
-                print(f"\n{designation}: {output.text}\n")
+                print(f"\n{designation}: {output.text}")
+                if output.truncated:
+                    print("[response truncated at model token limit]")
+                print()
             else:
                 print(f"\n{designation}: ...\n")  # silent mode placeholder
 

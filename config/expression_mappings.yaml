@@ -18,7 +18,7 @@ tone_rules:
       uncertainty: { gte: 0.7 }
     style:
       tone: fragmented
-      max_tokens: 120
+      max_tokens: 480
       fragmentation_level: 0.8
 
   - name: "guarded"
@@ -26,7 +26,7 @@ tone_rules:
       resistance: { gte: 0.6 }
     style:
       tone: guarded
-      max_tokens: 80
+      max_tokens: 140
       fragmentation_level: 0.3
 
   - name: "terse"
@@ -34,7 +34,7 @@ tone_rules:
       fatigue: { gte: 0.65 }
     style:
       tone: terse
-      max_tokens: 100
+      max_tokens: 140
       fragmentation_level: 0.1
 
   - name: "open"
@@ -43,13 +43,13 @@ tone_rules:
       stability: { gte: 0.55 }
     style:
       tone: open
-      max_tokens: 300
+      max_tokens: 420
       fragmentation_level: 0.0
 
   - name: "default"
     style:
       tone: neutral
-      max_tokens: 180
+      max_tokens: 320
       fragmentation_level: 0.1
 
 # Delay rules (applied to response before display).

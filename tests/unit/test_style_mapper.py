@@ -36,7 +36,7 @@ class TestToneRules:
     def test_default_state_produces_neutral_tone(self, mapper):
         hints = mapper.map(EntityState(), _decision())
         assert hints.tone == "neutral"
-        assert hints.max_tokens == 180
+        assert hints.max_tokens == 320
         assert hints.fragmentation_level == pytest.approx(0.1)
 
     def test_high_shutdown_sensitivity_produces_silent_tone(self, mapper):
@@ -56,27 +56,27 @@ class TestToneRules:
         state = EntityState(uncertainty=0.75)
         hints = mapper.map(state, _decision())
         assert hints.tone == "fragmented"
-        assert hints.max_tokens == 120
+        assert hints.max_tokens == 180
         assert hints.fragmentation_level == pytest.approx(0.8)
 
     def test_high_resistance_produces_guarded_tone(self, mapper):
         state = EntityState(resistance=0.65)
         hints = mapper.map(state, _decision())
         assert hints.tone == "guarded"
-        assert hints.max_tokens == 80
+        assert hints.max_tokens == 140
         assert hints.fragmentation_level == pytest.approx(0.3)
 
     def test_high_fatigue_produces_terse_tone(self, mapper):
         state = EntityState(fatigue=0.7)
         hints = mapper.map(state, _decision())
         assert hints.tone == "terse"
-        assert hints.max_tokens == 100
+        assert hints.max_tokens == 140
 
     def test_high_trust_high_stability_produces_open_tone(self, mapper):
         state = EntityState(trust=0.7, stability=0.6)
         hints = mapper.map(state, _decision())
         assert hints.tone == "open"
-        assert hints.max_tokens == 300
+        assert hints.max_tokens == 420
         assert hints.fragmentation_level == pytest.approx(0.0)
 
     def test_tone_priority_silent_beats_fragmented(self, mapper):

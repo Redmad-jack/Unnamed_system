@@ -10,15 +10,15 @@ requires-python = ">=3.11"
 dependencies = [
     "anthropic>=0.40.0",
     "PyYAML>=6.0",
+    "rich>=13.0",
 ]
 
 [project.optional-dependencies]
-# v0.2 dependencies — do not install during v0.1 development
-# v0.2 = [
-#     "fastapi>=0.115.0",
-#     "uvicorn>=0.32.0",
-#     "sentence-transformers>=3.0.0",
-# ]
+api = [
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.32.0",
+]
+# sentence-transformers deferred to v0.2 semantic retrieval phase
 dev = [
     "pytest>=8.0",
     "pytest-mock>=3.14",

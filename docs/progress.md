@@ -121,8 +121,44 @@
 
 ## 下一步
 
-- [ ] **Phase 6：Debug 工具** — `scripts/inspect_state.py`、`scripts/replay_session.py`、`scripts/export_memories.py`
 - [ ] 使用已轮换的真实供应商凭证做一轮 CLI 联调，确认自定义模型名与网关鉴权在目标环境可用
+
+---
+
+## 2026-04-10：开发者界面（Phase 6 增强 + v0.2 API 起步）
+
+### Phase 6：终端 Debug 工具增强
+- [x] `scripts/inspect_state.py` — rich 美化（Panel + 进度条 + 策略决策表格）
+- [x] `scripts/monitor.py` — 实时 TUI 看板（rich.live，2s 轮询 SQLite，状态/对话/决策/记忆四栏）
+- [x] `scripts/test_llm.py` — LLM 连通性测试（配置展示 + 延迟测量 + 成功/失败状态）
+- [x] `pyproject.toml` — 添加 `rich>=13.0` 到主依赖；新增 `[api]` optional group（fastapi + uvicorn）
+
+### LLM 统计追踪
+- [x] `src/conscious_entity/llm/stats_tracker.py` — `LLMCallRecord` dataclass + `LLMStatsTracker` 单例（内存，最多 1000 条）
+- [x] `src/conscious_entity/llm/claude_client.py` — `complete()` 集成 stats hook（计时、token 计数、成功/失败）
+
+### v0.2 起步：FastAPI 开发者 HTTP API + Web 看板
+- [x] `src/conscious_entity/interfaces/api.py` — FastAPI 应用，11 个端点：
+  - `GET /health` — 系统健康检查
+  - `POST /api/v1/dialog` — 发送对话，获取实体回应
+  - `GET /api/v1/state` — 最新 EntityState 快照
+  - `GET /api/v1/state/history` — 历史状态快照
+  - `GET /api/v1/memory/episodic` — 情节记忆列表
+  - `GET /api/v1/memory/reflective` — 活跃反思摘要
+  - `GET /api/v1/interaction-log` — 对话记录
+  - `GET /api/v1/config` — 全部 YAML 配置
+  - `GET /api/v1/config/llm` — LLM 配置（敏感信息脱敏）
+  - `POST /api/v1/config/reload` — 热重载 YAML 配置（重置短期记忆）
+  - `GET /api/v1/stats/llm` — LLM 调用统计
+  - `GET /` — Web 看板
+- [x] `src/conscious_entity/interfaces/static/index.html` — 单文件 Web 看板（原生 JS，2s 轮询）
+  - EntityState 实时仪表盘（10 变量彩色进度条）
+  - 对话区（输入框 + 实时回显，Enter 发送）
+  - LLM 统计卡片
+  - 记忆系统面板
+  - YAML 配置查看器（模态弹窗）
+  - LLM 配置显示
+- [x] `scripts/start_api.py` — uvicorn 启动脚本（支持 --host/--port/--reload）
 
 ---
 

@@ -5,6 +5,7 @@
 data/memory.db
 data/memory.db-shm
 data/memory.db-wal
+data/export.json
 data/embeddings_cache/
 
 # Python
@@ -28,6 +29,7 @@ htmlcov/
 
 # macOS
 .DS_Store
+._*
 
 # IDE
 .vscode/

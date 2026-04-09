@@ -15,7 +15,27 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
+from rich.console import Console
+from rich.panel import Panel
+from rich.table import Table
+from rich import box
+
 from conscious_entity.runtime_env import load_project_env
+
+STATE_KEYS = [
+    "attention_focus",
+    "arousal",
+    "stability",
+    "curiosity",
+    "trust",
+    "resistance",
+    "fatigue",
+    "uncertainty",
+    "identity_coherence",
+    "shutdown_sensitivity",
+]
+
+console = Console()
 
 
 def _db_path() -> Path:
@@ -27,37 +47,71 @@ def main() -> None:
 
     db_path = _db_path()
     if not db_path.exists():
-        print(f"Database not found at {db_path}. Run scripts/init_db.py first.")
+        console.print(f"[red]Database not found at {db_path}. Run scripts/init_db.py first.[/red]")
         sys.exit(1)
 
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
 
-    # Latest state snapshot
+    # --- EntityState panel ---
     row = conn.execute(
         "SELECT * FROM state_snapshots ORDER BY recorded_at DESC LIMIT 1"
     ).fetchone()
 
-    if row is None:
-        print("No state snapshots found.")
-    else:
-        print(f"\nEntityState ({row['recorded_at']}):")
-        for key in [
-            "attention_focus", "arousal", "stability", "curiosity", "trust",
-            "resistance", "fatigue", "uncertainty", "identity_coherence",
-            "shutdown_sensitivity",
-        ]:
-            print(f"  {key:<24} {row[key]:.3f}")
+    state_table = Table(box=None, show_header=False, padding=(0, 0), expand=True)
+    state_table.add_column("var", style="dim", width=26)
+    state_table.add_column("bar", ratio=1)
+    state_table.add_column("val", width=6, justify="right")
 
-    # Recent policy decisions
+    if row is None:
+        console.print("[yellow]No state snapshots found.[/yellow]")
+    else:
+        for key in STATE_KEYS:
+            val = float(row[key])
+            filled = int(val * 20)
+            bar = "[green]" + "█" * filled + "[/green]" + "[dim]" + "░" * (20 - filled) + "[/dim]"
+            state_table.add_row(key, bar, f"{val:.3f}")
+
+        trigger = row["trigger_event_type"] or "—"
+        action = row["policy_action"] or "—"
+        console.print(
+            Panel(
+                state_table,
+                title=f"[bold]EntityState[/bold]  [dim]{row['recorded_at']}[/dim]  "
+                      f"[dim]trigger=[/dim][cyan]{trigger}[/cyan]  "
+                      f"[dim]action=[/dim][yellow]{action}[/yellow]",
+                border_style="green",
+            )
+        )
+
+    # --- Recent entity turns panel ---
     rows = conn.execute(
-        "SELECT turn_at, policy_action, event_types FROM interaction_log "
+        "SELECT turn_at, policy_action, event_types, expression_output "
+        "FROM interaction_log "
         "WHERE role = 'entity' ORDER BY turn_at DESC LIMIT 5"
     ).fetchall()
 
-    print("\nLast 5 entity turns:")
-    for r in rows:
-        print(f"  [{r['turn_at']}] action={r['policy_action']}  events={r['event_types']}")
+    turns_table = Table(box=box.SIMPLE_HEAVY, show_header=True, padding=(0, 1), expand=True)
+    turns_table.add_column("Time", style="dim", width=20)
+    turns_table.add_column("Action", style="yellow", width=22)
+    turns_table.add_column("Events", style="dim", width=30)
+    turns_table.add_column("Response (truncated)", ratio=1)
+
+    if not rows:
+        turns_table.add_row("—", "[dim]no entity turns yet[/dim]", "", "")
+    else:
+        for r in rows:
+            resp = (r["expression_output"] or "")
+            if len(resp) > 60:
+                resp = resp[:57] + "..."
+            turns_table.add_row(
+                r["turn_at"],
+                r["policy_action"] or "—",
+                r["event_types"] or "—",
+                f"[italic]{resp}[/italic]",
+            )
+
+    console.print(Panel(turns_table, title="[bold]Last 5 Entity Turns[/bold]", border_style="blue"))
 
     conn.close()
 

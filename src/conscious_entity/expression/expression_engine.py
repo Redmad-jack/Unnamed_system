@@ -30,6 +30,8 @@ _FALLBACK_TEXTS: dict[str, str] = {
 
 _SILENT_OUTPUT_SENTINEL = "[silent]"
 
+_TRUNCATED_STOP_REASONS = {"max_tokens", "length", "max_output_tokens"}
+
 
 def _fallback_text(action: PolicyAction) -> str:
     return _FALLBACK_TEXTS.get(action.value, "...")
@@ -95,14 +97,28 @@ class ExpressionEngine:
 
         ctx = self._context_builder.build(state, policy, style, short_term, retrieved_memories)
 
-        raw_text = self._client.complete(ctx.system_prompt, ctx.messages, ctx.max_tokens)
+        completion = self._client.complete_with_metadata(
+            ctx.system_prompt,
+            ctx.messages,
+            ctx.max_tokens,
+        )
+        raw_text = completion.text
+        truncated = completion.stop_reason in _TRUNCATED_STOP_REASONS
 
         llm_failed = not raw_text
         if llm_failed:
             raw_text = _fallback_text(policy.action)
+            truncated = False
             logger.error(
                 "ExpressionEngine: LLM call failed, using fallback text for action=%s",
                 policy.action.value,
+            )
+        elif truncated:
+            logger.warning(
+                "ExpressionEngine: response hit token limit (action=%s, stop_reason=%s, max_tokens=%d)",
+                policy.action.value,
+                completion.stop_reason,
+                ctx.max_tokens,
             )
 
         filtered_text = self._constitution.apply_expression_constraints(raw_text)
@@ -121,4 +137,6 @@ class ExpressionEngine:
             visual_mode=style.visual_mode,
             spoken_text=None,
             raw_prompt=ctx.raw_prompt,
+            truncated=truncated,
+            stop_reason=completion.stop_reason,
         )

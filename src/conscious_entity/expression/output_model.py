@@ -11,3 +11,5 @@ class ExpressionOutput:
     visual_mode: str        # "normal" | "fragmented" | "disturbed" | "silent"
     spoken_text: Optional[str]  # v0.2 voice channel; always None in v0.1
     raw_prompt: str         # full prompt serialized for debugging / governance panel
+    truncated: bool = False
+    stop_reason: Optional[str] = None

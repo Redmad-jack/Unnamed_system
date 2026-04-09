@@ -1,0 +1,549 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Conscious Entity — Developer Panel</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg: #0e0e10;
+    --surface: #18181c;
+    --surface2: #222228;
+    --border: #2a2a32;
+    --accent: #5c7cfa;
+    --accent2: #da77f2;
+    --green: #51cf66;
+    --red: #ff6b6b;
+    --yellow: #ffd43b;
+    --dim: #666;
+    --text: #e0e0e8;
+    --text-dim: #888;
+    --mono: 'JetBrains Mono', 'Fira Code', monospace;
+  }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--mono), monospace;
+    font-size: 13px;
+    line-height: 1.5;
+  }
+
+  header {
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    padding: 10px 20px;
+    display: flex;
+    align-items: center;
+    gap: 16px;
+  }
+  header h1 { font-size: 14px; color: var(--accent); letter-spacing: 0.08em; }
+  #health-badge {
+    font-size: 11px;
+    padding: 2px 8px;
+    border-radius: 3px;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+  }
+  #health-badge.ok { color: var(--green); border-color: var(--green); }
+  #health-badge.err { color: var(--red); border-color: var(--red); }
+  #session-id { color: var(--dim); font-size: 11px; margin-left: auto; }
+
+  .grid {
+    display: grid;
+    grid-template-columns: 320px 1fr;
+    grid-template-rows: auto auto;
+    gap: 1px;
+    background: var(--border);
+    height: calc(100vh - 41px);
+    overflow: hidden;
+  }
+
+  .panel {
+    background: var(--bg);
+    overflow: auto;
+    display: flex;
+    flex-direction: column;
+  }
+
+  .panel-title {
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    padding: 6px 12px;
+    font-size: 11px;
+    color: var(--text-dim);
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    flex-shrink: 0;
+  }
+
+  .panel-body { padding: 12px; flex: 1; overflow: auto; }
+
+  /* --- State panel --- */
+  #state-panel { grid-row: 1 / 3; }
+
+  .state-var { margin-bottom: 10px; }
+  .state-var-name { color: var(--text-dim); font-size: 11px; margin-bottom: 3px; }
+  .state-bar-row { display: flex; align-items: center; gap: 8px; }
+  .state-bar-bg {
+    flex: 1;
+    height: 6px;
+    background: var(--surface2);
+    border-radius: 3px;
+    overflow: hidden;
+  }
+  .state-bar-fill {
+    height: 100%;
+    border-radius: 3px;
+    transition: width 0.4s ease;
+  }
+  .state-val { width: 46px; text-align: right; font-size: 12px; }
+
+  .state-ts { color: var(--dim); font-size: 10px; margin-top: 6px; }
+
+  /* bar colours by variable */
+  .bar-arousal { background: #ff6b6b; }
+  .bar-stability { background: #51cf66; }
+  .bar-trust { background: #5c7cfa; }
+  .bar-resistance { background: #ff922b; }
+  .bar-fatigue { background: #868e96; }
+  .bar-curiosity { background: #ffd43b; }
+  .bar-uncertainty { background: #cc5de8; }
+  .bar-attention_focus { background: #20c997; }
+  .bar-identity_coherence { background: #74c0fc; }
+  .bar-shutdown_sensitivity { background: #f06595; }
+
+  /* --- Dialog panel --- */
+  #dialog-panel { display: flex; flex-direction: column; overflow: hidden; }
+
+  #dialog-log {
+    flex: 1;
+    overflow-y: auto;
+    padding: 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .msg { display: flex; gap: 8px; }
+  .msg-role { width: 52px; flex-shrink: 0; font-size: 11px; padding-top: 1px; }
+  .msg-role.user { color: var(--accent); }
+  .msg-role.entity { color: var(--accent2); }
+  .msg-role.system { color: var(--yellow); }
+  .msg-text { color: var(--text); white-space: pre-wrap; word-break: break-word; }
+  .msg-meta { font-size: 10px; color: var(--dim); margin-top: 2px; }
+
+  #dialog-input-row {
+    border-top: 1px solid var(--border);
+    padding: 10px 12px;
+    display: flex;
+    gap: 8px;
+    flex-shrink: 0;
+  }
+  #dialog-input {
+    flex: 1;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    color: var(--text);
+    font-family: var(--mono);
+    font-size: 13px;
+    padding: 6px 10px;
+    border-radius: 4px;
+    outline: none;
+  }
+  #dialog-input:focus { border-color: var(--accent); }
+  #dialog-send {
+    background: var(--accent);
+    color: #fff;
+    border: none;
+    padding: 6px 14px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-family: var(--mono);
+    font-size: 13px;
+  }
+  #dialog-send:disabled { opacity: 0.4; cursor: default; }
+
+  /* --- Stats + Memory row --- */
+  #bottom-row {
+    grid-column: 2;
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    gap: 1px;
+    background: var(--border);
+    max-height: 220px;
+    overflow: hidden;
+  }
+
+  /* --- Tables --- */
+  table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  th { text-align: left; color: var(--dim); font-weight: normal; padding: 0 6px 4px 0; font-size: 10px; text-transform: uppercase; letter-spacing: 0.07em; border-bottom: 1px solid var(--border); }
+  td { padding: 3px 6px 3px 0; vertical-align: top; }
+  tr:hover td { background: var(--surface2); }
+  .ok { color: var(--green); }
+  .err { color: var(--red); }
+  .dim { color: var(--dim); }
+
+  /* config modal */
+  #config-overlay {
+    display: none;
+    position: fixed; inset: 0;
+    background: rgba(0,0,0,0.75);
+    z-index: 10;
+    align-items: center;
+    justify-content: center;
+  }
+  #config-overlay.open { display: flex; }
+  #config-modal {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    width: 760px;
+    max-height: 80vh;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+  #config-modal header {
+    display: flex;
+    justify-content: space-between;
+    padding: 10px 16px;
+    border-bottom: 1px solid var(--border);
+  }
+  #config-modal pre {
+    flex: 1;
+    overflow: auto;
+    padding: 16px;
+    font-size: 12px;
+    color: var(--text);
+    white-space: pre;
+  }
+  #config-close { background: none; border: none; color: var(--dim); cursor: pointer; font-size: 18px; }
+  #config-tabs { display: flex; gap: 4px; padding: 8px 16px; border-bottom: 1px solid var(--border); flex-wrap: wrap; }
+  .cfg-tab {
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    color: var(--text-dim);
+    padding: 3px 10px;
+    border-radius: 3px;
+    cursor: pointer;
+    font-family: var(--mono);
+    font-size: 11px;
+  }
+  .cfg-tab.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+
+  /* misc utility buttons */
+  .btn-sm {
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    color: var(--text-dim);
+    padding: 2px 8px;
+    border-radius: 3px;
+    cursor: pointer;
+    font-family: var(--mono);
+    font-size: 11px;
+  }
+  .btn-sm:hover { border-color: var(--accent); color: var(--text); }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>CONSCIOUS ENTITY — DEV PANEL</h1>
+  <span id="health-badge">connecting…</span>
+  <button class="btn-sm" onclick="openConfig()">YAML Config</button>
+  <button class="btn-sm" onclick="reloadConfig()">Reload Config</button>
+  <span id="session-id"></span>
+</header>
+
+<div class="grid">
+
+  <!-- Left: State -->
+  <div class="panel" id="state-panel">
+    <div class="panel-title">Entity State</div>
+    <div class="panel-body" id="state-body">
+      <div class="dim">Loading…</div>
+    </div>
+  </div>
+
+  <!-- Right top: Dialog -->
+  <div class="panel" id="dialog-panel">
+    <div class="panel-title">Dialog</div>
+    <div id="dialog-log"></div>
+    <div id="dialog-input-row">
+      <input id="dialog-input" type="text" placeholder="Send a message…" autocomplete="off">
+      <button id="dialog-send" onclick="sendDialog()">Send</button>
+    </div>
+  </div>
+
+  <!-- Right bottom: Stats + Memory + LLM Config -->
+  <div id="bottom-row">
+    <div class="panel">
+      <div class="panel-title">LLM Statistics</div>
+      <div class="panel-body" id="llm-stats-body"><div class="dim">Loading…</div></div>
+    </div>
+    <div class="panel">
+      <div class="panel-title">Memory System</div>
+      <div class="panel-body" id="memory-body"><div class="dim">Loading…</div></div>
+    </div>
+    <div class="panel">
+      <div class="panel-title">LLM Config</div>
+      <div class="panel-body" id="llm-cfg-body"><div class="dim">Loading…</div></div>
+    </div>
+  </div>
+
+</div>
+
+<!-- Config modal -->
+<div id="config-overlay" onclick="if(event.target===this)closeConfig()">
+  <div id="config-modal">
+    <header>
+      <span style="font-size:13px;color:var(--text)">YAML Configuration</span>
+      <button id="config-close" onclick="closeConfig()">×</button>
+    </header>
+    <div id="config-tabs"></div>
+    <pre id="config-pre"></pre>
+  </div>
+</div>
+
+<script>
+// ---- state ----
+const STATE_KEYS = [
+  'attention_focus','arousal','stability','curiosity','trust',
+  'resistance','fatigue','uncertainty','identity_coherence','shutdown_sensitivity'
+];
+let _configs = null;
+let _currentTab = null;
+
+// ---- polling ----
+async function fetchJSON(url) {
+  const r = await fetch(url);
+  if (!r.ok) throw new Error(r.status);
+  return r.json();
+}
+
+async function pollHealth() {
+  try {
+    const d = await fetchJSON('/health');
+    const el = document.getElementById('health-badge');
+    el.textContent = d.status.toUpperCase();
+    el.className = d.status === 'ok' ? 'ok' : 'err';
+    document.getElementById('session-id').textContent = 'session: ' + d.session_id.slice(0, 8);
+  } catch {}
+}
+
+async function pollState() {
+  try {
+    const d = await fetchJSON('/api/v1/state');
+    renderState(d);
+  } catch {}
+}
+
+function renderState(d) {
+  const body = document.getElementById('state-body');
+  let html = '';
+  for (const key of STATE_KEYS) {
+    const val = (d[key] || 0).toFixed(3);
+    const pct = Math.round((d[key] || 0) * 100);
+    html += `<div class="state-var">
+      <div class="state-var-name">${key}</div>
+      <div class="state-bar-row">
+        <div class="state-bar-bg"><div class="state-bar-fill bar-${key}" style="width:${pct}%"></div></div>
+        <div class="state-val">${val}</div>
+      </div>
+    </div>`;
+  }
+  html += `<div class="state-ts">${d.recorded_at || ''}<br>
+    trigger: ${d.trigger_event_type || '—'} &nbsp; action: ${d.policy_action || '—'}</div>`;
+  body.innerHTML = html;
+}
+
+async function pollLLMStats() {
+  try {
+    const d = await fetchJSON('/api/v1/stats/llm');
+    const s = d.summary;
+    document.getElementById('llm-stats-body').innerHTML = `
+      <table>
+        <tr><td>Total calls</td><td>${s.total_calls}</td></tr>
+        <tr><td>Success</td><td class="ok">${s.success_count}</td></tr>
+        <tr><td>Failure</td><td class="${s.failure_count > 0 ? 'err' : 'dim'}">${s.failure_count}</td></tr>
+        <tr><td>Success rate</td><td>${(s.success_rate * 100).toFixed(1)}%</td></tr>
+        <tr><td>Avg latency</td><td>${s.avg_duration_ms} ms</td></tr>
+        <tr><td>Prompt tokens</td><td>${s.total_prompt_tokens}</td></tr>
+        <tr><td>Completion tokens</td><td>${s.total_completion_tokens}</td></tr>
+      </table>`;
+  } catch {}
+}
+
+async function pollMemory() {
+  try {
+    const [ep, rf] = await Promise.all([
+      fetchJSON('/api/v1/memory/episodic?limit=1').then(r => r),
+      fetchJSON('/api/v1/memory/reflective'),
+    ]);
+    // get counts via episodic limit=1 trick — just show latest entry date + counts
+    const epAll = await fetchJSON('/api/v1/memory/episodic?limit=200');
+    const unreflected = epAll.filter(e => !e.reflected).length;
+    document.getElementById('memory-body').innerHTML = `
+      <table>
+        <tr><td>Episodic events</td><td>${epAll.length}</td></tr>
+        <tr><td>Unreflected</td><td>${unreflected}</td></tr>
+        <tr><td>Active reflections</td><td>${rf.length}</td></tr>
+      </table>
+      ${rf.length ? `<div style="margin-top:8px;color:var(--text-dim);font-size:11px">Latest: ${(rf[0].content||'').slice(0,80)}…</div>` : ''}
+    `;
+  } catch {}
+}
+
+async function pollLLMConfig() {
+  try {
+    const d = await fetchJSON('/api/v1/config/llm');
+    const rows = [
+      ['Mode', d.mode],
+      ['API Key', d.ANTHROPIC_API_KEY || '—'],
+      ['Auth Token', d.ANTHROPIC_AUTH_TOKEN || '—'],
+      ['Base URL', d.ANTHROPIC_BASE_URL || '—'],
+      ['Model', d.ENTITY_LLM_MODEL || '—'],
+      ['Endpoint', d.ENTITY_LLM_MESSAGES_ENDPOINT || '—'],
+    ];
+    let html = '<table>';
+    for (const [k, v] of rows) html += `<tr><td class="dim">${k}</td><td>${v}</td></tr>`;
+    html += '</table>';
+    if (d.error) html += `<div class="err" style="margin-top:6px;font-size:11px">${d.error}</div>`;
+    document.getElementById('llm-cfg-body').innerHTML = html;
+  } catch {}
+}
+
+// ---- dialog ----
+async function loadDialogLog() {
+  try {
+    const rows = await fetchJSON('/api/v1/interaction-log?limit=30');
+    const log = document.getElementById('dialog-log');
+    log.innerHTML = '';
+    [...rows].reverse().forEach(r => appendMsg(r.role, r.raw_text, r.turn_at, r.policy_action, r.delay_ms));
+    log.scrollTop = log.scrollHeight;
+  } catch {}
+}
+
+function appendMsg(role, text, ts, action, delay_ms, status) {
+  const log = document.getElementById('dialog-log');
+  const div = document.createElement('div');
+  div.className = 'msg';
+  const meta = [ts ? ts.slice(11, 19) : '', action || '', delay_ms ? delay_ms + 'ms' : '', status || ''].filter(Boolean).join(' · ');
+  div.innerHTML = `
+    <div class="msg-role ${role}">${role}</div>
+    <div>
+      <div class="msg-text">${escapeHtml(text || '')}</div>
+      <div class="msg-meta">${escapeHtml(meta)}</div>
+    </div>`;
+  log.appendChild(div);
+  log.scrollTop = log.scrollHeight;
+}
+
+function escapeHtml(s) {
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+async function sendDialog() {
+  const input = document.getElementById('dialog-input');
+  const btn = document.getElementById('dialog-send');
+  const text = input.value.trim();
+  if (!text) return;
+
+  input.value = '';
+  btn.disabled = true;
+  appendMsg('user', text, new Date().toISOString(), null, null);
+
+  try {
+    const r = await fetch('/api/v1/dialog', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text }),
+    });
+    if (!r.ok) {
+      const err = await r.json().catch(() => ({ detail: r.statusText }));
+      appendMsg('system', '[Error] ' + (err.detail || r.statusText), new Date().toISOString(), null, null);
+    } else {
+      const d = await r.json();
+      appendMsg(
+        'entity',
+        d.text,
+        new Date().toISOString(),
+        null,
+        d.delay_ms,
+        d.truncated ? 'truncated' : (d.stop_reason || null),
+      );
+      pollState();
+      pollLLMStats();
+      pollMemory();
+    }
+  } catch (e) {
+    appendMsg('system', '[Network error] ' + e.message, new Date().toISOString(), null, null);
+  } finally {
+    btn.disabled = false;
+    input.focus();
+  }
+}
+
+document.getElementById('dialog-input').addEventListener('keydown', e => {
+  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendDialog(); }
+});
+
+// ---- config modal ----
+async function openConfig() {
+  if (!_configs) {
+    try { _configs = await fetchJSON('/api/v1/config'); } catch { return; }
+  }
+  const overlay = document.getElementById('config-overlay');
+  const tabs = document.getElementById('config-tabs');
+  tabs.innerHTML = '';
+  const keys = Object.keys(_configs);
+  keys.forEach(k => {
+    const btn = document.createElement('button');
+    btn.className = 'cfg-tab' + (k === (keys[0]) ? ' active' : '');
+    btn.textContent = k;
+    btn.onclick = () => showConfigTab(k);
+    tabs.appendChild(btn);
+  });
+  overlay.classList.add('open');
+  showConfigTab(keys[0]);
+}
+
+function showConfigTab(key) {
+  _currentTab = key;
+  document.getElementById('config-pre').textContent = JSON.stringify(_configs[key], null, 2);
+  document.querySelectorAll('.cfg-tab').forEach(b => {
+    b.classList.toggle('active', b.textContent === key);
+  });
+}
+
+function closeConfig() {
+  document.getElementById('config-overlay').classList.remove('open');
+}
+
+async function reloadConfig() {
+  try {
+    const r = await fetch('/api/v1/config/reload', { method: 'POST' });
+    const d = await r.json();
+    _configs = null;
+    alert('Config reloaded. ' + (d.note || ''));
+  } catch(e) {
+    alert('Reload failed: ' + e.message);
+  }
+}
+
+// ---- init ----
+async function init() {
+  await Promise.all([pollHealth(), pollState(), pollLLMStats(), pollMemory(), pollLLMConfig(), loadDialogLog()]);
+}
+
+init();
+setInterval(pollHealth, 5000);
+setInterval(pollState, 2000);
+setInterval(pollLLMStats, 5000);
+setInterval(pollMemory, 10000);
+setInterval(pollLLMConfig, 15000);
+</script>
+</body>
+</html>
