@@ -17,7 +17,10 @@ import sys
 import uuid
 from pathlib import Path
 
-_PROJECT_ROOT = Path(__file__).parent.parent.parent.parent.parent  # project root
+from conscious_entity.llm.claude_client import ClaudeClient, ClaudeConfigurationError
+from conscious_entity.runtime_env import load_project_env, project_root
+
+_PROJECT_ROOT = project_root()
 
 
 def _setup_logging(debug: bool) -> None:
@@ -44,6 +47,10 @@ def _find_prompts_dir() -> Path:
 
 
 def _find_db_path() -> Path:
+    configured = os.getenv("ENTITY_DB_PATH")
+    if configured:
+        return Path(configured)
+
     data_dir = _PROJECT_ROOT / "data"
     data_dir.mkdir(exist_ok=True)
     return data_dir / "memory.db"
@@ -67,6 +74,8 @@ def _print_state(state) -> None:
 
 
 def main() -> None:
+    load_project_env()
+
     parser = argparse.ArgumentParser(description="Conscious Entity — CLI interface")
     parser.add_argument("--debug", action="store_true", help="Show debug logs and state after each turn")
     parser.add_argument("--session", default=None, help="Session ID (default: new UUID)")
@@ -77,6 +86,7 @@ def main() -> None:
     config_dir = _find_config_dir()
     prompts_dir = _find_prompts_dir()
     db_path = _find_db_path()
+    db_path.parent.mkdir(parents=True, exist_ok=True)
 
     # --- Load config ---
     from conscious_entity.core.config_loader import load_all_configs
@@ -99,11 +109,19 @@ def main() -> None:
     from conscious_entity.core.loop import InteractionLoop
     from conscious_entity.perception.event_types import EventType
 
+    try:
+        llm_client = ClaudeClient()
+    except ClaudeConfigurationError as exc:
+        print(f"LLM configuration error: {exc}", file=sys.stderr)
+        conn.close()
+        sys.exit(1)
+
     loop = InteractionLoop(
         conn=conn,
         session_id=session_id,
         config=config,
         prompts_dir=prompts_dir,
+        llm_client=llm_client,
     )
 
     # System event: entity becomes aware of a presence

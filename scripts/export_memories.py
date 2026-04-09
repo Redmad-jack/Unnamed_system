@@ -17,7 +17,11 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-DB_PATH = Path(os.getenv("ENTITY_DB_PATH", "data/memory.db"))
+from conscious_entity.runtime_env import load_project_env
+
+
+def _db_path() -> Path:
+    return Path(os.getenv("ENTITY_DB_PATH", "data/memory.db"))
 
 
 def row_to_dict(row: sqlite3.Row) -> dict:
@@ -25,15 +29,18 @@ def row_to_dict(row: sqlite3.Row) -> dict:
 
 
 def main() -> None:
+    load_project_env()
+
     parser = argparse.ArgumentParser(description="Export memory database to JSON.")
     parser.add_argument("--output", default="data/export.json")
     args = parser.parse_args()
 
-    if not DB_PATH.exists():
-        print(f"Database not found at {DB_PATH}. Run scripts/init_db.py first.")
+    db_path = _db_path()
+    if not db_path.exists():
+        print(f"Database not found at {db_path}. Run scripts/init_db.py first.")
         sys.exit(1)
 
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
 
     export = {

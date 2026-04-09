@@ -16,19 +16,26 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-DB_PATH = Path(os.getenv("ENTITY_DB_PATH", "data/memory.db"))
+from conscious_entity.runtime_env import load_project_env
+
+
+def _db_path() -> Path:
+    return Path(os.getenv("ENTITY_DB_PATH", "data/memory.db"))
 
 
 def main() -> None:
+    load_project_env()
+
     parser = argparse.ArgumentParser(description="Replay an interaction log session.")
     parser.add_argument("--session-id", default=None)
     args = parser.parse_args()
 
-    if not DB_PATH.exists():
-        print(f"Database not found at {DB_PATH}.")
+    db_path = _db_path()
+    if not db_path.exists():
+        print(f"Database not found at {db_path}.")
         sys.exit(1)
 
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
 
     if args.session_id:

@@ -133,7 +133,7 @@ LLM 层：
 
 **产出：**
 ```bash
-# 手动测试（需要有效的 ANTHROPIC_API_KEY）
+# 手动测试（需要有效的官方 Anthropic 或供应商兼容接口配置）
 python -c "
 from conscious_entity.llm.claude_client import ClaudeClient
 client = ClaudeClient()

@@ -18,9 +18,12 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from conscious_entity.db.connection import get_connection
 from conscious_entity.db.migrations import run_migrations
+from conscious_entity.runtime_env import load_project_env
 
 
 def main() -> None:
+    load_project_env()
+
     parser = argparse.ArgumentParser(description="Initialize the entity database.")
     parser.add_argument(
         "--db",

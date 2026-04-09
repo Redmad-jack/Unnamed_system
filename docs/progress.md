@@ -78,13 +78,97 @@
   - [x] `tests/integration/test_full_loop.py` — 20 个集成测试全绿（mocked LLM）
   - [x] CLI 冒烟测试通过（真实 API 响应正常）
 
+- [x] **2026-04-09：供应商 Anthropic 兼容 API 接入**
+  - [x] `src/conscious_entity/llm/claude_client.py` — 扩展为同时支持官方 `ANTHROPIC_API_KEY` 与供应商 `ANTHROPIC_AUTH_TOKEN + ANTHROPIC_BASE_URL + ENTITY_LLM_MODEL`
+  - [x] `src/conscious_entity/runtime_env.py` — 新增项目级 `.env` 自动加载，默认不覆盖 shell 环境变量
+  - [x] `src/conscious_entity/interfaces/cli.py` — 启动前加载 `.env` 并显式校验 LLM 配置，避免首轮对话才失败
+  - [x] `scripts/init_db.py`
+  - [x] `scripts/inspect_state.py`
+  - [x] `scripts/replay_session.py`
+  - [x] `scripts/export_memories.py`
+    - 统一在入口最早阶段加载 `.env`，与 APP_FLOW 中 v0.1 调试脚本路径保持一致
+  - [x] `.env.example`
+  - [x] `README.md`
+  - [x] `docs/TECH_STACK.md`
+  - [x] `docs/IMPLEMENTATION_PLAN.md`
+    - 文档已更新为“官方 Anthropic / 供应商兼容接口”双模式说明
+  - [x] `tests/unit/test_claude_client.py`
+  - [x] `tests/unit/test_runtime_env.py`
+  - [x] `tests/unit/test_cli.py`
+    - 新增 9 个测试，覆盖配置解析、`.env` 加载与 CLI 启动时报错
+
+- [x] **2026-04-09：非标准供应商 messages endpoint 兼容**
+  - [x] `src/conscious_entity/llm/claude_client.py`
+    - 新增 `ENTITY_LLM_MESSAGES_ENDPOINT` 支持
+    - 保留标准 Anthropic SDK 模式，同时支持直接 POST 到完整消息接口
+    - 增加非标准响应解析兜底：Anthropic `content[].text`、`output_text`、`choices[0].message.content`、纯文本 body
+  - [x] `.env.example`
+  - [x] `README.md`
+  - [x] `tests/unit/test_claude_client.py`
+    - 新增自定义 endpoint 模式测试，覆盖 Bearer / X-Api-Key 认证和响应解析分支
+
 ---
 
 ## 下一步
 
 - [ ] **Phase 6：Debug 工具** — `scripts/inspect_state.py`、`scripts/replay_session.py`、`scripts/export_memories.py`
+- [ ] 使用已轮换的真实供应商凭证做一轮 CLI 联调，确认自定义模型名与网关鉴权在目标环境可用
 
 ---
+
+## 本次 API 接入说明（2026-04-09）
+
+### 1. 修改了哪些文件
+
+- `src/conscious_entity/llm/claude_client.py`
+- `src/conscious_entity/runtime_env.py`
+- `src/conscious_entity/interfaces/cli.py`
+- `src/conscious_entity/core/config_loader.py`
+- `scripts/init_db.py`
+- `scripts/inspect_state.py`
+- `scripts/replay_session.py`
+- `scripts/export_memories.py`
+- `.env.example`
+- `README.md`
+- `docs/TECH_STACK.md`
+- `docs/IMPLEMENTATION_PLAN.md`
+- `tests/unit/test_claude_client.py`
+- `tests/unit/test_runtime_env.py`
+- `tests/unit/test_cli.py`
+
+### 2. 为什么这样改
+
+- 根据 `docs/frame.md` 的架构边界，LLM 只负责表达与压缩，因此接入改动集中在 `ClaudeClient` 这一唯一外部调用点，不改状态机、记忆、策略逻辑。
+- 根据 `docs/APP_FLOW.md` 的启动与调试脚本路径，CLI 和 `scripts/*.py` 都需要在最早阶段拿到一致的环境变量，因此增加项目级 `.env` 自动加载。
+- 供应商接口需要 `base_url`、鉴权 token 和自定义模型名，所以新增 `ENTITY_LLM_MODEL`，并把配置校验前置到 CLI 启动阶段。
+- 官方 Anthropic 直连模式仍需保留，避免破坏现有 `ANTHROPIC_API_KEY` 使用方式。
+- README / TECH_STACK / IMPLEMENTATION_PLAN 同步更新，避免文档继续误导为“只能用官方 API Key”。
+
+### 3. 如何手动测试
+
+- 在项目根目录创建 `.env`，二选一配置：
+  - 官方模式：`ANTHROPIC_API_KEY=...`
+  - 供应商模式：`ANTHROPIC_AUTH_TOKEN=...`、`ANTHROPIC_BASE_URL=...`、`ENTITY_LLM_MODEL=...`
+- 初始化数据库：
+  - `python scripts/init_db.py`
+- 启动 CLI：
+  - `python -m conscious_entity.interfaces.cli --debug`
+- 在 CLI 中输入一轮消息，确认返回真实文本而不是 fallback 文本 `Something is here. I am attending.` 这一类兜底回应。
+- 验证调试脚本也能读取同一套 `.env`：
+  - `python scripts/inspect_state.py`
+  - `python scripts/replay_session.py`
+  - `python scripts/export_memories.py --output data/export.json`
+- 已通过的自动化验证：
+  - `PYTHONPATH=src python -m pytest -p no:debugging tests/unit/test_claude_client.py tests/unit/test_runtime_env.py tests/unit/test_cli.py`
+  - `PYTHONPATH=src python -m pytest -p no:debugging tests/integration/test_full_loop.py`
+
+### 4. 是否有潜在风险
+
+- 还没有使用真实供应商接口做联网联调；目前验证的是配置解析、启动行为和 mocked integration，真实网关仍需一轮手工确认。
+- 供应商若不完全兼容 Anthropic SDK 的 `auth_token` / `base_url` 语义，可能会在真实请求阶段报认证或路由错误。
+- 自定义模型名 `ENTITY_LLM_MODEL` 如果填写错误，CLI 能启动，但首次真实调用时仍会失败并走 fallback。
+- 用户之前暴露过一把 API key；即使本次未写入代码，也应先轮换再测试。
+- 即使启用了 `ENTITY_LLM_MESSAGES_ENDPOINT`，如果供应商连请求体字段名也不是 Anthropic Messages 格式，仍然需要进一步做协议映射。
 
 ## 已知问题 / 待确认事项
 
@@ -96,6 +180,7 @@
 | 展期终止仪式设计 | 待确认 | 影响 v0.3 功能范围 |
 | 运营者面板访问方式 | 待确认 | 影响 FastAPI 部署配置 |
 | TTS 具体选型 | 待确认 | 影响 v0.2 语音输出实现 |
+| 供应商 Anthropic 兼容接口联调 | 待完成 | 影响真实 CLI 输出是否能走供应商网关而不是 fallback |
 
 ---
 

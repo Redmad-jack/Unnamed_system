@@ -13,9 +13,6 @@ from typing import Any
 
 import yaml
 
-
-_CONFIG_DIR = Path(os.getenv("ENTITY_CONFIG_DIR", "config"))
-
 # Required top-level keys per config file.
 _REQUIRED_KEYS: dict[str, list[str]] = {
     "state_rules.yaml": ["version", "decay", "events"],
@@ -24,6 +21,10 @@ _REQUIRED_KEYS: dict[str, list[str]] = {
     "expression_mappings.yaml": ["version", "tone_rules", "delay_rules", "visual_mode_rules"],
     "entity_profile.yaml": ["version", "identity", "initial_state", "session"],
 }
+
+
+def _default_config_dir() -> Path:
+    return Path(os.getenv("ENTITY_CONFIG_DIR", "config"))
 
 
 def load_config(filename: str, config_dir: Path | None = None) -> dict[str, Any]:
@@ -42,7 +43,7 @@ def load_config(filename: str, config_dir: Path | None = None) -> dict[str, Any]
         ValueError: If required top-level keys are missing.
         yaml.YAMLError: If the file is not valid YAML.
     """
-    base = config_dir or _CONFIG_DIR
+    base = config_dir or _default_config_dir()
     path = base / filename
 
     if not path.exists():
@@ -82,7 +83,7 @@ def load_all_configs(config_dir: Path | None = None) -> dict[str, dict[str, Any]
     Raises:
         On first validation error encountered.
     """
-    base = config_dir or _CONFIG_DIR
+    base = config_dir or _default_config_dir()
     configs = {}
     for filename in _REQUIRED_KEYS:
         key = filename.replace(".yaml", "")

@@ -15,15 +15,22 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-DB_PATH = Path(os.getenv("ENTITY_DB_PATH", "data/memory.db"))
+from conscious_entity.runtime_env import load_project_env
+
+
+def _db_path() -> Path:
+    return Path(os.getenv("ENTITY_DB_PATH", "data/memory.db"))
 
 
 def main() -> None:
-    if not DB_PATH.exists():
-        print(f"Database not found at {DB_PATH}. Run scripts/init_db.py first.")
+    load_project_env()
+
+    db_path = _db_path()
+    if not db_path.exists():
+        print(f"Database not found at {db_path}. Run scripts/init_db.py first.")
         sys.exit(1)
 
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
 
     # Latest state snapshot

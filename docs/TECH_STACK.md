@@ -105,7 +105,19 @@ pyproject.toml        ← 项目配置 + 依赖声明
 ### 必要环境变量
 
 ```env
-ANTHROPIC_API_KEY=your_key_here
+# Official Anthropic mode
+# ANTHROPIC_API_KEY=your_key_here
+
+# Supplier / Anthropic-compatible mode
+# ANTHROPIC_AUTH_TOKEN=your_supplier_token_here
+# ANTHROPIC_BASE_URL=https://code.newcli.com/claude/aws
+# ENTITY_LLM_MODEL=your_supplier_model_name
+
+# Supplier / non-standard full endpoint mode
+# ANTHROPIC_AUTH_TOKEN=your_supplier_token_here
+# ENTITY_LLM_MODEL=your_supplier_model_name
+# ENTITY_LLM_MESSAGES_ENDPOINT=https://your-provider.example/path/to/messages
+
 ENTITY_DB_PATH=data/memory.db
 ENTITY_CONFIG_DIR=config/
 ENTITY_PROMPTS_DIR=prompts/
