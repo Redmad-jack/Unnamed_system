@@ -35,6 +35,7 @@ def clear_llm_env(monkeypatch):
         "ANTHROPIC_BASE_URL",
         "ENTITY_LLM_MODEL",
         "ENTITY_LLM_MESSAGES_ENDPOINT",
+        "ENTITY_LLM_DISABLE_SYSTEM_PROXY",
     ):
         monkeypatch.delenv(key, raising=False)
 
@@ -68,9 +69,11 @@ class _FakeHTTPResponse:
 class _FakeHTTPClient:
     calls: list[dict] = []
     response: _FakeHTTPResponse | None = None
+    init_kwargs: list[dict] = []
 
     def __init__(self, *args, **kwargs):
         type(self).calls = []
+        type(self).init_kwargs.append(kwargs)
 
     def post(self, url, headers=None, json=None):
         type(self).calls.append({"url": url, "headers": headers or {}, "json": json or {}})
@@ -83,6 +86,7 @@ def fake_http_client(monkeypatch):
     from conscious_entity.llm import claude_client as module
 
     _FakeHTTPClient.calls = []
+    _FakeHTTPClient.init_kwargs = []
     _FakeHTTPClient.response = _FakeHTTPResponse(
         payload={"content": [{"type": "text", "text": "endpoint response"}]}
     )
@@ -91,7 +95,12 @@ def fake_http_client(monkeypatch):
 
 
 class TestClaudeClientConfig:
-    def test_supplier_mode_uses_auth_token_and_base_url(self, monkeypatch, fake_anthropic):
+    def test_supplier_mode_uses_auth_token_and_base_url(
+        self,
+        monkeypatch,
+        fake_anthropic,
+        fake_http_client,
+    ):
         monkeypatch.setenv("ANTHROPIC_AUTH_TOKEN", "supplier-token")
         monkeypatch.setenv("ANTHROPIC_BASE_URL", "https://provider.example/anthropic")
         monkeypatch.setenv("ENTITY_LLM_MODEL", "provider-custom-model")
@@ -99,37 +108,59 @@ class TestClaudeClientConfig:
         client = ClaudeClient()
 
         assert client._model == "provider-custom-model"
-        assert fake_anthropic.last_init_kwargs == {
-            "api_key": None,
-            "auth_token": "supplier-token",
-            "base_url": "https://provider.example/anthropic",
-        }
+        assert fake_anthropic.last_init_kwargs["api_key"] is None
+        assert fake_anthropic.last_init_kwargs["auth_token"] == "supplier-token"
+        assert fake_anthropic.last_init_kwargs["base_url"] == "https://provider.example/anthropic"
+        assert isinstance(fake_anthropic.last_init_kwargs["http_client"], _FakeHTTPClient)
+        assert fake_http_client.init_kwargs[0]["trust_env"] is True
 
-    def test_official_mode_uses_api_key_and_default_model(self, monkeypatch, fake_anthropic):
+    def test_official_mode_uses_api_key_and_default_model(
+        self,
+        monkeypatch,
+        fake_anthropic,
+        fake_http_client,
+    ):
         monkeypatch.setenv("ANTHROPIC_API_KEY", "official-key")
         monkeypatch.setenv("ANTHROPIC_BASE_URL", "https://proxy.example/anthropic")
 
         client = ClaudeClient()
 
         assert client._model == "claude-sonnet-4-6"
-        assert fake_anthropic.last_init_kwargs == {
-            "api_key": "official-key",
-            "auth_token": None,
-            "base_url": "https://proxy.example/anthropic",
-        }
+        assert fake_anthropic.last_init_kwargs["api_key"] == "official-key"
+        assert fake_anthropic.last_init_kwargs["auth_token"] is None
+        assert fake_anthropic.last_init_kwargs["base_url"] == "https://proxy.example/anthropic"
+        assert isinstance(fake_anthropic.last_init_kwargs["http_client"], _FakeHTTPClient)
+        assert fake_http_client.init_kwargs[0]["trust_env"] is True
 
-    def test_explicit_model_overrides_environment_model(self, monkeypatch, fake_anthropic):
+    def test_explicit_model_overrides_environment_model(
+        self,
+        monkeypatch,
+        fake_anthropic,
+        fake_http_client,
+    ):
         monkeypatch.setenv("ANTHROPIC_API_KEY", "official-key")
         monkeypatch.setenv("ENTITY_LLM_MODEL", "env-model")
 
         client = ClaudeClient(model="explicit-model")
 
         assert client._model == "explicit-model"
-        assert fake_anthropic.last_init_kwargs == {
-            "api_key": "official-key",
-            "auth_token": None,
-            "base_url": None,
-        }
+        assert fake_anthropic.last_init_kwargs["api_key"] == "official-key"
+        assert fake_anthropic.last_init_kwargs["auth_token"] is None
+        assert fake_anthropic.last_init_kwargs["base_url"] is None
+        assert isinstance(fake_anthropic.last_init_kwargs["http_client"], _FakeHTTPClient)
+
+    def test_disable_system_proxy_sets_trust_env_false(
+        self,
+        monkeypatch,
+        fake_anthropic,
+        fake_http_client,
+    ):
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "official-key")
+        monkeypatch.setenv("ENTITY_LLM_DISABLE_SYSTEM_PROXY", "1")
+
+        ClaudeClient()
+
+        assert fake_http_client.init_kwargs[0]["trust_env"] is False
 
     def test_missing_supplier_model_raises_clear_error(self, monkeypatch):
         monkeypatch.setenv("ANTHROPIC_AUTH_TOKEN", "supplier-token")
@@ -206,6 +237,7 @@ class TestClaudeClientCustomEndpoint:
                 "messages": [{"role": "user", "content": "hi"}],
             },
         }]
+        assert fake_http_client.init_kwargs[0]["trust_env"] is True
 
     def test_custom_endpoint_supports_openai_style_choice_response(
         self,
@@ -245,3 +277,16 @@ class TestClaudeClientCustomEndpoint:
         )
 
         assert text == "plain text response"
+
+    def test_custom_endpoint_can_disable_system_proxy(
+        self,
+        monkeypatch,
+        fake_http_client,
+    ):
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "official-key")
+        monkeypatch.setenv("ENTITY_LLM_MESSAGES_ENDPOINT", "https://provider.example/custom/messages")
+        monkeypatch.setenv("ENTITY_LLM_DISABLE_SYSTEM_PROXY", "true")
+
+        ClaudeClient()
+
+        assert fake_http_client.init_kwargs[0]["trust_env"] is False

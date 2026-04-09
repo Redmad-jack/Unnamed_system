@@ -3,6 +3,8 @@
 
 # Database and embeddings (runtime data, not committed)
 data/memory.db
+data/memory.db-shm
+data/memory.db-wal
 data/embeddings_cache/
 
 # Python

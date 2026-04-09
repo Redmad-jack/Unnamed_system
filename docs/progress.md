@@ -107,6 +107,16 @@
   - [x] `tests/unit/test_claude_client.py`
     - 新增自定义 endpoint 模式测试，覆盖 Bearer / X-Api-Key 认证和响应解析分支
 
+- [x] **2026-04-09：系统代理绕过支持**
+  - [x] `src/conscious_entity/llm/claude_client.py`
+    - 新增 `ENTITY_LLM_DISABLE_SYSTEM_PROXY`，允许 Anthropic SDK 和自定义 endpoint 模式显式忽略系统代理
+  - [x] `tests/unit/test_claude_client.py`
+    - 覆盖 `trust_env=False` 的构造行为
+  - [x] `.env.example`
+  - [x] `README.md`
+  - [x] `.gitignore`
+    - 忽略 SQLite 运行时生成的 `memory.db-wal` / `memory.db-shm`
+
 ---
 
 ## 下一步

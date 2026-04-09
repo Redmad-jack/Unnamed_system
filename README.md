@@ -139,6 +139,8 @@ ENTITY_LOG_LEVEL=INFO
 
 ```env
 ANTHROPIC_API_KEY=your_official_key_here
+# Optional: disable inherited system proxy variables if your local proxy breaks TLS
+# ENTITY_LLM_DISABLE_SYSTEM_PROXY=1
 ENTITY_DB_PATH=data/memory.db
 ENTITY_CONFIG_DIR=config/
 ENTITY_PROMPTS_DIR=prompts/
@@ -171,6 +173,8 @@ pytest
   说明供应商模式缺少 `ANTHROPIC_BASE_URL` 或 `ENTITY_LLM_MODEL`。
 - CLI 启动正常，但回复总是 fallback 文本
   说明项目本身能启动，但上游网关可能不兼容标准 Anthropic `base_url`，可改用 `ENTITY_LLM_MESSAGES_ENDPOINT`。
+- CLI 只有在关闭代理后才能正常请求
+  可在 `.env` 中设置 `ENTITY_LLM_DISABLE_SYSTEM_PROXY=1`，让 LLM 请求不继承系统代理环境变量。
 
 ---
 

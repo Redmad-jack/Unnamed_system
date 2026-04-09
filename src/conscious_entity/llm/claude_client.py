@@ -25,6 +25,7 @@ class ClaudeClientConfig:
     auth_token: str | None
     base_url: str | None
     messages_endpoint: str | None
+    disable_system_proxy: bool
 
 
 class ClaudeClient:
@@ -60,10 +61,11 @@ class ClaudeClient:
         self._model = config.model
         self._messages_endpoint = config.messages_endpoint
         self._http_client: httpx.Client | None = None
+        http_client = self._build_http_client(config.disable_system_proxy)
 
         if self._messages_endpoint:
             self._client = None
-            self._http_client = httpx.Client(timeout=httpx.Timeout(20.0, connect=5.0))
+            self._http_client = http_client
         else:
             # Import deferred to keep startup fast when running tests without API key.
             from anthropic import Anthropic
@@ -71,6 +73,7 @@ class ClaudeClient:
                 api_key=config.api_key,
                 auth_token=config.auth_token,
                 base_url=config.base_url,
+                http_client=http_client,
             )
         self._api_key = config.api_key
         self._auth_token = config.auth_token
@@ -89,6 +92,7 @@ class ClaudeClient:
         resolved_auth_token = auth_token or os.environ.get("ANTHROPIC_AUTH_TOKEN")
         resolved_base_url = base_url or os.environ.get("ANTHROPIC_BASE_URL")
         resolved_messages_endpoint = messages_endpoint or os.environ.get("ENTITY_LLM_MESSAGES_ENDPOINT")
+        disable_system_proxy = cls._env_flag("ENTITY_LLM_DISABLE_SYSTEM_PROXY")
 
         if resolved_messages_endpoint:
             if resolved_auth_token:
@@ -103,6 +107,7 @@ class ClaudeClient:
                     auth_token=resolved_auth_token,
                     base_url=resolved_base_url,
                     messages_endpoint=resolved_messages_endpoint,
+                    disable_system_proxy=disable_system_proxy,
                 )
 
             if resolved_api_key:
@@ -112,6 +117,7 @@ class ClaudeClient:
                     auth_token=None,
                     base_url=resolved_base_url,
                     messages_endpoint=resolved_messages_endpoint,
+                    disable_system_proxy=disable_system_proxy,
                 )
 
             raise ClaudeConfigurationError(
@@ -137,6 +143,7 @@ class ClaudeClient:
                 auth_token=resolved_auth_token,
                 base_url=resolved_base_url,
                 messages_endpoint=None,
+                disable_system_proxy=disable_system_proxy,
             )
 
         if resolved_api_key:
@@ -146,6 +153,7 @@ class ClaudeClient:
                 auth_token=None,
                 base_url=resolved_base_url,
                 messages_endpoint=None,
+                disable_system_proxy=disable_system_proxy,
             )
 
         if resolved_base_url or resolved_model:
@@ -159,6 +167,20 @@ class ClaudeClient:
             "Missing LLM credentials. Set ANTHROPIC_API_KEY for official mode, or "
             "ANTHROPIC_AUTH_TOKEN + ANTHROPIC_BASE_URL + ENTITY_LLM_MODEL for supplier mode. "
             "For non-standard gateways, set ENTITY_LLM_MESSAGES_ENDPOINT."
+        )
+
+    @staticmethod
+    def _env_flag(name: str) -> bool:
+        value = os.environ.get(name)
+        if value is None:
+            return False
+        return value.strip().lower() in {"1", "true", "yes", "on"}
+
+    @staticmethod
+    def _build_http_client(disable_system_proxy: bool) -> httpx.Client:
+        return httpx.Client(
+            timeout=httpx.Timeout(20.0, connect=5.0),
+            trust_env=not disable_system_proxy,
         )
 
     def complete(
