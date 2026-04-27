@@ -22,7 +22,7 @@ from typing import Any, Optional
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from conscious_entity.core.config_loader import load_all_configs
 from conscious_entity.core.loop import InteractionLoop
@@ -31,6 +31,7 @@ from conscious_entity.db.migrations import run_migrations
 from conscious_entity.llm.claude_client import ClaudeClient, ClaudeConfigurationError
 from conscious_entity.llm.stats_tracker import get_tracker
 from conscious_entity.runtime_env import load_project_env
+from conscious_entity.shopkeeper.models import TurnInput
 
 
 # ---------------------------------------------------------------------------
@@ -64,7 +65,11 @@ def _static_dir() -> Path:
 # ---------------------------------------------------------------------------
 
 class DialogRequest(BaseModel):
-    text: str
+    text: str = ""
+    asr_text: Optional[str] = None
+    visual_tags: list[str] = Field(default_factory=list)
+    retrieved_context: list[str] = Field(default_factory=list)
+    microphone: Optional[dict[str, Any]] = None
 
 
 # ---------------------------------------------------------------------------
@@ -141,6 +146,33 @@ def _row_to_dict(row: sqlite3.Row) -> dict:
     return dict(row)
 
 
+def _turn_input_from_dialog(body: DialogRequest) -> TurnInput:
+    return TurnInput(
+        text=body.text,
+        asr_text=body.asr_text,
+        visual_tags=body.visual_tags,
+        retrieved_context=body.retrieved_context,
+        microphone=body.microphone,
+    )
+
+
+def _dialog_response(output, shop_state: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "text": output.text,
+        "delay_ms": output.delay_ms,
+        "visual_mode": output.visual_mode,
+        "truncated": output.truncated,
+        "stop_reason": output.stop_reason,
+        "turn": output.turn,
+        "shop_state": shop_state,
+        "language": output.turn.get("language") if output.turn else shop_state["language"],
+        "scene": output.turn.get("scene") if output.turn else shop_state["current_scene"],
+        "action": output.turn.get("action") if output.turn else "none",
+        "selected_soup": shop_state["selected_soup"],
+        "order_status": shop_state["order_status"],
+    }
+
+
 # ---------------------------------------------------------------------------
 # Dashboard
 # ---------------------------------------------------------------------------
@@ -186,21 +218,19 @@ async def dialog(body: DialogRequest, request: Request):
     if loop is None:
         raise HTTPException(status_code=503, detail="Loop not initialised")
 
+    turn_input = _turn_input_from_dialog(body)
+    if not turn_input.effective_text and not turn_input.visual_tags:
+        raise HTTPException(status_code=400, detail="text, asr_text, or visual_tags is required")
+
     try:
         async with request.app.state.loop_lock:
             output = await asyncio.get_running_loop().run_in_executor(
-                None, loop.run_turn, body.text
+                None, loop.run_turn, turn_input
             )
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc))
 
-    return {
-        "text": output.text,
-        "delay_ms": output.delay_ms,
-        "visual_mode": output.visual_mode,
-        "truncated": output.truncated,
-        "stop_reason": output.stop_reason,
-    }
+    return _dialog_response(output, loop.current_shop_state.to_dict())
 
 
 # ---------------------------------------------------------------------------

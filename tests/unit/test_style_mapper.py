@@ -56,7 +56,7 @@ class TestToneRules:
         state = EntityState(uncertainty=0.75)
         hints = mapper.map(state, _decision())
         assert hints.tone == "fragmented"
-        assert hints.max_tokens == 180
+        assert hints.max_tokens == 480
         assert hints.fragmentation_level == pytest.approx(0.8)
 
     def test_high_resistance_produces_guarded_tone(self, mapper):

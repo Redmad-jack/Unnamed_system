@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Optional
+from typing import Any, Optional
 
 
 @dataclass
@@ -13,3 +13,4 @@ class ExpressionOutput:
     raw_prompt: str         # full prompt serialized for debugging / governance panel
     truncated: bool = False
     stop_reason: Optional[str] = None
+    turn: Optional[dict[str, Any]] = None

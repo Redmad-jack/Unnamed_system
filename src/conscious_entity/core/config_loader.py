@@ -20,6 +20,7 @@ _REQUIRED_KEYS: dict[str, list[str]] = {
     "constitution.yaml": ["version", "forbidden_claims", "expression_filters"],
     "expression_mappings.yaml": ["version", "tone_rules", "delay_rules", "visual_mode_rules"],
     "entity_profile.yaml": ["version", "identity", "initial_state", "session"],
+    "shopkeeper_mode.yaml": ["version", "menu", "language", "scenes", "visual_tags", "style"],
 }
 
 
@@ -75,7 +76,7 @@ def load_config(filename: str, config_dir: Path | None = None) -> dict[str, Any]
 
 def load_all_configs(config_dir: Path | None = None) -> dict[str, dict[str, Any]]:
     """
-    Load and validate all five config files at once.
+    Load and validate all required config files at once.
 
     Returns:
         Dict keyed by filename (without extension), e.g. {'state_rules': {...}, ...}

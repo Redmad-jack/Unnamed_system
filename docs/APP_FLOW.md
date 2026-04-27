@@ -43,7 +43,7 @@
 
 **触发条件：** 访客提交文字输入
 
-**流程（11步，见 `src/conscious_entity/core/loop.py`）：**
+**流程（12步，见 `src/conscious_entity/core/loop.py`）：**
 
 ```
 Step 1   感知层解析输入 → 生成 PerceptionEvent 列表
@@ -69,24 +69,33 @@ Step 8   [条件] 若 action == RETRIEVE_MEMORY_FIRST
           └─ 检索相关记忆（v0.1 使用时序检索，v0.2 改为 embedding 检索）
           └─ 重新进行策略选择
 
-Step 9   表达层生成输出
-          └─ ContextBuilder 组装 ExpressionContext
+Step 9   店主 scene router 生成结构化回合
+          └─ language / scene / action / state_updates / next_scene
+          └─ 菜单归一化只允许 ai_miao / no_ai
+
+Step 10  表达层生成输出
+          └─ ShopkeeperPromptBuilder 组装受控 prompt
           └─ StyleMapper 计算 StyleHints（tone, delay, fragmentation, visual_mode）
           └─ ClaudeClient 调用 LLM
-          └─ Constitution 过滤输出文本
+          └─ Constitution + ResponseGuard 过滤输出文本
 
-Step 10  将实体回应加入短期记忆缓冲
+Step 11  将店主状态写入 shop_state_snapshots，并将实体回应加入短期记忆缓冲
 
-Step 11  触发反思检查
+Step 12  触发反思检查
           └─ 若未反思事件数 ≥ threshold → 调用 ReflectionEngine
           └─ 存储反思摘要到 reflective_summaries 表
           └─ 标记已处理的情节记忆
 ```
 
-**成功状态：** 返回 ExpressionOutput（text + delay_ms + visual_mode）
+**成功状态：** 返回 ExpressionOutput（text + delay_ms + visual_mode + turn）
 **错误状态：**
 - LLM 调用失败 → 使用规则生成 fallback 回应（简短、中性）
 - 数据库写入失败 → 记录日志，但不中断对话流程
+
+**店主模式输入：**
+- CLI 仍使用纯文本输入。
+- API `POST /api/v1/dialog` 支持 `text`、`asr_text`、`visual_tags`、`retrieved_context`。
+- `visual_tags` 只接受配置白名单内的保守标签，未知标签会被忽略。
 
 ---
 

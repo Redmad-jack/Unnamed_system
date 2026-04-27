@@ -15,8 +15,9 @@ import pytest
 
 from conscious_entity.core.loop import InteractionLoop
 from conscious_entity.db.migrations import run_migrations
-from conscious_entity.llm.claude_client import ClaudeClient
+from conscious_entity.llm.claude_client import ClaudeClient, ClaudeCompletion
 from conscious_entity.perception.event_types import EventType
+from conscious_entity.shopkeeper.models import SoupId, TurnInput
 from conscious_entity.state.state_core import EntityState
 
 
@@ -52,6 +53,9 @@ def mock_client():
     """A deterministic ClaudeClient mock that never calls the API."""
     client = MagicMock(spec=ClaudeClient)
     client.complete.return_value = "Something is present here."
+    client.complete_with_metadata.return_value = ClaudeCompletion(
+        text="Something is present here."
+    )
     return client
 
 
@@ -187,6 +191,36 @@ class TestEpisodicMemory:
             "SELECT policy_action FROM interaction_log WHERE session_id='test-session' LIMIT 1"
         ).fetchone()
         assert row["policy_action"] is not None
+
+
+# ---------------------------------------------------------------------------
+# Shopkeeper mode
+# ---------------------------------------------------------------------------
+
+
+class TestShopkeeperMode:
+    def test_turn_output_contains_structured_shopkeeper_metadata(self, loop):
+        output = loop.run_turn("no-ai soup please")
+        assert output.turn["language"] == "en"
+        assert output.turn["scene"] == "order_taking"
+        assert output.turn["action"] == "confirm_choice"
+        assert output.turn["state_updates"]["selected_soup"] == "no_ai"
+
+    def test_shopkeeper_state_snapshot_is_persisted(self, loop, db):
+        loop.run_turn("来一碗艾苗汤")
+        row = db.execute(
+            "SELECT selected_soup, current_scene, order_status "
+            "FROM shop_state_snapshots WHERE session_id='test-session' "
+            "ORDER BY id DESC LIMIT 1"
+        ).fetchone()
+        assert row["selected_soup"] == SoupId.AI_MIAO.value
+        assert row["current_scene"] == "order_confirm"
+        assert row["order_status"] == "pending_confirmation"
+
+    def test_run_turn_accepts_turn_input_with_visual_tags(self, loop):
+        output = loop.run_turn(TurnInput(text="", visual_tags=["bag", "unknown"]))
+        assert output.turn["scene"] == "appearance_chat"
+        assert loop.current_shop_state.has_complimented_appearance is True
 
 
 # ---------------------------------------------------------------------------

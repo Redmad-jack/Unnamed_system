@@ -6,6 +6,7 @@ from conscious_entity.expression.expression_engine import ExpressionEngine
 from conscious_entity.expression.style_mapper import StyleHints
 from conscious_entity.llm.claude_client import ClaudeCompletion
 from conscious_entity.policy.policy_types import PolicyAction, PolicyDecision
+from conscious_entity.shopkeeper.models import Language, Scene, ShopAction, StructuredTurn
 from conscious_entity.state.state_core import EntityState
 
 
@@ -100,3 +101,68 @@ def test_generate_uses_fallback_and_clears_truncation_on_empty_completion():
 
     assert output.text == "Something is here. I am attending."
     assert output.truncated is False
+
+
+def test_generate_can_use_shopkeeper_prompt_context():
+    engine, client = _build_engine(
+        ClaudeCompletion(text="好，我给你确认一下。"),
+        max_tokens=320,
+    )
+    prompt_context = SimpleNamespace(
+        system_prompt="shopkeeper system",
+        messages=[{"role": "user", "content": "shopkeeper turn"}],
+        max_tokens=120,
+        raw_prompt="shopkeeper raw prompt",
+    )
+    structured_turn = StructuredTurn(
+        language=Language.ZH,
+        scene=Scene.ORDER_TAKING,
+        reply="",
+        action=ShopAction.CONFIRM_CHOICE,
+        next_scene=Scene.ORDER_CONFIRM,
+    )
+
+    output = engine.generate(
+        policy=PolicyDecision(action=PolicyAction.RESPOND_OPENLY),
+        state=EntityState(),
+        short_term=None,
+        prompt_context=prompt_context,
+        structured_turn=structured_turn,
+    )
+
+    assert client.calls[0]["system"] == "shopkeeper system"
+    assert client.calls[0]["max_tokens"] == 120
+    assert output.raw_prompt == "shopkeeper raw prompt"
+    assert output.turn["scene"] == "order_taking"
+    assert output.turn["reply"] == "好，我给你确认一下。"
+
+
+def test_shopkeeper_empty_completion_uses_shopkeeper_fallback():
+    engine, _ = _build_engine(
+        ClaudeCompletion(text="", stop_reason="max_tokens"),
+        max_tokens=320,
+    )
+    prompt_context = SimpleNamespace(
+        system_prompt="shopkeeper system",
+        messages=[{"role": "user", "content": "shopkeeper turn"}],
+        max_tokens=120,
+        raw_prompt="shopkeeper raw prompt",
+    )
+
+    output = engine.generate(
+        policy=PolicyDecision(action=PolicyAction.RESPOND_OPENLY),
+        state=EntityState(),
+        short_term=None,
+        prompt_context=prompt_context,
+        structured_turn=StructuredTurn(
+            language=Language.EN,
+            scene=Scene.FALLBACK,
+            reply="",
+            action=ShopAction.CLARIFY,
+            next_scene=Scene.MENU_INTRO,
+        ),
+    )
+
+    assert output.text == "I missed that. Which soup would you like?"
+    assert output.truncated is False
+    assert output.turn["action"] == "clarify"

@@ -45,6 +45,27 @@ CREATE TABLE IF NOT EXISTS state_snapshots (
 CREATE INDEX IF NOT EXISTS idx_snapshots_session
     ON state_snapshots(session_id, recorded_at DESC);
 
+CREATE TABLE IF NOT EXISTS shop_state_snapshots (
+    id                         INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id                 TEXT NOT NULL REFERENCES sessions(id),
+    recorded_at                TEXT NOT NULL DEFAULT (datetime('now')),
+    language                   TEXT NOT NULL,
+    current_scene              TEXT NOT NULL,
+    previous_scene             TEXT,
+    order_status               TEXT NOT NULL,
+    selected_soup              TEXT,
+    has_complimented_appearance INTEGER NOT NULL DEFAULT 0,
+    has_asked_item_origin      INTEGER NOT NULL DEFAULT 0,
+    recent_turns               TEXT NOT NULL DEFAULT '[]',
+    state_updates              TEXT,
+    trigger_scene              TEXT,
+    action                     TEXT,
+    entity_state_snapshot_id   INTEGER REFERENCES state_snapshots(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_shop_snapshots_session
+    ON shop_state_snapshots(session_id, recorded_at DESC);
+
 CREATE TABLE IF NOT EXISTS interaction_log (
     id                INTEGER PRIMARY KEY AUTOINCREMENT,
     session_id        TEXT NOT NULL REFERENCES sessions(id),

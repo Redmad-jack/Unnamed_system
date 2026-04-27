@@ -67,6 +67,20 @@
 | `visual_mode` | `str` | 视觉模式（normal/fragmented/disturbed/silent） |
 | `spoken_text` | `Optional[str]` | 声音通道文本（可与显示文字不同） |
 | `raw_prompt` | `str` | 调试用：发送给 LLM 的完整 prompt |
+| `turn` | `Optional[dict]` | 店主模式结构化回合：language / scene / reply / action / state_updates / next_scene |
+
+### 1.5 ShopSessionState（店主对话状态）
+
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| `language` | `zh/en` | 当前语言 |
+| `current_scene` | `str` | 当前店主场景 |
+| `previous_scene` | `Optional[str]` | 上一个店主场景 |
+| `order_status` | `str` | none / selecting / pending_confirmation / placed |
+| `selected_soup` | `Optional[str]` | ai_miao / no_ai |
+| `has_complimented_appearance` | `bool` | 是否已经夸过穿搭/外观标签 |
+| `has_asked_item_origin` | `bool` | 是否已经问过衣服/配饰来源 |
+| `recent_turns` | `list[str]` | 最近几轮店主对话摘要 |
 
 ---
 
@@ -132,7 +146,31 @@ CREATE TABLE interaction_log (
 
 ---
 
-### 2.4 episodic_memories
+### 2.4 shop_state_snapshots（仅追加，不修改）
+
+```sql
+CREATE TABLE shop_state_snapshots (
+    id                          INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id                  TEXT NOT NULL REFERENCES sessions(id),
+    recorded_at                 TEXT NOT NULL DEFAULT (datetime('now')),
+    language                    TEXT NOT NULL,
+    current_scene               TEXT NOT NULL,
+    previous_scene              TEXT,
+    order_status                TEXT NOT NULL,
+    selected_soup               TEXT,
+    has_complimented_appearance INTEGER NOT NULL DEFAULT 0,
+    has_asked_item_origin       INTEGER NOT NULL DEFAULT 0,
+    recent_turns                TEXT NOT NULL DEFAULT '[]',
+    state_updates               TEXT,
+    trigger_scene               TEXT,
+    action                      TEXT,
+    entity_state_snapshot_id    INTEGER REFERENCES state_snapshots(id)
+);
+```
+
+---
+
+### 2.5 episodic_memories
 
 ```sql
 CREATE TABLE episodic_memories (
@@ -154,7 +192,7 @@ CREATE TABLE episodic_memories (
 
 ---
 
-### 2.5 reflective_summaries
+### 2.6 reflective_summaries
 
 ```sql
 CREATE TABLE reflective_summaries (
@@ -172,7 +210,7 @@ CREATE TABLE reflective_summaries (
 
 ---
 
-### 2.6 schema_version
+### 2.7 schema_version
 
 ```sql
 CREATE TABLE schema_version (
@@ -183,19 +221,22 @@ CREATE TABLE schema_version (
 
 ---
 
-## 3. API 结构（v0.2 引入 FastAPI）
+## 3. API 结构（FastAPI 开发者接口）
 
-v0.1 不暴露 HTTP API，直接调用 Python 模块。
-
-**v0.2 端点（预留设计）：**
+当前已提供本地开发者 API 和 Web 看板。
 
 | 方法 | 路径 | 说明 | 认证 |
 |---|---|---|---|
-| `POST` | `/turn` | 提交一轮对话输入，返回 ExpressionOutput | 无（访客端） |
-| `GET` | `/state` | 获取当前 EntityState | API Key（运营者） |
-| `GET` | `/memory` | 获取情节/反思记忆列表 | API Key（运营者） |
-| `GET` | `/session` | 获取 session 信息 | API Key（运营者） |
-| `GET` | `/history` | 获取 interaction_log | API Key（运营者） |
+| `POST` | `/api/v1/dialog` | 提交 `text/asr_text/visual_tags/retrieved_context`，返回 ExpressionOutput + turn + shop_state | 无 |
+| `GET` | `/api/v1/state` | 获取当前 EntityState | 无 |
+| `GET` | `/api/v1/state/history` | 获取状态快照历史 | 无 |
+| `GET` | `/api/v1/memory/episodic` | 获取情节记忆列表 | 无 |
+| `GET` | `/api/v1/memory/reflective` | 获取活跃反思摘要 | 无 |
+| `GET` | `/api/v1/interaction-log` | 获取 interaction_log | 无 |
+| `GET` | `/api/v1/config` | 获取全部 YAML 配置 | 无 |
+| `GET` | `/api/v1/config/llm` | 获取脱敏 LLM 配置 | 无 |
+| `POST` | `/api/v1/config/reload` | 热重载 YAML 配置并重建 InteractionLoop | 无 |
+| `GET` | `/api/v1/stats/llm` | 获取 LLM 调用统计 | 无 |
 
 ---
 

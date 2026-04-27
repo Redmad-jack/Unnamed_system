@@ -25,6 +25,12 @@ from conscious_entity.policy.constitution import Constitution
 from conscious_entity.policy.policy_selector import PolicySelector
 from conscious_entity.policy.policy_types import PolicyAction, PolicyDecision
 from conscious_entity.reflection.reflection_engine import ReflectionEngine
+from conscious_entity.shopkeeper.menu import MenuCatalog
+from conscious_entity.shopkeeper.models import ShopSessionState, TurnInput
+from conscious_entity.shopkeeper.prompt_builder import ShopkeeperPromptBuilder
+from conscious_entity.shopkeeper.response_guard import ShopkeeperResponseGuard
+from conscious_entity.shopkeeper.router import RouteDecision, ShopSceneRouter
+from conscious_entity.shopkeeper.state_store import ShopStateStore
 from conscious_entity.state.state_core import EntityState
 from conscious_entity.state.state_engine import StateEngine
 from conscious_entity.state.state_store import StateStore
@@ -90,6 +96,14 @@ class InteractionLoop:
         )
         self._episodic_store = EpisodicStore(conn, session_id)
         self._reflective_store = ReflectiveStore(conn, session_id)
+        self._shop_state_store = ShopStateStore(conn, session_id)
+
+        shopkeeper_cfg = config["shopkeeper_mode"]
+        self._menu_catalog = MenuCatalog.from_config(shopkeeper_cfg)
+        self._shop_router = ShopSceneRouter(shopkeeper_cfg, self._menu_catalog)
+        self._shop_prompt_builder = ShopkeeperPromptBuilder(
+            prompts_dir, shopkeeper_cfg, self._menu_catalog
+        )
 
         keyword_detector = KeywordDetector(profile.get("topics_of_sensitivity", []))
         salience_scorer = SalienceScorer(profile.get("salience_weights", {}))
@@ -102,7 +116,11 @@ class InteractionLoop:
         style_mapper = StyleMapper(config["expression_mappings"])
         context_builder = ContextBuilder(prompts_dir)
         self._expression_engine = ExpressionEngine(
-            style_mapper, context_builder, client, constitution
+            style_mapper,
+            context_builder,
+            client,
+            constitution,
+            response_guard=ShopkeeperResponseGuard(shopkeeper_cfg),
         )
 
         self._reflection_engine = ReflectionEngine(
@@ -114,6 +132,9 @@ class InteractionLoop:
 
         # Cache current state in memory to avoid extra DB reads within a session.
         self._current_state: Optional[EntityState] = self._state_store.load_latest()
+        self._current_shop_state: ShopSessionState = (
+            self._shop_state_store.load_latest() or ShopSessionState()
+        )
 
     # ------------------------------------------------------------------
     # Public API
@@ -124,17 +145,24 @@ class InteractionLoop:
         """Expose current state for CLI display and debug tools."""
         return self._current_state or self._initial_state
 
-    def run_turn(self, raw_input: str) -> ExpressionOutput:
-        """Run the full 11-step pipeline for one user input turn."""
+    @property
+    def current_shop_state(self) -> ShopSessionState:
+        """Expose current shopkeeper state for tests and developer tooling."""
+        return self._current_shop_state
+
+    def run_turn(self, raw_input: str | TurnInput) -> ExpressionOutput:
+        """Run the full 12-step pipeline for one user input turn."""
+        turn_input = _coerce_turn_input(raw_input)
+        raw_text = turn_input.effective_text
 
         # Step 1: Parse input → events
         state = self._current_state or self._initial_state
-        events = self._text_parser.parse(raw_input, state, self._short_term)
+        events = self._text_parser.parse(raw_text, state, self._short_term)
 
         # Add user turn to short-term memory (before policy so repetition detection is accurate).
         self._short_term.add(ShortTermEntry(
             role="user",
-            content=raw_input,
+            content=raw_text,
             timestamp=datetime.now(timezone.utc),
             event_type=events[0].event_type if events else None,
         ))
@@ -153,6 +181,10 @@ class InteractionLoop:
         )
         self._current_state = new_state
 
+        route = self._shop_router.route(
+            turn_input, self._current_shop_state, self._short_term, new_state
+        )
+
         # Step 5: Store significant events in episodic memory
         for event in events:
             if event.salience >= self._significant_salience:
@@ -164,7 +196,7 @@ class InteractionLoop:
                     raw_text=event.raw_text,
                     salience=event.salience,
                     state_snapshot_id=snapshot_id,
-                    metadata=event.metadata,
+                    metadata=_event_metadata(event, route),
                 )
                 try:
                     self._episodic_store.store(mem)
@@ -185,11 +217,23 @@ class InteractionLoop:
             logger.debug("RETRIEVE_MEMORY_FIRST: fetched %d memories", len(retrieved_memories))
 
         # Step 8: Generate expression
+        shop_prompt = self._shop_prompt_builder.build(
+            route=route,
+            shop_state=route.next_state,
+            entity_state=new_state,
+            user_input=raw_text,
+            retrieved_context=_retrieved_context_texts(
+                turn_input.retrieved_context,
+                retrieved_memories,
+            ),
+        )
         output = self._expression_engine.generate(
             policy=decision,
             state=new_state,
             short_term=self._short_term,
             retrieved_memories=retrieved_memories,
+            prompt_context=shop_prompt,
+            structured_turn=route.structured_turn(),
         )
 
         # Step 9: Add entity turn to short-term memory
@@ -199,10 +243,19 @@ class InteractionLoop:
             timestamp=datetime.now(timezone.utc),
         ))
 
+        self._shop_state_store.save_snapshot(
+            route.next_state,
+            state_updates=route.state_updates,
+            trigger_scene=route.scene.value,
+            action=route.action.value,
+            entity_state_snapshot_id=snapshot_id,
+        )
+        self._current_shop_state = route.next_state
+
         # Step 10: Log interaction
         self._log_interaction(
             role="user",
-            raw_text=raw_input,
+            raw_text=raw_text,
             events=events,
             decision=decision,
             output=output,
@@ -221,6 +274,7 @@ class InteractionLoop:
         self._event_bus.emit(
             "turn_complete",
             state=new_state,
+            shop_state=route.next_state,
             decision=decision,
             output=output,
         )
@@ -306,3 +360,31 @@ def _event_summary(event: PerceptionEvent) -> str:
 def _get_recent_memories(episodic_store: EpisodicStore) -> list[EpisodicMemory]:
     """v0.1 retrieval: recency-based (no embedding search)."""
     return episodic_store.get_recent(limit=5)
+
+
+def _coerce_turn_input(raw_input: str | TurnInput) -> TurnInput:
+    if isinstance(raw_input, TurnInput):
+        return raw_input
+    return TurnInput(text=str(raw_input))
+
+
+def _event_metadata(event: PerceptionEvent, route: RouteDecision) -> dict:
+    metadata = dict(event.metadata)
+    metadata.update({
+        "language": route.language.value,
+        "scene": route.scene.value,
+        "shop_action": route.action.value,
+        "selected_soup": route.state_updates.get("selected_soup"),
+    })
+    return metadata
+
+
+def _retrieved_context_texts(
+    explicit_context: list[str],
+    retrieved_memories: list[EpisodicMemory],
+) -> list[str]:
+    texts = [str(item) for item in explicit_context if str(item).strip()]
+    for mem in retrieved_memories:
+        if mem.content:
+            texts.append(mem.content)
+    return texts[:8]

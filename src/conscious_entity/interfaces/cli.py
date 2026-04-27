@@ -64,12 +64,25 @@ def _ensure_session(conn: sqlite3.Connection, session_id: str) -> None:
     conn.commit()
 
 
-def _print_state(state) -> None:
+def _print_state(state, shop_state=None) -> None:
     d = state.to_dict()
     print("\n  [state]", file=sys.stderr)
     for k, v in d.items():
         bar = "█" * int(v * 20)
         print(f"    {k:<24} {v:.2f}  {bar}", file=sys.stderr)
+    if shop_state is not None:
+        sd = shop_state.to_dict()
+        print("\n  [shop]", file=sys.stderr)
+        for k in (
+            "language",
+            "current_scene",
+            "previous_scene",
+            "order_status",
+            "selected_soup",
+            "has_complimented_appearance",
+            "has_asked_item_origin",
+        ):
+            print(f"    {k:<24} {sd[k]}", file=sys.stderr)
     print(file=sys.stderr)
 
 
@@ -152,7 +165,7 @@ def main() -> None:
                 print(f"\n{designation}: ...\n")  # silent mode placeholder
 
             if args.debug:
-                _print_state(loop.current_state)
+                _print_state(loop.current_state, loop.current_shop_state)
 
     except KeyboardInterrupt:
         pass

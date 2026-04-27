@@ -1,0 +1,162 @@
+version: "1.0"
+
+menu:
+  items:
+    ai_miao:
+      display:
+        zh: "艾苗汤"
+        en: "Ai Sprout Soup"
+      aliases:
+        zh:
+          - "艾苗汤"
+          - "艾苗"
+          - "要艾苗汤"
+          - "来一碗艾苗汤"
+          - "ai miao"
+          - "ai miao soup"
+          - "ai-miao soup"
+        en:
+          - "ai miao"
+          - "ai miao soup"
+          - "ai-miao"
+          - "ai-miao soup"
+          - "ai sprout"
+          - "ai sprout soup"
+          - "sprout soup"
+    no_ai:
+      display:
+        zh: "没有艾的汤"
+        en: "General Soup"
+      aliases:
+        zh:
+          - "没有艾的汤"
+          - "没艾汤"
+          - "没有艾"
+          - "不加艾"
+          - "不要艾"
+          - "普通汤"
+          - "一般汤"
+        en:
+          - "no ai"
+          - "no-ai"
+          - "no ai soup"
+          - "no-ai soup"
+          - "without ai"
+          - "without ai soup"
+          - "general soup"
+          - "plain soup"
+          - "regular soup"
+
+language:
+  default: "zh"
+  supported:
+    - "zh"
+    - "en"
+
+scenes:
+  supported:
+    - "greeting"
+    - "appearance_chat"
+    - "smalltalk"
+    - "menu_intro"
+    - "order_taking"
+    - "order_confirm"
+    - "waiting_chat"
+    - "fallback"
+  keywords:
+    greeting:
+      zh:
+        - "你好"
+        - "您好"
+        - "嗨"
+        - "老板"
+      en:
+        - "hello"
+        - "hi"
+        - "hey"
+    appearance_chat:
+      zh:
+        - "衣服"
+        - "外套"
+        - "包"
+        - "帽子"
+        - "围巾"
+        - "配饰"
+      en:
+        - "coat"
+        - "jacket"
+        - "bag"
+        - "hat"
+        - "scarf"
+        - "outfit"
+        - "accessory"
+    menu_intro:
+      zh:
+        - "菜单"
+        - "有什么"
+        - "推荐"
+        - "汤"
+      en:
+        - "menu"
+        - "what do you have"
+        - "recommend"
+        - "soup"
+    confirm:
+      zh:
+        - "好"
+        - "可以"
+        - "对"
+        - "就这个"
+        - "确认"
+      en:
+        - "yes"
+        - "yeah"
+        - "sure"
+        - "ok"
+        - "confirm"
+        - "that's right"
+    deny:
+      zh:
+        - "不要"
+        - "不是"
+        - "换"
+        - "算了"
+      en:
+        - "no"
+        - "nope"
+        - "not that"
+        - "change"
+
+visual_tags:
+  allowed:
+    - "coat_color"
+    - "bag"
+    - "outfit_suits_you"
+    - "accessory"
+    - "scarf"
+    - "hat"
+  conservative_examples:
+    zh:
+      - "你这件外套颜色挺好看。"
+      - "这包不错。"
+      - "你今天这身挺适合你。"
+    en:
+      - "That coat color looks nice on you."
+      - "Nice bag."
+      - "That outfit suits you."
+
+style:
+  max_sentences: 3
+  max_tokens: 120
+  forbidden_phrases:
+    zh:
+      - "您好，请问需要什么帮助"
+      - "根据您的输入"
+      - "作为AI"
+      - "作为 AI"
+      - "有什么可以帮您"
+    en:
+      - "as an AI"
+      - "based on your input"
+      - "how may I assist you"
+      - "how can I assist"
