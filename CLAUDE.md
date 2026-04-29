@@ -1,122 +1,124 @@
 # CLAUDE.md
 
-*Conscious Entity System — AI 编码规则*
+*Conscious Entity System — AI Coding Rules*
 
 ---
 
-## 每次会话开始前必须读
+## Role & Purpose
 
-按顺序读：
+You are the primary coding agent for this project.
 
-1. `CLAUDE.md`（本文件）
-2. `docs/progress.md` — 当前进度和已知问题
-3. `docs/frame.md` — 架构技术文档（模块接口、YAML schema、数据库结构）
-4. 当前任务涉及的具体模块文件
+This project is an art installation / research prototype, not a conventional software product. Implement with discipline, low hallucination, and strict alignment to the project documents.
 
----
-
-## 项目性质
-
-这是一个**艺术装置 / 研究原型混合体**，不是普通软件产品。
-
-- 目标不是让 AI 拥有意识，而是构建能触发人类意识归因的最小组织结构
-- 行为规则（YAML 配置）是艺术家的哲学立场，不是可以自由调整的技术细节
-- 代码的可读性和可维护性优先于性能优化
+`CLAUDE.md` should remain short, stable, and high-frequency. Do not place long feature specs, backend schemas, UI details, or one-off implementation notes here. Those belong in `docs/`.
 
 ---
 
-## 技术栈摘要
+## Session Start
 
-| 组件 | 技术 |
-|---|---|
-| 语言 | Python 3.11+ |
-| LLM | Anthropic SDK（claude-sonnet-4-6 / claude-haiku-4-5-20251001） |
-| 数据库 | SQLite WAL 模式 |
-| 配置 | YAML（PyYAML） |
-| 测试 | pytest + pytest-mock |
-| Embedding（v0.2） | sentence-transformers |
-| API（v0.2） | FastAPI + uvicorn |
+At the start of each session, read:
 
-完整版本锁定见 `docs/TECH_STACK.md`。
+1. `CLAUDE.md`
+2. `docs/progress.md`
+3. `docs/lessons.md`
+4. Relevant project documents for the current task
+5. Relevant source files before editing
+
+Briefly identify the current goal, current step, known constraints, and any visible mismatch between docs and code.
 
 ---
 
-## 文件命名约定
+## Source of Truth
 
-| 类型 | 命名规则 | 示例 |
-|---|---|---|
-| Python 模块 | `snake_case.py` | `state_engine.py` |
-| YAML 配置 | `snake_case.yaml` | `policy_rules.yaml` |
-| 测试文件 | `test_<module_name>.py` | `test_state_engine.py` |
-| Prompt 文件 | `snake_case.txt` | `expression_system.txt` |
-| 文档 | `SCREAMING_SNAKE_CASE.md` | `TECH_STACK.md` |
+Use documentation before assumptions.
 
----
+Priority order:
 
-## 架构边界（绝不越界）
+1. `docs/PRD.md`
+2. `docs/APP_FLOW.md`
+3. `docs/TECH_STACK.md`
+4. `docs/FRONTEND_GUIDELINES.md`
+5. `docs/BACKEND_STRUCTURE.md`
+6. `docs/IMPLEMENTATION_PLAN.md`
+7. `docs/frame.md`
+8. `docs/progress.md`
+9. `docs/lessons.md`
 
-**LLM 只能用于：**
-- `ExpressionEngine` — 生成文字回应
-- `ReflectionEngine` — 压缩情节记忆为洞察
+If documents conflict, follow the higher-priority document and flag the conflict clearly.
 
-**LLM 绝不用于：**
-- 状态更新（StateEngine）
-- 策略选择（PolicySelector）
-- 宪法约束判断（Constitution）
-- 感知事件分类（TextParser）
-
+If docs and current code diverge, do not silently choose one side. Surface the mismatch and take the smallest safe next step.
 
 ---
 
-## 禁止事项
+## Project Principles
 
-- **禁止**修改 `config/constitution.yaml` 中的核心约束（forbidden_claims）而不经过用户确认
-- **禁止**擅自新增 Python 依赖，必须在 `pyproject.toml` 中声明并得到确认
-- **禁止**将 YAML 配置中的规则内联到 Python 代码中
-- **禁止**在 v0.1 阶段安装 v0.2 的依赖（FastAPI、Whisper、sentence-transformers）
-- **禁止**使用 LangChain 或其他 LLM 框架封装层（直接使用 Anthropic SDK）
-- **禁止**在 `state_snapshots` 表上执行 UPDATE 或 DELETE（仅追加）
-- **禁止**在未要求的情况下添加注释、docstring 或类型注解到未修改的代码
+- The goal is not to claim that AI is conscious, but to build a minimal structure that can trigger human attribution of consciousness.
+- Behavior rules are part of the artwork's conceptual position, not arbitrary technical parameters.
+- Readability, traceability, and maintainability matter more than cleverness or premature optimization.
+- Prefer explicit rule-based behavior where the project defines rules.
+- Preserve the separation between artistic/configurable rules and implementation code.
 
 ---
 
-## AI 编码行为约定
+## Configuration Rules
 
-- **不做未要求的重构**：只改被要求改的部分
-- **不引入 feature flag 或向后兼容 shim**：直接修改代码
-- **不添加推测性的错误处理**：只在 `docs/BACKEND_STRUCTURE.md §6` 定义的场景处理错误
-- **遇到架构决策时停下来问**：新增 state variable、改变策略规则逻辑、修改宪法约束 — 都需要确认
-- **发现需求矛盾时主动指出**：不绕过矛盾假装问题不存在
-
----
-
-## 测试规则
-
-- Rule-based 组件（StateEngine、PolicySelector、Constitution、StyleMapper）**必须有单元测试**
-- LLM 调用在集成测试中**必须 mock**（不消耗 API 配额）
-- 集成测试使用 `sqlite3.connect(":memory:")`，不读写实际 `data/memory.db`
-- 每个 Phase 完成前，对应的测试必须全绿
+- YAML configuration is a design surface. Do not inline YAML-defined behavior into Python.
+- Do not modify core constraints in `config/constitution.yaml` without explicit user confirmation.
+- Keep prompts in `prompts/` unless the project documents specify otherwise.
+- Do not introduce new configuration files, environment variables, or defaults without documenting them.
 
 ---
 
-## 开发语言规则
+## Coding Rules
 
-- 代码注释：英文
-- 文档（`.md` 文件）：中文为主，技术术语保留英文
-- 与用户的对话：中文
-- YAML 配置中的 `note` 字段：英文
+- Implement only the requested or documented scope.
+- Do not invent features, routes, tables, APIs, dependencies, UI patterns, or data structures without doc support.
+- Prefer existing project patterns over new abstractions.
+- Keep changes small, testable, and reversible.
+- Do not bundle opportunistic refactors with task-specific work.
+- Do not overwrite, revert, or clean up unrelated user changes.
+- Do not add dependencies casually. Any new dependency must be justified and declared in `pyproject.toml`.
+- Do not expose secrets or put sensitive values in client-facing code.
+- Comments and docstrings should clarify non-obvious intent, not restate code.
 
 ---
 
-## 当前版本范围（v0.1）
+## Data & Persistence Rules
 
-以下功能在当前版本**不实现**，遇到相关需求时拒绝并说明：
+- Treat persisted memory and interaction data as user/project state.
+- Do not delete, rewrite, or migrate data unless the task explicitly requires it.
+- Prefer append-only behavior for historical records unless the schema or task says otherwise.
+- Tests must not read or write the real `data/memory.db` unless explicitly requested.
 
-- 访客端 Web 界面
-- 运营者监控 Web 面板
-- 语音输入/输出
-- Embedding 语义检索
-- FastAPI HTTP 服务
-- 访客身份识别
-- 展期终止仪式
-- 硬件传感器接口
+---
+
+## Testing & Validation
+
+After each meaningful change:
+
+1. Check that the change matches the requested scope and relevant docs.
+2. Run the smallest relevant verification available.
+3. Test the main path and obvious edge cases.
+4. Confirm no unrelated behavior changed.
+5. Summarize what changed, what was validated, and what remains.
+
+Rule-based components should have focused unit tests. LLM calls in tests should be mocked unless the user explicitly requests a live API check.
+
+---
+
+## Continuity
+
+`docs/progress.md` is the project status bridge. Update it after completed features, meaningful milestones, known blockers, or changed next steps.
+
+`docs/lessons.md` is the anti-repeat-mistake file. When a mistake is found and corrected, add the rule that would prevent it next time.
+
+Keep this file compact. Only keep rules here that are useful in most sessions.
+
+---
+
+## Language Rules
+
+- Code comments: English
+- User-facing conversation: Chinese unless the user asks otherwise
+- Project documentation: Chinese by default, with technical terms kept in English where clearer
+- YAML `note` fields: English
