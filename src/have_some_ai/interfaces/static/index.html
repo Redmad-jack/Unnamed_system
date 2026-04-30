@@ -1,0 +1,429 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Have Some "Ai"</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; }
+  :root {
+    --bg: #111312;
+    --panel: #181b19;
+    --panel-2: #20241f;
+    --line: #30382f;
+    --text: #eef0e8;
+    --dim: #969d90;
+    --green: #8bcf8b;
+    --red: #ef7d6f;
+    --blue: #8ab4f8;
+    --gold: #f0c866;
+    --ink: #080908;
+    --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    --sans: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+  }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--sans);
+  }
+  header {
+    height: 56px;
+    border-bottom: 1px solid var(--line);
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    padding: 0 18px;
+    background: #151815;
+  }
+  h1 { font-size: 17px; margin: 0; font-weight: 650; }
+  .badge {
+    font-family: var(--mono);
+    font-size: 12px;
+    color: var(--green);
+    border: 1px solid #456246;
+    padding: 3px 8px;
+    border-radius: 4px;
+  }
+  .layout {
+    height: calc(100vh - 56px);
+    display: grid;
+    grid-template-columns: minmax(420px, 1.2fr) minmax(360px, 0.8fr);
+    overflow: hidden;
+  }
+  main, aside { overflow: auto; }
+  main {
+    padding: 24px;
+    border-right: 1px solid var(--line);
+  }
+  aside { background: #131612; }
+  section + section { margin-top: 18px; }
+  .band {
+    border: 1px solid var(--line);
+    background: var(--panel);
+    border-radius: 8px;
+    overflow: hidden;
+  }
+  .band-title {
+    min-height: 42px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 10px 14px;
+    border-bottom: 1px solid var(--line);
+    color: var(--dim);
+    font-size: 12px;
+    letter-spacing: .08em;
+    text-transform: uppercase;
+  }
+  .band-body { padding: 16px; }
+  .row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  button {
+    min-height: 36px;
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    background: var(--panel-2);
+    color: var(--text);
+    padding: 7px 12px;
+    font: 600 14px var(--sans);
+    cursor: pointer;
+  }
+  button:hover { border-color: var(--blue); }
+  button.primary { background: var(--green); color: var(--ink); border-color: var(--green); }
+  button.warn { background: transparent; color: var(--red); border-color: #6d3933; }
+  button:disabled { opacity: .45; cursor: default; }
+  input, textarea {
+    width: 100%;
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    background: #101210;
+    color: var(--text);
+    min-height: 38px;
+    padding: 8px 10px;
+    font: 14px var(--sans);
+  }
+  label {
+    display: block;
+    color: var(--dim);
+    font-size: 12px;
+    margin-bottom: 6px;
+  }
+  .grid-2 {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+  }
+  .participant-code {
+    font-family: var(--mono);
+    font-size: clamp(44px, 8vw, 92px);
+    line-height: .95;
+    color: var(--gold);
+  }
+  .status-line { color: var(--dim); font-family: var(--mono); font-size: 13px; }
+  .question {
+    padding: 14px 0;
+    border-top: 1px solid var(--line);
+  }
+  .question:first-child { border-top: 0; padding-top: 0; }
+  .module {
+    color: var(--blue);
+    font-size: 12px;
+    font-family: var(--mono);
+    margin-bottom: 6px;
+  }
+  .q-text { font-size: 18px; line-height: 1.4; margin-bottom: 12px; }
+  .options { display: grid; gap: 8px; }
+  .option {
+    text-align: left;
+    width: 100%;
+    font-weight: 500;
+  }
+  .option.selected {
+    background: var(--gold);
+    color: var(--ink);
+    border-color: var(--gold);
+  }
+  .assignment {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    gap: 12px;
+    align-items: end;
+  }
+  .food {
+    font-size: clamp(30px, 6vw, 58px);
+    line-height: 1;
+    font-weight: 750;
+  }
+  .score {
+    font-family: var(--mono);
+    font-size: 12px;
+    color: var(--dim);
+  }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+  }
+  th, td {
+    padding: 9px 10px;
+    border-bottom: 1px solid var(--line);
+    vertical-align: top;
+    text-align: left;
+  }
+  th { color: var(--dim); font-size: 11px; text-transform: uppercase; letter-spacing: .06em; }
+  td.code { color: var(--gold); font-family: var(--mono); }
+  .pill {
+    display: inline-block;
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    padding: 2px 8px;
+    color: var(--dim);
+    font-family: var(--mono);
+    font-size: 12px;
+  }
+  .side-pad { padding: 18px; }
+  .muted { color: var(--dim); }
+  .hidden { display: none; }
+  @media (max-width: 900px) {
+    .layout { grid-template-columns: 1fr; height: auto; }
+    main { border-right: 0; border-bottom: 1px solid var(--line); }
+    .grid-2 { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+<header>
+  <h1>Have Some "Ai"</h1>
+  <span id="health" class="badge">connecting</span>
+</header>
+
+<div class="layout">
+  <main>
+    <section class="band">
+      <div class="band-title">
+        <span>Participant</span>
+        <button class="primary" onclick="newParticipant()">New</button>
+      </div>
+      <div class="band-body">
+        <div class="grid-2">
+          <div>
+            <label>Notes</label>
+            <input id="notes" placeholder="optional">
+          </div>
+          <div>
+            <label>Safety flags</label>
+            <input id="safety" placeholder="allergy, vegetarian, no dairy">
+          </div>
+        </div>
+        <div style="height:16px"></div>
+        <div id="participantView" class="hidden">
+          <div class="participant-code" id="publicCode"></div>
+          <div class="status-line" id="participantStatus"></div>
+          <div style="height:12px"></div>
+          <button onclick="startQuestionnaire()">Start Questions</button>
+        </div>
+      </div>
+    </section>
+
+    <section class="band">
+      <div class="band-title">
+        <span>Questions</span>
+        <button id="submitBtn" onclick="submitAnswers()" disabled>Assign</button>
+      </div>
+      <div class="band-body" id="questionsBody">
+        <span class="muted">No active participant.</span>
+      </div>
+    </section>
+
+    <section id="assignmentBand" class="band hidden">
+      <div class="band-title">
+        <span>Assignment</span>
+        <span class="pill" id="assignmentCode"></span>
+      </div>
+      <div class="band-body">
+        <div class="assignment">
+          <div>
+            <div class="food" id="foodLabel"></div>
+            <div class="score" id="scoreLine"></div>
+          </div>
+          <button onclick="refreshQueue()">Queue</button>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <aside>
+    <div class="side-pad">
+      <section class="band">
+        <div class="band-title">
+          <span>Staff Queue</span>
+          <button onclick="refreshQueue()">Refresh</button>
+        </div>
+        <div class="band-body" style="padding:0">
+          <table>
+            <thead>
+              <tr>
+                <th>Code</th>
+                <th>Food</th>
+                <th>Status</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody id="queueBody"></tbody>
+          </table>
+        </div>
+      </section>
+    </div>
+  </aside>
+</div>
+
+<script>
+let currentParticipant = null;
+let currentQuestions = [];
+let answers = {};
+
+async function api(path, options = {}) {
+  const response = await fetch(path, {
+    headers: { 'Content-Type': 'application/json' },
+    ...options,
+  });
+  if (!response.ok) {
+    const body = await response.json().catch(() => ({}));
+    throw new Error(body.detail || response.statusText);
+  }
+  return response.json();
+}
+
+async function pollHealth() {
+  try {
+    const h = await api('/health');
+    const el = document.getElementById('health');
+    el.textContent = h.status;
+    el.style.color = h.status === 'ok' ? 'var(--green)' : 'var(--red)';
+  } catch {
+    document.getElementById('health').textContent = 'offline';
+  }
+}
+
+async function newParticipant() {
+  const notes = document.getElementById('notes').value.trim();
+  const safetyText = document.getElementById('safety').value.trim();
+  const participant = await api('/api/v1/participants', {
+    method: 'POST',
+    body: JSON.stringify({
+      notes: notes || null,
+      safety_flags: safetyText ? { raw: safetyText } : {},
+    }),
+  });
+  currentParticipant = participant;
+  currentQuestions = [];
+  answers = {};
+  renderParticipant();
+  document.getElementById('assignmentBand').classList.add('hidden');
+  document.getElementById('questionsBody').innerHTML = '<span class="muted">Waiting.</span>';
+  document.getElementById('submitBtn').disabled = true;
+}
+
+function renderParticipant() {
+  document.getElementById('participantView').classList.remove('hidden');
+  document.getElementById('publicCode').textContent = currentParticipant.public_code;
+  document.getElementById('participantStatus').textContent = currentParticipant.status + ' · ' + currentParticipant.id.slice(0, 8);
+}
+
+async function startQuestionnaire() {
+  if (!currentParticipant) return;
+  const result = await api(`/api/v1/participants/${currentParticipant.id}/questionnaire/start`, {
+    method: 'POST',
+  });
+  currentQuestions = result.questions;
+  answers = {};
+  renderQuestions();
+}
+
+function renderQuestions() {
+  const body = document.getElementById('questionsBody');
+  body.innerHTML = currentQuestions.map(q => `
+    <div class="question">
+      <div class="module">${escapeHtml(q.module_id)}</div>
+      <div class="q-text">${escapeHtml(q.question_text)}</div>
+      <div class="options">
+        ${q.options.map(o => `
+          <button class="option ${answers[q.question_id] === o.id ? 'selected' : ''}"
+            onclick="selectAnswer('${q.question_id}', '${o.id}')">
+            ${escapeHtml(o.id)}. ${escapeHtml(o.text)}
+          </button>
+        `).join('')}
+      </div>
+    </div>
+  `).join('');
+  document.getElementById('submitBtn').disabled =
+    Object.keys(answers).length !== currentQuestions.length;
+}
+
+function selectAnswer(questionId, optionId) {
+  answers[questionId] = optionId;
+  renderQuestions();
+}
+
+async function submitAnswers() {
+  if (!currentParticipant) return;
+  const payload = {
+    answers: Object.entries(answers).map(([question_id, option_id]) => ({ question_id, option_id })),
+    assign_immediately: true,
+  };
+  const result = await api(`/api/v1/participants/${currentParticipant.id}/answers`, {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+  renderAssignment(result.assignment);
+  await refreshQueue();
+}
+
+function renderAssignment(assignment) {
+  document.getElementById('assignmentBand').classList.remove('hidden');
+  document.getElementById('assignmentCode').textContent = currentParticipant.public_code;
+  document.getElementById('foodLabel').textContent = assignment.food_label;
+  document.getElementById('scoreLine').textContent =
+    `ai_trace=${assignment.ai_trace_score} · relational=${assignment.relational_score}`;
+}
+
+async function refreshQueue() {
+  const items = await api('/api/v1/staff-queue');
+  const body = document.getElementById('queueBody');
+  body.innerHTML = items.map(item => `
+    <tr>
+      <td class="code">${escapeHtml(item.public_code)}</td>
+      <td>${escapeHtml(item.final_food_label)}</td>
+      <td><span class="pill">${escapeHtml(item.status)}</span></td>
+      <td class="row">
+        ${item.status === 'pending' ? `<button onclick="queueStatus(${item.id}, 'preparing')">Prep</button>` : ''}
+        ${item.status !== 'served' ? `<button class="primary" onclick="queueStatus(${item.id}, 'served')">Served</button>` : ''}
+      </td>
+    </tr>
+  `).join('') || `<tr><td colspan="4" class="muted">Empty.</td></tr>`;
+}
+
+async function queueStatus(id, status) {
+  await api(`/api/v1/staff-queue/${id}`, {
+    method: 'PATCH',
+    body: JSON.stringify({ status }),
+  });
+  await refreshQueue();
+}
+
+function escapeHtml(value) {
+  return String(value)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+pollHealth();
+refreshQueue();
+setInterval(pollHealth, 4000);
+setInterval(refreshQueue, 6000);
+</script>
+</body>
+</html>

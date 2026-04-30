@@ -1,0 +1,152 @@
+modules:
+  - id: ai_trace
+    label: "Ai / Not Ai"
+    draw_count: 1
+    questions:
+      - id: m1_thank_ai
+        text: "Have you ever said \"thank you\" to AI -- and actually meant it?"
+        options:
+          - id: A
+            text: "Yes"
+            scores:
+              ai_trace: 2.0
+              relational: 0.0
+          - id: B
+            text: "No, or I think it is unnecessary"
+            scores:
+              ai_trace: 0.0
+              relational: 0.0
+
+      - id: m1_apologized_ai
+        text: "Have you ever apologized to our AI?"
+        options:
+          - id: A
+            text: "Yes"
+            scores:
+              ai_trace: 2.0
+              relational: 0.2
+          - id: B
+            text: "Not yet"
+            scores:
+              ai_trace: 0.4
+              relational: 0.0
+
+      - id: m1_uncertain_origin
+        text: "Has there ever been a moment when you suddenly became unsure whether an idea was yours, or whether AI gave it to you?"
+        options:
+          - id: A
+            text: "Yes"
+            scores:
+              ai_trace: 2.0
+              relational: 0.0
+          - id: B
+            text: "No, I can tell the difference"
+            scores:
+              ai_trace: 0.0
+              relational: -0.2
+
+      - id: m1_repeated_ai_opinion
+        text: "Have you ever repeated something AI said as if it were your own opinion when talking to someone else?"
+        options:
+          - id: A
+            text: "Yes, and it felt great"
+            scores:
+              ai_trace: 2.2
+              relational: 0.2
+          - id: B
+            text: "No. Are you sure?"
+            scores:
+              ai_trace: 0.6
+              relational: 0.0
+
+  - id: soup_salad
+    label: "Soup / Salad"
+    draw_count: 1
+    questions:
+      - id: m2_door
+        text: "When you sleep, do you usually leave your bedroom door open or closed?"
+        options:
+          - id: A
+            text: "Open, or it does not matter"
+            scores:
+              ai_trace: 0.0
+              relational: 2.0
+          - id: B
+            text: "Closed"
+            scores:
+              ai_trace: 0.0
+              relational: -2.0
+
+      - id: m2_loneliness
+        text: "Which kind of loneliness is harder for you to bear?"
+        options:
+          - id: A
+            text: "Being surrounded by people, but no one truly understands you"
+            scores:
+              ai_trace: 0.0
+              relational: 1.6
+          - id: B
+            text: "Being completely understood by someone, but having no one physically beside you"
+            scores:
+              ai_trace: 0.0
+              relational: -1.6
+
+      - id: m2_confides
+        text: "When someone confides their troubles to you, after they finish talking--"
+        options:
+          - id: A
+            text: "You become even sadder than they are"
+            scores:
+              ai_trace: 0.0
+              relational: 2.0
+          - id: B
+            text: "You help them analyze the situation, then continue with your own life"
+            scores:
+              ai_trace: 0.0
+              relational: -2.0
+
+      - id: m2_strong_opinions
+        text: "After talking with someone who has very strong opinions, when you return home--"
+        options:
+          - id: A
+            text: "You realize you seem to think the same way now"
+            scores:
+              ai_trace: 0.0
+              relational: 2.0
+          - id: B
+            text: "You still feel a little angry when you think about it"
+            scores:
+              ai_trace: 0.0
+              relational: -1.6
+
+  - id: objection_feedback
+    label: "Objection / Feedback"
+    draw_count: 1
+    questions:
+      - id: m3_objection
+        text: "Do you have any objection to the food assigned to you this time?"
+        options:
+          - id: A
+            text: "No"
+            scores:
+              ai_trace: 0.8
+              relational: 0.2
+          - id: B
+            text: "Yes, but it will not help"
+            scores:
+              ai_trace: 1.2
+              relational: -0.2
+
+      - id: m3_project_good
+        text: "Do you think this project is good?"
+        options:
+          - id: A
+            text: "Good"
+            scores:
+              ai_trace: 0.8
+              relational: 0.0
+          - id: B
+            text: "Very good"
+            scores:
+              ai_trace: 1.2
+              relational: 0.0

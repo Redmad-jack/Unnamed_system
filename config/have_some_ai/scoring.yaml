@@ -1,0 +1,49 @@
+axes:
+  ai_trace:
+    label: "Ai trace"
+    sprout_threshold: 2.0
+  relational:
+    label: "Soup / salad tendency"
+    soup_threshold: 0.0
+
+foods:
+  soup:
+    label: "Soup"
+    ai_sprout: false
+    form: "soup"
+  salad:
+    label: "Salad"
+    ai_sprout: false
+    form: "salad"
+  ai_sprout_soup:
+    label: "Ai sprout soup"
+    ai_sprout: true
+    form: "soup"
+  ai_sprout_salad:
+    label: "Ai sprout salad"
+    ai_sprout: true
+    form: "salad"
+
+observation_weights:
+  smiled:
+    ai_trace: 0.1
+    relational: 0.1
+  hesitated_long:
+    ai_trace: 0.3
+    relational: 0.2
+  looked_away:
+    ai_trace: 0.0
+    relational: -0.2
+  stayed_over_90s:
+    ai_trace: 0.3
+    relational: 0.1
+  stepped_back:
+    ai_trace: 0.1
+    relational: -0.3
+  leaned_in:
+    ai_trace: 0.1
+    relational: 0.3
+
+safety:
+  enabled: true
+  notes: "Safety flags are recorded first. Food overrides should be applied by staff before serving."

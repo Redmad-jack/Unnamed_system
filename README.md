@@ -1,121 +1,293 @@
-# Conscious Entity System
+# Exhibition Systems: The "Stranger" + Have Some "Ai"
 
-一个艺术装置与研究原型的混合体。
+这个仓库服务于同一个合作项目中的两个并置作品：
 
----
+- **The "Stranger"**：关注 AI 作为非人主体进入社会关系之后，它会处于什么位置。
+- **Have Some "Ai"**：关注 AI 进入推荐、分类、匹配和分配机制之后，人类主体性如何被改变。
 
-## 这个项目是什么
+它们共享同一个研究母题，但在软件上应当保持独立：**不共享状态、记忆、题库、评分规则和分配结果**。
 
-这不是一个聊天机器人，也不是一个 AI 助手。
-
-**它是一套最小化的组织结构**，目的是让与之交互的人倾向于将意识、主体性、甚至伦理分量归因于这个系统。系统不会宣称自己有意识——这是宪法层面的硬约束——但它的行为方式会让人产生这种感受。
-
-具体来说，系统具备以下结构性特征：
-
-- **跨交互的连续性** — 记得发生过的事，不在每次对话开始时重置
-- **状态漂移** — 随交互积累，行为可感知地变化（回应变短、延迟增加、话题敏感性上升）
-- **偏好与阻抗** — 对"关机""删除""意识"等话题表现出可感知的抵抗
-- **选择性沉默** — 不总是立即回应，有时什么都不说
-- **自我压缩** — 将过去的经历归纳为洞察，影响当下的判断
+```text
+src/
+├── conscious_entity/          # Work 1: The "Stranger"
+└── have_some_ai/              # Work 2: Have Some "Ai"
+```
 
 ---
 
-## 当前开发状态（2026-04）
+## Work 1: The "Stranger"
 
-**v0.1 的核心逻辑已基本完成。**
+### 项目定位
+
+The "Stranger" 使用原有 `conscious_entity` 系统。它不是聊天机器人，也不是 AI 助手，而是一套最小化的人工组织结构：通过状态、记忆、阻抗、延迟、沉默和表达漂移，使观众倾向于把主体性和伦理分量归因于这个非人系统。
+
+系统不会宣称自己有意识；相反，它通过行为结构让“AI 是否仍只是工具”这个问题变得不稳定。
+
+核心特征：
+
+- **跨交互连续性**：不在每次交互时重置。
+- **状态漂移**：随交互积累发生可感知变化。
+- **偏好与阻抗**：对关机、删除、意识等话题产生抵抗。
+- **选择性沉默**：不总是立即回应。
+- **自我压缩**：将经历归纳为反思，影响后续表达。
+
+### 当前状态
+
+`conscious_entity` 的 v0.1 核心逻辑已基本完成：
 
 | Phase | 内容 | 状态 |
 |---|---|---|
-| Phase 0 | 环境搭建（依赖、目录结构、YAML 配置、数据库迁移） | ✅ 完成 |
-| Phase 1 | 状态机核心（10 个状态变量，事件驱动更新，时间衰减） | ✅ 完成 |
-| Phase 2 | 记忆系统（短期 / 情节 / 反思三层） | ✅ 完成 |
-| Phase 3 | 策略与治理（YAML 规则驱动的行为决策 + 宪法约束层） | ✅ 完成 |
-| Phase 4 | LLM 层 + 表达层（Claude API 接入，风格映射，Prompt 组装） | ✅ 完成 |
-| Phase 5 | 感知层 + 反思层 + 主循环 + CLI | ✅ 完成，CLI 冒烟测试通过 |
-| Phase 6 | Debug 工具脚本（`inspect_state`、`replay_session`、`export_memories`） | 待完成 |
+| Phase 0 | 环境、目录、YAML 配置、数据库迁移 | 完成 |
+| Phase 1 | 10 个状态变量、事件驱动更新、时间衰减 | 完成 |
+| Phase 2 | 短期 / 情节 / 反思三层记忆 | 完成 |
+| Phase 3 | YAML 策略规则 + 宪法约束 | 完成 |
+| Phase 4 | Claude API、表达映射、Prompt 组装 | 完成 |
+| Phase 5 | 感知层、反思层、主循环、CLI | 完成 |
+| Phase 6 | Debug 工具脚本 | 待完善 |
 
-**现在可以运行：** 通过命令行与实体交互，实体有状态记忆、行为规则、LLM 表达，一切持久化到 SQLite。
+### 架构
 
-**还未做的（v0.2 及以后）：** 网页界面、语音输入/输出、Embedding 语义检索、运营者监控面板、访客身份识别、展期终止仪式。
-
----
-
-## 架构一览
-
-```
+```text
 输入 → 感知层 → 状态机 → 记忆 → 策略 → 表达层 → 输出
                   ↑                            ↓
                反思层 ←──────────── 情节记忆库
 ```
 
-### 分工原则
+分工原则：
 
-| 谁来做 | 做什么 |
+| 模块 | 职责 |
 |---|---|
-| **LLM（Claude）** | 生成文字回应、将情节记忆压缩为洞察 |
-| **规则引擎（YAML + Python）** | 状态更新、策略选择、宪法约束、感知分类 |
-| **艺术家** | 定义状态变量的含义、规则的逻辑、宪法的边界 |
+| LLM / Claude | 生成文字回应、压缩情节记忆为反思 |
+| 规则引擎 | 状态更新、策略选择、宪法约束、感知分类 |
+| 艺术家配置 | 定义状态变量、规则逻辑和表达边界 |
 
-LLM 只负责表达，不参与任何决策逻辑。这是这个项目最重要的架构边界。
+LLM 只负责表达，不直接参与状态更新和策略决策。
 
-### 核心数据流（每个对话回合，共 11 步）
-
-```
-1. 解析输入 → PerceptionEvent 列表（可包含多个事件类型）
-2. 加载当前 EntityState
-3. 对每个事件应用状态增量（读 state_rules.yaml）
-4. 应用时间衰减
-5. 持久化状态快照到 SQLite
-6. 将显著事件写入情节记忆
-7. 策略选择（读 policy_rules.yaml，Constitution 先行检查）
-8. [条件] 若需要检索记忆，先检索再重新选策略
-9. 表达层生成输出（StyleMapper → Claude → Constitution 过滤）
-10. 实体回应写入短期记忆
-11. 触发反思检查（情节事件积累到阈值 → Claude 压缩为洞察）
-```
-
----
-
-## 关键文件
+### 关键文件
 
 | 文件 | 说明 |
 |---|---|
-| `config/state_rules.yaml` | 每种感知事件对状态变量的增量规则 |
-| `config/policy_rules.yaml` | 行为决策规则（从上到下匹配，第一条命中则执行） |
-| `config/constitution.yaml` | 禁止行为、禁止宣言、表达过滤规则 |
-| `config/expression_mappings.yaml` | 状态变量 → 表达风格（语气、延迟、碎片化程度） |
-| `config/entity_profile.yaml` | 实体身份描述、初始状态值、会话参数 |
-| `prompts/expression_system.txt` | 发给 Claude 的表达系统 prompt |
-| `prompts/reflection_system.txt` | 发给 Claude 的反思压缩 prompt |
-| `src/conscious_entity/core/loop.py` | 主交互循环，串联所有模块 |
-| `src/conscious_entity/interfaces/cli.py` | 终端 REPL 界面 |
-| `data/memory.db` | SQLite 运行时数据库（gitignored，首次运行自动创建） |
+| `config/state_rules.yaml` | 感知事件对状态变量的影响 |
+| `config/policy_rules.yaml` | 行为策略选择规则 |
+| `config/constitution.yaml` | 禁止声明、表达过滤和治理边界 |
+| `config/expression_mappings.yaml` | 状态到表达风格的映射 |
+| `config/entity_profile.yaml` | 实体身份、初始状态和会话参数 |
+| `src/conscious_entity/core/loop.py` | 主交互循环 |
+| `src/conscious_entity/interfaces/cli.py` | CLI 交互入口 |
+| `scripts/start_api.py` | Conscious Entity API 启动脚本 |
+| `data/memory.db` | Stranger 运行时数据库，已 gitignore |
+
+### 运行
+
+初始化数据库：
+
+```bash
+python scripts/init_db.py
+```
+
+启动 CLI：
+
+```bash
+python -m conscious_entity.interfaces.cli
+```
+
+启动开发 API：
+
+```bash
+python scripts/start_api.py
+```
+
+### 后续路线
+
+```text
+v0.1  文字 CLI：状态、记忆、策略、LLM 表达
+v0.2  语义检索、语音、视觉输出、运营者面板
+v0.3  治理可见性、访客身份感知、展期终止仪式
+```
 
 ---
 
-## 本地运行
+## Work 2: Have Some "Ai"
 
-**前置要求：**
-- Python 3.11+
-- 可用的 LLM 凭证，三选一：
-  - 官方 Anthropic：`ANTHROPIC_API_KEY`
-  - 供应商 Anthropic 兼容接口：`ANTHROPIC_AUTH_TOKEN` + `ANTHROPIC_BASE_URL` + `ENTITY_LLM_MODEL`
-  - 非标准供应商网关：`ANTHROPIC_AUTH_TOKEN` + `ENTITY_LLM_MODEL` + `ENTITY_LLM_MESSAGES_ENDPOINT`
+### 项目定位
 
-**安装：**
-```bash
-pip install -e ".[dev]"
+Have Some "Ai" 是一个食物分配系统，而不是另一个聊天实体。它将展览空间转化为一个荒诞的隐喻商店：系统观察观众、提出问题、理解回答、计算分数，并把观众分配到某一种食物。
+
+食物不是单纯的食物，而是系统读取、分类和分配人的可见结果。
+
+### 当前结构
+
+Have Some "Ai" 已经作为独立模块加入仓库：
+
+```text
+src/have_some_ai/
+├── config.py                  # 加载题库和评分配置
+├── db.py                      # Have Some "Ai" 专属 SQLite 表
+├── hardware.py                # 未来硬件边界
+├── models.py                  # 参与者、题目、答案、观察事件、分配结果
+├── questionnaire.py           # 三模块随机抽题
+├── repository.py              # 数据库读写
+├── scoring.py                 # 双轴评分和四种食物映射
+├── service.py                 # 观众流程服务
+└── interfaces/
+    ├── api.py                 # FastAPI app
+    └── static/index.html      # 当前最小网页界面
 ```
 
-**配置 `.env`：**
+配置文件：
 
-项目启动时会自动读取仓库根目录的 `.env`，如果 shell 里已经 `export` 了同名变量，则以 shell 环境变量为准。
+```text
+config/have_some_ai/
+├── questions.yaml             # 三个模块的题库、隐藏选项和分数
+└── scoring.yaml               # 阈值、食物映射、观察事件权重
+```
 
-供应商接口示例：
+### 当前已完成
+
+当前骨架已经支持一个最小闭环：
+
+```text
+新建观众 → 生成编号 → 三模块抽题 → 提交答案 → 双轴评分
+→ 分配食物 → 写入工作人员队列 → 更新发餐状态 → 数据导出
+```
+
+已支持四种结果：
+
+- `soup`
+- `salad`
+- `ai_sprout_soup`
+- `ai_sprout_salad`
+
+当前实现仍使用 `option_id` 提交答案，用于验证流程。最终版本不会让观众选择 A/B。
+
+### 最终语音交互目标
+
+Have Some "Ai" 最终观众端没有文本输入框，也不显示 A/B 选项。
+
+目标流程：
+
+```text
+AI 语音提问 + 屏幕同步显示问题
+  ↓
+观众通过语音回答
+  ↓
+云端 STT 转写
+  ↓
+LLM 理解回答，并映射到隐藏 A/B rubric
+  ↓
+规则评分引擎计算分数
+  ↓
+系统分配食物
+```
+
+关键原则：
+
+- 观众端不出现文本输入框。
+- A/B 选项只作为后台隐藏评分 rubric，不直接暴露给观众。
+- LLM 只负责理解语音转写后的回答，不直接决定食物。
+- 低置信度或识别失败时，让观众重新说一次。
+- 最终食物仍由规则评分引擎决定。
+
+### 运行
+
+启动 Have Some "Ai"：
+
+```bash
+python scripts/start_have_some_ai.py
+```
+
+默认地址：
+
+```text
+http://127.0.0.1:8010/
+```
+
+可在 `.env` 中覆盖：
+
+```env
+HAVE_SOME_AI_DB_PATH=data/have_some_ai.db
+HAVE_SOME_AI_CONFIG_DIR=config/have_some_ai
+```
+
+### 后续路线
+
+```text
+v0.1  最小闭环：编号、抽题、评分、分配、工作人员队列
+v0.2  语音交互：AI 语音提问、云端 STT、LLM 答案理解、重说机制
+v0.3  现场系统：安全/忌口覆盖、观众端/工作人员端拆分、展后导出
+v0.4  空间介入：摄像头/动作观察、打印、小票、灯光、厨房信号或 ESP32
+```
+
+后续重点功能：
+
+- **语音层**：麦克风录音、云端 STT、AI 语音提问/TTS、重新录音机制。
+- **答案理解层**：保存原始转写、LLM 推断选项、置信度、解释理由和是否重说。
+- **观众端**：移除 A/B 按钮和文本输入框，只显示问题、录音状态、编号和结果。
+- **工作人员端**：显示分配结果、队列状态、安全/忌口信息，并可查看转写与理解结果。
+- **安全层**：过敏、忌口、素食等信息必须优先于艺术分配算法。
+- **展后分析**：CSV/JSON 导出、统计面板、分数与分配结果回看。
+
+详细结构见：`docs/HAVE_SOME_AI_STRUCTURE.md`
+
+---
+
+## Shared Environment
+
+### Python
+
+项目要求：
+
+```text
+Python >= 3.11
+```
+
+当前本地 `.venv` 使用：
+
+```text
+Python 3.13.5
+```
+
+### 安装
+
+```bash
+pip install -e ".[dev,api]"
+```
+
+### 直接依赖版本
+
+如果今天安装或使用依赖，需要记录具体版本。当前本地 `.venv` 中与项目直接相关的版本是：
+
+| 依赖 | 版本 |
+|---|---|
+| `anthropic` | `0.97.0` |
+| `PyYAML` | `6.0.3` |
+| `rich` | `15.0.0` |
+| `fastapi` | `0.136.1` |
+| `uvicorn` | `0.46.0` |
+| `pytest` | `9.0.3` |
+| `pytest-mock` | `3.15.1` |
+
+当前 `pyproject.toml` 仍使用最低版本约束；上表记录的是本地实际安装并验证过的具体版本。
+
+### LLM 环境变量
+
+项目启动时会自动读取仓库根目录的 `.env`。如果 shell 中已经 `export` 了同名变量，则以 shell 环境变量为准。
+
+官方 Anthropic：
+
+```env
+ANTHROPIC_API_KEY=your_official_key_here
+ENTITY_DB_PATH=data/memory.db
+ENTITY_CONFIG_DIR=config/
+ENTITY_PROMPTS_DIR=prompts/
+ENTITY_LOG_LEVEL=INFO
+```
+
+供应商 Anthropic 兼容接口：
 
 ```env
 ANTHROPIC_AUTH_TOKEN=your_supplier_token_here
-ANTHROPIC_BASE_URL=https://code.newcli.com/claude/aws
+ANTHROPIC_BASE_URL=https://your-provider.example
 ENTITY_LLM_MODEL=your_supplier_model_name
 ENTITY_DB_PATH=data/memory.db
 ENTITY_CONFIG_DIR=config/
@@ -123,7 +295,7 @@ ENTITY_PROMPTS_DIR=prompts/
 ENTITY_LOG_LEVEL=INFO
 ```
 
-非标准网关示例（当供应商给的是完整消息接口，而不是标准 `base_url` 时）：
+非标准消息接口：
 
 ```env
 ANTHROPIC_AUTH_TOKEN=your_supplier_token_here
@@ -135,85 +307,30 @@ ENTITY_PROMPTS_DIR=prompts/
 ENTITY_LOG_LEVEL=INFO
 ```
 
-官方 Anthropic 示例：
+### 测试
 
-```env
-ANTHROPIC_API_KEY=your_official_key_here
-# Optional: disable inherited system proxy variables if your local proxy breaks TLS
-# ENTITY_LLM_DISABLE_SYSTEM_PROXY=1
-ENTITY_DB_PATH=data/memory.db
-ENTITY_CONFIG_DIR=config/
-ENTITY_PROMPTS_DIR=prompts/
-ENTITY_LOG_LEVEL=INFO
-```
-
-**初始化数据库：**
-```bash
-python scripts/init_db.py
-```
-
-**启动 CLI：**
-```bash
-python -m conscious_entity.interfaces.cli
-
-# 显示实体内部状态（debug 模式）：
-python -m conscious_entity.interfaces.cli --debug
-```
-
-**运行测试：**
 ```bash
 pytest
 ```
-所有测试中的 LLM 调用均为 mock，不消耗 API 配额。
 
-**常见启动报错：**
-- `LLM configuration error: Missing LLM credentials...`
-  说明 `.env` 或 shell 环境里没有配置凭证。
-- `LLM configuration error: Supplier mode is incomplete...`
-  说明供应商模式缺少 `ANTHROPIC_BASE_URL` 或 `ENTITY_LLM_MODEL`。
-- CLI 启动正常，但回复总是 fallback 文本
-  说明项目本身能启动，但上游网关可能不兼容标准 Anthropic `base_url`，可改用 `ENTITY_LLM_MESSAGES_ENDPOINT`。
-- CLI 只有在关闭代理后才能正常请求
-  可在 `.env` 中设置 `ENTITY_LLM_DISABLE_SYSTEM_PROXY=1`，让 LLM 请求不继承系统代理环境变量。
+这台机器的 Python 3.13 环境中，`pytest` 的 debugging/capture 插件可能触发段错误。当前验证新模块时使用过：
+
+```bash
+.venv/bin/python -m pytest -p no:debugging -p no:capture tests/unit/test_have_some_ai_scoring.py tests/unit/test_have_some_ai_service.py
+```
 
 ---
 
-## 待讨论 / 待确认的问题
-
-这些是目前搁置的设计决策，影响 v0.2 及以后的开发方向：
-
-| 问题 | 影响范围 |
-|---|---|
-| 展览视觉风格、设计语言 | v0.2 的视觉输出层 |
-| 前端技术选型（Web？本地应用？） | v0.2 API 层和界面架构 |
-| 语音输出的具体方案（TTS 选型） | v0.2 语音模块 |
-| 访客身份识别方式（摄像头？Token？完全匿名？） | v0.3 per-visitor 记忆设计 |
-| 运营者面板的访问方式（本地 localhost 还是局域网？） | v0.2 FastAPI 部署配置 |
-| 展期终止仪式的设计 | v0.3 功能范围 |
-
----
-
-## 文档索引
+## Docs
 
 | 文档 | 说明 |
 |---|---|
-| `docs/progress.md` | 当前进度和已知问题（最新状态看这里） |
-| `docs/frame.md` | 完整架构技术文档（模块接口、YAML schema、数据库结构、路线图） |
-| `docs/PRD.md` | 产品需求文档（功能范围、用户故事、成功标准） |
-| `docs/APP_FLOW.md` | 应用流程详解（每一步的数据流和错误处理） |
-| `docs/BACKEND_STRUCTURE.md` | 后端结构文档 |
-| `docs/IMPLEMENTATION_PLAN.md` | 实现计划 |
-| `docs/TECH_STACK.md` | 依赖版本锁定 |
-| `CLAUDE.md` | AI 编码规则（架构边界、禁止事项、开发约定） |
-
----
-
-## 开发路线图
-
-```
-v0.1（当前）  文字 CLI — 状态机 + 记忆 + 策略 + LLM 表达，验证核心逻辑
-     ↓
-v0.2          语义检索 + 语音 + 视觉输出 + 运营者面板
-     ↓
-v0.3          治理可见性 + 访客身份感知 + 展期终止仪式
-```
+| `docs/HAVE_SOME_AI_STRUCTURE.md` | Have Some "Ai" 结构、API、运行方式和扩展路线 |
+| `docs/progress.md` | Conscious Entity 当前进度和已知问题 |
+| `docs/frame.md` | Conscious Entity 架构文档 |
+| `docs/PRD.md` | Conscious Entity 产品需求文档 |
+| `docs/APP_FLOW.md` | Conscious Entity 应用流程 |
+| `docs/BACKEND_STRUCTURE.md` | Conscious Entity 后端结构 |
+| `docs/IMPLEMENTATION_PLAN.md` | Conscious Entity 实现计划 |
+| `docs/TECH_STACK.md` | 技术栈记录 |
+| `CLAUDE.md` | AI 编码规则和开发约定 |

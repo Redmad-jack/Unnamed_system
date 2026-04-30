@@ -1,4 +1,4 @@
-# CLAUDE.md
+# AGENTS.md
 
 *Conscious Entity System — AI 编码规则*
 
@@ -8,7 +8,7 @@
 
 按顺序读：
 
-1. `CLAUDE.md`（本文件）
+1. `AGENTS.md`（本文件）
 2. `docs/progress.md` — 当前进度和已知问题
 3. `docs/frame.md` — 架构技术文档（模块接口、YAML schema、数据库结构）
 4. 当前任务涉及的具体模块文件

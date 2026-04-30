@@ -5,6 +5,9 @@
 data/memory.db
 data/memory.db-shm
 data/memory.db-wal
+data/have_some_ai.db
+data/have_some_ai.db-shm
+data/have_some_ai.db-wal
 data/export.json
 data/embeddings_cache/
 
