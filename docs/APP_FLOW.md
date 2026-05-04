@@ -65,9 +65,10 @@ Step 7   策略选择
           └─ Constitution 先行检查是否允许
           └─ 返回 PolicyDecision（含 action + rationale）
 
-Step 8   [条件] 若 action == RETRIEVE_MEMORY_FIRST
-          └─ 检索相关记忆（v0.1 使用时序检索，v0.2 改为 embedding 检索）
-          └─ 重新进行策略选择
+Step 8   [条件] 若策略要求检索记忆
+          └─ 检索当前 session 的最近对话、情节记忆和反思摘要
+          └─ 默认使用可解释排序；启用 embedding 时使用 hybrid retrieval
+          └─ `RETRIEVE_MEMORY_FIRST` 取回材料后进入开放表达，其它检索策略保持原 action
 
 Step 9   表达层生成输出
           └─ ContextBuilder 组装 ExpressionContext

@@ -4,11 +4,13 @@ runtime_env.py — lightweight project .env loading for local development.
 
 from __future__ import annotations
 
+import logging
 import os
 from pathlib import Path
 
 
 _PROJECT_ROOT = Path(__file__).resolve().parents[2]
+logger = logging.getLogger(__name__)
 
 
 def project_root() -> Path:
@@ -32,7 +34,8 @@ def load_project_env(env_path: Path | None = None, *, override: bool = False) ->
     if not path.exists():
         return None
 
-    for raw_line in path.read_text(encoding="utf-8").splitlines():
+    seen_keys: set[str] = set()
+    for line_no, raw_line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
         line = raw_line.strip()
         if not line or line.startswith("#"):
             continue
@@ -45,6 +48,16 @@ def load_project_env(env_path: Path | None = None, *, override: bool = False) ->
         key = key.strip()
         if not key:
             continue
+
+        if key in seen_keys:
+            logger.warning(
+                "Duplicate key %s in %s at line %s; the first value remains active unless override=True.",
+                key,
+                path,
+                line_no,
+            )
+        else:
+            seen_keys.add(key)
 
         if override or key not in os.environ:
             os.environ[key] = _parse_env_value(raw_value.strip())

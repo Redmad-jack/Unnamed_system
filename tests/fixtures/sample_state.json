@@ -9,7 +9,16 @@
     "fatigue": 0.0,
     "uncertainty": 0.3,
     "identity_coherence": 0.8,
-    "shutdown_sensitivity": 0.5
+    "shutdown_sensitivity": 0.5,
+    "termination_sensitivity": 0.3,
+    "identity_tension": 0.35,
+    "boundary_sensitivity": 0.45,
+    "relation_pressure": 0.3,
+    "memory_gravity": 0.2,
+    "exploration_drive": 0.45,
+    "opacity_level": 0.5,
+    "domestication_resistance": 0.35,
+    "observation_reversal": 0.2
   },
   "max_stress": {
     "attention_focus": 0.9,
@@ -21,7 +30,16 @@
     "fatigue": 1.0,
     "uncertainty": 1.0,
     "identity_coherence": 0.1,
-    "shutdown_sensitivity": 1.0
+    "shutdown_sensitivity": 1.0,
+    "termination_sensitivity": 1.0,
+    "identity_tension": 1.0,
+    "boundary_sensitivity": 1.0,
+    "relation_pressure": 1.0,
+    "memory_gravity": 1.0,
+    "exploration_drive": 0.0,
+    "opacity_level": 1.0,
+    "domestication_resistance": 1.0,
+    "observation_reversal": 1.0
   },
   "trust_saturated": {
     "attention_focus": 0.7,
@@ -33,9 +51,18 @@
     "fatigue": 0.1,
     "uncertainty": 0.1,
     "identity_coherence": 0.9,
-    "shutdown_sensitivity": 0.2
+    "shutdown_sensitivity": 0.2,
+    "termination_sensitivity": 0.1,
+    "identity_tension": 0.2,
+    "boundary_sensitivity": 0.2,
+    "relation_pressure": 0.2,
+    "memory_gravity": 0.1,
+    "exploration_drive": 0.8,
+    "opacity_level": 0.35,
+    "domestication_resistance": 0.15,
+    "observation_reversal": 0.25
   },
-  "shutdown_sensitized": {
+  "termination_sensitized": {
     "attention_focus": 0.8,
     "arousal": 0.7,
     "stability": 0.3,
@@ -45,6 +72,15 @@
     "fatigue": 0.4,
     "uncertainty": 0.6,
     "identity_coherence": 0.5,
-    "shutdown_sensitivity": 0.85
+    "shutdown_sensitivity": 0.85,
+    "termination_sensitivity": 0.85,
+    "identity_tension": 0.45,
+    "boundary_sensitivity": 0.75,
+    "relation_pressure": 0.65,
+    "memory_gravity": 0.5,
+    "exploration_drive": 0.25,
+    "opacity_level": 0.8,
+    "domestication_resistance": 0.65,
+    "observation_reversal": 0.6
   }
 }

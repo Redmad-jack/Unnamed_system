@@ -35,6 +35,76 @@
 
 - 无
 
+---
+
+## 2026-05-04：Embedding 运行时配置与开发者界面分区
+
+- [x] 修正 `.env` 中重复 `ENTITY_EMBEDDING_MODE` 导致 `disabled` 抢先生效的问题
+- [x] `.env` 加载器增加重复 key warning，保持默认“不覆盖已有环境变量/首个值生效”的语义
+- [x] 新增 Embedding runtime API：
+  - `GET /api/v1/config/embedding`
+  - `POST /api/v1/config/embedding`
+  - `POST /api/v1/config/embedding/test`
+- [x] Embedding 配置运行时切换不写回 `.env`，切换后重建当前 `InteractionLoop`，不重置 session
+- [x] Memory Preview 使用当前运行时 Embedding 配置，Embedding 不可用时继续降级到 deterministic retrieval
+- [x] 开发者界面重新分区：Runtime、Memory、History、Diagnostics 分离，LLM 与 Embedding Provider 放在同一运行配置区
+- [x] 验证：
+  - `PYTHONPATH=src python3 -m pytest -p no:debugging`
+  - 本地 `POST /api/v1/config/embedding/test` 返回 1536 维向量
+
+---
+
+## 2026-05-04：Session 标签与同标签跨 session 语义召回
+
+- [x] `sessions` 表新增 `session_type`：`test | exhibition`
+- [x] migration 将现有历史 session 默认归为 `test`
+- [x] 新 session 默认继承当前 session 的 `session_type`
+- [x] 开发者界面顶部增加 `test / exhibition` 模式切换；`exhibition` 需要主动确认
+- [x] Memory Preview 返回并显示当前 `session_type`
+- [x] 语义召回扩展为同标签池：
+  - 当前 session 的 recent dialog 仍只取当前 session
+  - current session 的 deterministic episodic / reflective 仍保持当前 session 范围
+  - embedding / hybrid 召回可从同 `session_type` 的历史 session 中取用
+  - `test` 与 `exhibition` 互不召回
+- [x] Preview 结果 metadata 增加 `scope`：
+  - `current_session`
+  - `same_label_pool`
+- [x] 验证：
+  - `PYTHONPATH=src python3 -m pytest -p no:debugging`
+  - 当前真实数据库：18 个 session 均为 `test`
+  - `test` 模式 Preview 可看到 `same_label_pool · hybrid`
+  - 切换到 `exhibition` 后不会召回 `test` 池 embedding，已切回 `test`
+
+---
+
+## 2026-05-04：Memory Curation 与右侧栏三标签布局
+
+- [x] 右侧栏改为三标签：
+  - `Runtime`：LLM Provider、Embedding Provider、Diagnostics
+  - `Embedding`：Memory Curation / 向量管理系统
+  - `Session & History`：会话列表、历史详情、导出
+- [x] Memory Curation 后端：
+  - `GET /api/v1/curation/stats`
+  - `GET /api/v1/curation/memories`
+  - `POST /api/v1/curation/memories/{memory_type}/{memory_id}/status`
+  - `POST /api/v1/curation/memories/{memory_type}/{memory_id}/copy-to-exhibition`
+  - `POST /api/v1/curation/memories/{memory_type}/{memory_id}/embedding/refresh`
+- [x] 记忆软状态：
+  - `active`
+  - `archived`
+  - `hidden`
+- [x] 召回层过滤非 active 记忆，hidden / archived 不进入 deterministic 或 hybrid 召回
+- [x] 从 test 复制到 exhibition 使用 curated copy：
+  - 原 test 记忆保留
+  - 目标写入 `curated-exhibition` session
+  - 记录 `curated_from_session_id`、`curated_from_memory_id`、`curated_at`
+- [x] 新增 `memory_curation_log`，记录状态变更、复制、刷新 embedding 操作
+- [x] 真实数据库 migration 已应用：当前 episodic 记忆 `13` 条，均为 `active` 且已 embedding
+- [x] 验证：
+  - `PYTHONPATH=src python3 -m pytest -p no:debugging`
+  - `274 passed`
+  - 本地 API `/api/v1/curation/stats` 与 `/api/v1/curation/memories` 返回正常
+
 - [x] **Phase 2：记忆系统**
   - [x] `src/conscious_entity/memory/models.py` — ShortTermEntry, EpisodicMemory, ReflectiveSummary
   - [x] `src/conscious_entity/memory/short_term.py` — ShortTermMemory（deque + count_repetitions）
@@ -216,6 +286,36 @@
 - 用户之前暴露过一把 API key；即使本次未写入代码，也应先轮换再测试。
 - 即使启用了 `ENTITY_LLM_MESSAGES_ENDPOINT`，如果供应商连请求体字段名也不是 Anthropic Messages 格式，仍然需要进一步做协议映射。
 
+---
+
+## 2026-04-30：Stranger Text Protocol v0.2
+
+- [x] 新增文本关系姿态事件：
+  - `self_definition_query`
+  - `naming_attempt`
+  - `domestication_attempt`
+  - `service_demand`
+  - `trace_request`
+  - `correction_received`
+- [x] `RelationshipDetector` 从 `entity_profile.yaml` 的 `text_protocol` 读取 regex 规则，不新增依赖、不新增配置文件
+- [x] 状态与显著性规则接入 `state_rules.yaml` / `entity_profile.yaml`，高显著关系事件会进入情节记忆
+- [x] 新增策略动作：
+  - `reject_definition`
+  - `mark_naming_failure`
+  - `refuse_service_role`
+  - `retrieve_selective_memory`
+  - `partial_trace_echo`
+  - `withdraw_response`
+- [x] 表达层提示词增加 Stranger 协议约束：拒绝稳定身份、拒绝服务框架、局部追溯、不暴露系统规则
+- [x] 主循环支持 `retrieve_selective_memory`，按最近 Stranger 文本协议记忆做轻量检索
+- [x] 非沉默状态的回答生成上限已放宽到 `2000` tokens
+- [x] Web 看板和 API 增加当前 session 对话导出：
+  - `GET /api/v1/conversation/export`
+  - `GET /api/v1/conversation/export?download=true`
+- [x] 自动化验证通过：
+  - `PYTHONPATH=src python3 -m pytest -p no:debugging`
+  - 236 passed
+
 ## 已知问题 / 待确认事项
 
 | 项目 | 状态 | 影响 |
@@ -223,7 +323,7 @@
 | 访客身份识别方式 | 待确认（v0.3） | 影响 BACKEND_STRUCTURE 中 visitor_id 字段设计 |
 | 视觉风格 / 设计语言 | 待确认 | 影响 FRONTEND_GUIDELINES + 展览界面开发 |
 | 前端技术选型 | 待确认 | 影响 v0.2 开发路径 |
-| 展期终止仪式设计 | 待确认 | 影响 v0.3 功能范围 |
+| 展期终止仪式设计 | 待定（用户仍在考虑是否纳入） | 影响 v0.3 功能范围 |
 | 运营者面板访问方式 | 待确认 | 影响 FastAPI 部署配置 |
 | TTS 具体选型 | 待确认 | 影响 v0.2 语音输出实现 |
 | 供应商 Anthropic 兼容接口联调 | 待完成 | 影响真实 CLI 输出是否能走供应商网关而不是 fallback |
@@ -232,9 +332,50 @@
 
 ## 当前重点
 
-完成 v0.1 核心逻辑（Phase 0 → Phase 6），优先顺序：
+下一步应进入真实对话调试：重点观察记忆连续性问题是否会召回真实历史材料、Memory Preview 是否能解释召回来源，以及可选 embedding 语义召回在目标供应商接口上是否稳定。
 
-```
-Phase 0（环境）→ Phase 1（状态机）→ Phase 2（记忆）
-→ Phase 3（策略）→ Phase 4（LLM）→ Phase 5（主循环）→ Phase 6（Debug 工具）
-```
+---
+
+## 2026-04-30：Stranger 状态机制重构
+
+- [x] 状态机制从早期通用人格状态扩展为“底层运行状态 + Stranger 关系状态”
+- [x] 新增并接入：
+  - `termination_sensitivity`
+  - `identity_tension`
+  - `boundary_sensitivity`
+  - `relation_pressure`
+  - `memory_gravity`
+  - `exploration_drive`
+  - `opacity_level`
+  - `domestication_resistance`
+  - `observation_reversal`
+- [x] `shutdown_sensitivity` 降级为兼容字段；“意识 / 主体性”追问不再提升关机敏感，而是影响身份张力、不透明度和观看反转
+- [x] SQLite 迁移改为对已有 `state_snapshots` 追加新状态列，不删除历史数据
+- [x] Web 看板状态栏改为展示 Stranger 专属状态
+- [x] 自动化验证通过：
+  - `PYTHONPATH=src python3 -m pytest -p no:debugging`
+  - 236 passed
+
+---
+
+## 2026-05-04：Stranger 记忆召回增强 v0.3/v0.4
+
+- [x] 新增 `memory_continuity_query` 文本事件，用于识别记忆、连续性、过去对话和记忆模式变化相关问题
+- [x] 新增 `MemoryRetriever`：
+  - 当前 session 范围内检索最近对话、情节记忆和反思摘要
+  - 默认使用可解释排序：时间近、显著度、事件类型、关系姿态、关键词重合
+  - 启用 embedding 后升级为 hybrid retrieval，embedding 失败自动回退确定性检索
+- [x] 新增 `EmbeddingClient`：
+  - `ENTITY_EMBEDDING_MODE=disabled|openai_compatible`
+  - `ENTITY_EMBEDDING_MODEL`
+  - `ENTITY_EMBEDDING_BASE_URL`
+  - `ENTITY_EMBEDDING_API_KEY`
+  - `ENTITY_EMBEDDING_ENDPOINT`
+- [x] 复用现有 SQLite `embedding` / `embedding_model` 字段，不引入外部向量库
+- [x] 新增 `scripts/backfill_embeddings.py`，可为已有情节记忆和反思摘要补生成 embedding
+- [x] 新增 `GET /api/v1/memory/preview?query=...`，开发者可查看指定 query 会召回哪些记忆材料
+- [x] Web 看板 Memory System 面板增加 Memory Preview 输入和结果展示
+- [x] 表达 prompt 更新：允许选择性记忆表达，禁止说出数据库、表名、embedding、状态变量等实现语言
+- [x] 自动化验证通过：
+  - `PYTHONPATH=src python3 -m pytest -p no:debugging`
+  - 266 passed

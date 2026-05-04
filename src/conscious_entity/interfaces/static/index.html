@@ -50,11 +50,27 @@
   #health-badge.ok { color: var(--green); border-color: var(--green); }
   #health-badge.err { color: var(--red); border-color: var(--red); }
   #session-id { color: var(--dim); font-size: 11px; margin-left: auto; }
+  #session-type-control {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    color: var(--dim);
+    font-size: 11px;
+  }
+  #session-type-select {
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    color: var(--text);
+    font-family: var(--mono);
+    font-size: 11px;
+    padding: 2px 6px;
+    border-radius: 3px;
+  }
 
   .grid {
     display: grid;
-    grid-template-columns: 320px 1fr;
-    grid-template-rows: auto auto;
+    grid-template-columns: 320px minmax(0, 1fr) 400px;
+    grid-template-rows: minmax(0, 1fr) 300px;
     gap: 1px;
     background: var(--border);
     height: calc(100vh - 41px);
@@ -82,7 +98,7 @@
   .panel-body { padding: 12px; flex: 1; overflow: auto; }
 
   /* --- State panel --- */
-  #state-panel { grid-row: 1 / 3; }
+  #state-panel { grid-column: 1; grid-row: 1 / 3; }
 
   .state-var { margin-bottom: 10px; }
   .state-var-name { color: var(--text-dim); font-size: 11px; margin-bottom: 3px; }
@@ -114,9 +130,18 @@
   .bar-attention_focus { background: #20c997; }
   .bar-identity_coherence { background: #74c0fc; }
   .bar-shutdown_sensitivity { background: #f06595; }
+  .bar-termination_sensitivity { background: #f06595; }
+  .bar-identity_tension { background: #cc5de8; }
+  .bar-boundary_sensitivity { background: #ff922b; }
+  .bar-relation_pressure { background: #ffa94d; }
+  .bar-memory_gravity { background: #748ffc; }
+  .bar-exploration_drive { background: #ffd43b; }
+  .bar-opacity_level { background: #adb5bd; }
+  .bar-domestication_resistance { background: #ff8787; }
+  .bar-observation_reversal { background: #63e6be; }
 
   /* --- Dialog panel --- */
-  #dialog-panel { display: flex; flex-direction: column; overflow: hidden; }
+  #dialog-panel { grid-column: 2; grid-row: 1; display: flex; flex-direction: column; overflow: hidden; }
 
   #dialog-log {
     flex: 1;
@@ -132,6 +157,7 @@
   .msg-role.entity { color: var(--accent2); }
   .msg-role.system { color: var(--yellow); }
   .msg-text { color: var(--text); white-space: pre-wrap; word-break: break-word; }
+  .msg-text strong { color: var(--text); font-weight: 600; }
   .msg-meta { font-size: 10px; color: var(--dim); margin-top: 2px; }
 
   #dialog-input-row {
@@ -165,16 +191,113 @@
   }
   #dialog-send:disabled { opacity: 0.4; cursor: default; }
 
-  /* --- Stats + Memory row --- */
-  #bottom-row {
-    grid-column: 2;
+  #runtime-panel { grid-column: 3; grid-row: 1 / 3; overflow: hidden; }
+  #runtime-panel .panel-body { padding: 0; display: flex; flex-direction: column; min-height: 0; }
+  .sidebar-tabs {
     display: grid;
     grid-template-columns: 1fr 1fr 1fr;
-    gap: 1px;
-    background: var(--border);
-    max-height: 220px;
-    overflow: hidden;
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
   }
+  .sidebar-tab {
+    background: var(--surface);
+    border: 0;
+    border-right: 1px solid var(--border);
+    color: var(--text-dim);
+    cursor: pointer;
+    font-family: var(--mono);
+    font-size: 10px;
+    letter-spacing: 0.04em;
+    padding: 7px 4px;
+    text-transform: uppercase;
+  }
+  .sidebar-tab:last-child { border-right: 0; }
+  .sidebar-tab.active { background: var(--surface2); color: var(--text); }
+  .sidebar-content { flex: 1; min-height: 0; overflow: auto; padding: 12px; }
+  .sidebar-pane { display: none; }
+  .sidebar-pane.active { display: block; }
+  #memory-panel { grid-column: 2; grid-row: 2; overflow: hidden; }
+  .history-grid {
+    display: grid;
+    grid-template-columns: 1fr;
+    grid-template-rows: 150px minmax(0, 1fr);
+    gap: 12px;
+    height: calc(100vh - 120px);
+    min-height: 0;
+  }
+  #session-list, #session-detail { overflow: auto; min-height: 0; }
+  .session-item {
+    width: 100%;
+    text-align: left;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    color: var(--text-dim);
+    padding: 6px 8px;
+    margin-bottom: 6px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-family: var(--mono);
+    font-size: 11px;
+  }
+  .session-item.active { border-color: var(--accent); color: var(--text); background: var(--surface2); }
+  .session-title { display: flex; justify-content: space-between; gap: 8px; }
+  .session-meta { color: var(--dim); margin-top: 2px; font-size: 10px; }
+  .history-turn { border-bottom: 1px solid var(--border); padding: 6px 0; }
+  .history-role { color: var(--dim); font-size: 10px; text-transform: uppercase; letter-spacing: 0.06em; }
+  .history-text { color: var(--text); white-space: pre-wrap; word-break: break-word; margin: 2px 0 4px; }
+  .memory-note { color: var(--text-dim); font-size: 11px; margin-top: 8px; line-height: 1.45; }
+  .memory-preview-form { display: grid; grid-template-columns: 1fr auto; gap: 6px; margin-top: 10px; }
+  .memory-preview-form input {
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    color: var(--text);
+    font-family: var(--mono);
+    font-size: 11px;
+    padding: 4px 6px;
+    border-radius: 3px;
+    min-width: 0;
+  }
+  .memory-preview-result { margin-top: 8px; font-size: 10px; color: var(--text-dim); }
+  .memory-preview-item { border-top: 1px solid var(--border); padding: 5px 0; }
+  .memory-preview-summary { color: var(--dim); margin-bottom: 6px; }
+  .memory-preview-collapsed { border-top: 1px solid var(--border); margin-top: 6px; padding-top: 6px; }
+  .memory-preview-collapsed summary {
+    color: var(--text-dim);
+    cursor: pointer;
+    user-select: none;
+  }
+  .runtime-section { border-bottom: 1px solid var(--border); padding-bottom: 12px; }
+  .runtime-section:last-child { border-bottom: 0; padding-bottom: 0; }
+  .section-title {
+    color: var(--text-dim);
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    margin-bottom: 8px;
+  }
+  .llm-form { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-top: 8px; }
+  .llm-form label { display: grid; gap: 2px; color: var(--dim); font-size: 10px; text-transform: uppercase; letter-spacing: 0.05em; }
+  .llm-form input, .llm-form select {
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    color: var(--text);
+    font-family: var(--mono);
+    font-size: 11px;
+    padding: 4px 6px;
+    border-radius: 3px;
+    min-width: 0;
+  }
+  .llm-form .wide { grid-column: 1 / -1; }
+  .llm-form .inline-label { display: flex; align-items: center; gap: 6px; text-transform: none; letter-spacing: 0; }
+  .form-actions { display: flex; gap: 6px; flex-wrap: wrap; grid-column: 1 / -1; }
+  .curation-list { margin-top: 10px; }
+  .curation-item {
+    border-top: 1px solid var(--border);
+    padding: 8px 0;
+  }
+  .curation-meta { color: var(--dim); font-size: 10px; margin-bottom: 4px; }
+  .curation-text { color: var(--text); font-size: 11px; white-space: pre-wrap; word-break: break-word; }
+  .curation-actions { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 6px; }
 
   /* --- Tables --- */
   table { width: 100%; border-collapse: collapse; font-size: 12px; }
@@ -252,6 +375,15 @@
 <header>
   <h1>CONSCIOUS ENTITY — DEV PANEL</h1>
   <span id="health-badge">connecting…</span>
+  <span id="session-type-control">
+    Mode
+    <select id="session-type-select" onchange="applySessionType(this.value)">
+      <option value="test">test</option>
+      <option value="exhibition">exhibition</option>
+    </select>
+  </span>
+  <button class="btn-sm" onclick="saveConversation()">Save Dialog</button>
+  <button class="btn-sm" onclick="resetMemory()">Reset Memory / New Session</button>
   <button class="btn-sm" onclick="openConfig()">YAML Config</button>
   <button class="btn-sm" onclick="reloadConfig()">Reload Config</button>
   <span id="session-id"></span>
@@ -277,20 +409,80 @@
     </div>
   </div>
 
-  <!-- Right bottom: Stats + Memory + LLM Config -->
-  <div id="bottom-row">
-    <div class="panel">
-      <div class="panel-title">LLM Statistics</div>
-      <div class="panel-body" id="llm-stats-body"><div class="dim">Loading…</div></div>
+  <!-- Right: Runtime providers + diagnostics -->
+  <div class="panel" id="runtime-panel">
+    <div class="panel-title">Right Sidebar</div>
+    <div class="panel-body">
+      <div class="sidebar-tabs">
+        <button class="sidebar-tab active" id="tab-runtime" onclick="showSidebarTab('runtime')">Runtime</button>
+        <button class="sidebar-tab" id="tab-embedding" onclick="showSidebarTab('embedding')">Embedding</button>
+        <button class="sidebar-tab" id="tab-history" onclick="showSidebarTab('history')">Session & History</button>
+      </div>
+      <div class="sidebar-content">
+        <div class="sidebar-pane active" id="pane-runtime">
+          <div class="runtime-section">
+            <div class="section-title">LLM Provider</div>
+            <div id="llm-cfg-body"><div class="dim">Loading…</div></div>
+          </div>
+          <div class="runtime-section">
+            <div class="section-title">Embedding Provider</div>
+            <div id="embedding-cfg-body"><div class="dim">Loading…</div></div>
+          </div>
+          <div class="runtime-section">
+            <div class="section-title">Diagnostics</div>
+            <div id="llm-stats-body"><div class="dim">Loading…</div></div>
+          </div>
+        </div>
+
+        <div class="sidebar-pane" id="pane-embedding">
+          <div class="runtime-section">
+            <div class="section-title">Vector Dataset</div>
+            <div id="curation-stats-body"><div class="dim">Loading…</div></div>
+            <div class="llm-form">
+              <label>Pool
+                <select id="curation-session-type" onchange="pollCurationMemories()">
+                  <option value="test">test</option>
+                  <option value="exhibition">exhibition</option>
+                </select>
+              </label>
+              <label>Status
+                <select id="curation-status" onchange="pollCurationMemories()">
+                  <option value="active">active</option>
+                  <option value="archived">archived</option>
+                  <option value="hidden">hidden</option>
+                  <option value="all">all</option>
+                </select>
+              </label>
+              <label>Type
+                <select id="curation-memory-type" onchange="pollCurationMemories()">
+                  <option value="episodic">episodic</option>
+                  <option value="reflective">reflective</option>
+                  <option value="all">all</option>
+                </select>
+              </label>
+              <label class="wide">Search <input id="curation-query" placeholder="filter memory text…" onkeydown="if(event.key==='Enter'){event.preventDefault();pollCurationMemories()}"></label>
+              <div class="form-actions">
+                <button class="btn-sm" onclick="pollCurationMemories()">Refresh list</button>
+                <button class="btn-sm" onclick="pollCurationStats()">Refresh stats</button>
+              </div>
+            </div>
+          </div>
+          <div id="curation-list" class="curation-list"><div class="dim">Loading…</div></div>
+        </div>
+
+        <div class="sidebar-pane" id="pane-history">
+          <div class="history-grid">
+            <div id="session-list"><div class="dim">Loading…</div></div>
+            <div id="session-detail"><div class="dim">Select a session…</div></div>
+          </div>
+        </div>
+      </div>
     </div>
-    <div class="panel">
-      <div class="panel-title">Memory System</div>
-      <div class="panel-body" id="memory-body"><div class="dim">Loading…</div></div>
-    </div>
-    <div class="panel">
-      <div class="panel-title">LLM Config</div>
-      <div class="panel-body" id="llm-cfg-body"><div class="dim">Loading…</div></div>
-    </div>
+  </div>
+
+  <div class="panel" id="memory-panel">
+    <div class="panel-title">Memory System</div>
+    <div class="panel-body" id="memory-body"><div class="dim">Loading…</div></div>
   </div>
 
 </div>
@@ -310,11 +502,24 @@
 <script>
 // ---- state ----
 const STATE_KEYS = [
-  'attention_focus','arousal','stability','curiosity','trust',
-  'resistance','fatigue','uncertainty','identity_coherence','shutdown_sensitivity'
+  'attention_focus','arousal','stability','fatigue','uncertainty','identity_coherence',
+  'termination_sensitivity','identity_tension','boundary_sensitivity','relation_pressure',
+  'memory_gravity','exploration_drive','opacity_level','domestication_resistance',
+  'observation_reversal'
 ];
 let _configs = null;
 let _currentTab = null;
+let _selectedSessionId = null;
+let _activeSessionId = null;
+let _activeSessionType = 'test';
+let _memoryPreviewQuery = '';
+let _memoryPreviewDraft = '';
+let _memoryPreviewResult = null;
+let _memoryPreviewLoading = false;
+let _sidebarTab = 'runtime';
+const MEMORY_PREVIEW_HIGH_SCORE = 0.35;
+const MEMORY_PREVIEW_RECENT_HIGH_SCORE = 0.75;
+const MEMORY_PREVIEW_HIGH_SIMILARITY = 0.35;
 
 // ---- polling ----
 async function fetchJSON(url) {
@@ -323,13 +528,34 @@ async function fetchJSON(url) {
   return r.json();
 }
 
+function showSidebarTab(tab) {
+  _sidebarTab = tab;
+  for (const name of ['runtime', 'embedding', 'history']) {
+    const button = document.getElementById('tab-' + name);
+    const pane = document.getElementById('pane-' + name);
+    if (button) button.classList.toggle('active', name === tab);
+    if (pane) pane.classList.toggle('active', name === tab);
+  }
+  if (tab === 'embedding') {
+    pollCurationStats();
+    pollCurationMemories();
+  }
+  if (tab === 'history') {
+    pollSessions();
+  }
+}
+
 async function pollHealth() {
   try {
     const d = await fetchJSON('/health');
     const el = document.getElementById('health-badge');
     el.textContent = d.status.toUpperCase();
     el.className = d.status === 'ok' ? 'ok' : 'err';
-    document.getElementById('session-id').textContent = 'session: ' + d.session_id.slice(0, 8);
+    _activeSessionId = d.session_id;
+    _activeSessionType = d.session_type || 'test';
+    const typeSelect = document.getElementById('session-type-select');
+    if (typeSelect && typeSelect.value !== _activeSessionType) typeSelect.value = _activeSessionType;
+    document.getElementById('session-id').textContent = 'session: ' + d.session_id.slice(0, 8) + ' · ' + _activeSessionType;
   } catch {}
 }
 
@@ -378,6 +604,11 @@ async function pollLLMStats() {
 
 async function pollMemory() {
   try {
+    if (isMemoryPreviewEditing() || _memoryPreviewLoading) {
+      syncMemoryPreviewDraftFromInput();
+      return;
+    }
+
     const [ep, rf] = await Promise.all([
       fetchJSON('/api/v1/memory/episodic?limit=1').then(r => r),
       fetchJSON('/api/v1/memory/reflective'),
@@ -391,9 +622,108 @@ async function pollMemory() {
         <tr><td>Unreflected</td><td>${unreflected}</td></tr>
         <tr><td>Active reflections</td><td>${rf.length}</td></tr>
       </table>
-      ${rf.length ? `<div style="margin-top:8px;color:var(--text-dim);font-size:11px">Latest: ${(rf[0].content||'').slice(0,80)}…</div>` : ''}
+      <div class="memory-note">
+        Short-term context is the recent dialog window sent to the model. Interaction log is the full saved dialog.
+        State snapshots persist internal drift. Episodic events store salient moments. Reflections compress repeated patterns.
+        Semantic preview can draw from the same ${escapeHtml(_activeSessionType)} session pool.
+      </div>
+      ${rf.length ? `<div style="margin-top:8px;color:var(--text-dim);font-size:11px">Latest: ${renderMessageText((rf[0].content||'').slice(0,80))}…</div>` : ''}
+      <div class="memory-preview-form">
+        <input id="memory-preview-query" value="${escapeAttr(_memoryPreviewDraft)}" placeholder="Preview memory for a query…" oninput="setMemoryPreviewDraft(this.value)" onkeydown="if(event.key==='Enter'){event.preventDefault();previewMemory()}">
+        <button class="btn-sm" onclick="previewMemory()" ${_memoryPreviewLoading ? 'disabled' : ''}>${_memoryPreviewLoading ? 'Loading…' : 'Preview'}</button>
+      </div>
+      <div id="memory-preview-result" class="memory-preview-result"></div>
     `;
+    if (_memoryPreviewResult) renderMemoryPreview(_memoryPreviewResult);
   } catch {}
+}
+
+async function previewMemory() {
+  const input = document.getElementById('memory-preview-query');
+  const query = input ? input.value.trim() : '';
+  if (!query) return;
+  _memoryPreviewQuery = query;
+  _memoryPreviewDraft = query;
+  _memoryPreviewLoading = true;
+  renderMemoryPreviewLoading();
+  try {
+    const d = await fetchJSON('/api/v1/memory/preview?query=' + encodeURIComponent(query));
+    _memoryPreviewResult = d;
+    renderMemoryPreview(d);
+  } catch (e) {
+    const el = document.getElementById('memory-preview-result');
+    if (el) el.innerHTML = `<span class="err">Preview failed: ${escapeHtml(e.message)}</span>`;
+  } finally {
+    _memoryPreviewLoading = false;
+  }
+}
+
+function setMemoryPreviewDraft(value) {
+  _memoryPreviewDraft = value;
+}
+
+function syncMemoryPreviewDraftFromInput() {
+  const input = document.getElementById('memory-preview-query');
+  if (input) _memoryPreviewDraft = input.value;
+}
+
+function isMemoryPreviewEditing() {
+  const active = document.activeElement;
+  return active && active.id === 'memory-preview-query';
+}
+
+function renderMemoryPreviewLoading() {
+  const el = document.getElementById('memory-preview-result');
+  if (el) el.innerHTML = '<span class="dim">Retrieving memory material…</span>';
+}
+
+function renderMemoryPreview(d) {
+  const el = document.getElementById('memory-preview-result');
+  if (!el) return;
+  const results = d.results || [];
+  if (!results.length) {
+    el.innerHTML = '<span class="dim">No memory material would be retrieved.</span>';
+    return;
+  }
+
+  const visible = results.filter(isHighRelevanceMemory);
+  const collapsed = results.filter(item => !isHighRelevanceMemory(item));
+  let html = '';
+  if (visible.length) {
+    html += `<div class="memory-preview-summary">Showing ${visible.length} strongly related result${visible.length > 1 ? 's' : ''}. ${collapsed.length ? `${collapsed.length} lower-relevance result${collapsed.length > 1 ? 's are' : ' is'} collapsed.` : ''}</div>`;
+    html += visible.slice(0, 8).map(renderMemoryPreviewItem).join('');
+  } else {
+    html += `<div class="memory-preview-summary">No strongly related memory found. ${collapsed.length ? 'Lower-relevance fallback results are collapsed below.' : ''}</div>`;
+  }
+  if (collapsed.length) {
+    html += `<details class="memory-preview-collapsed">
+      <summary>Show lower relevance / fallback results (${collapsed.length})</summary>
+      ${collapsed.slice(0, 8).map(renderMemoryPreviewItem).join('')}
+    </details>`;
+  }
+  el.innerHTML = html;
+}
+
+function isHighRelevanceMemory(item) {
+  const score = Number(item.score || 0);
+  const similarity = item.similarity === null || item.similarity === undefined ? null : Number(item.similarity);
+  if (similarity !== null && Number.isFinite(similarity)) {
+    return similarity >= MEMORY_PREVIEW_HIGH_SIMILARITY;
+  }
+  if (item.memory_type === 'recent' && item.source === 'deterministic') {
+    return score >= MEMORY_PREVIEW_RECENT_HIGH_SCORE;
+  }
+  return score >= MEMORY_PREVIEW_HIGH_SCORE;
+}
+
+function renderMemoryPreviewItem(item) {
+  const scope = item.metadata && item.metadata.scope ? ' · ' + item.metadata.scope : '';
+  const sessionType = item.metadata && item.metadata.session_type ? ' · ' + item.metadata.session_type : '';
+  return `
+    <div class="memory-preview-item">
+      <div class="dim">${escapeHtml(item.memory_type || '')} · ${escapeHtml(item.source || '')}${escapeHtml(scope)}${escapeHtml(sessionType)} · score ${escapeHtml(item.score ?? '')}${item.similarity !== null && item.similarity !== undefined ? ' · sim ' + escapeHtml(item.similarity) : ''}</div>
+      <div>${renderMessageText(String(item.content || '').slice(0, 220))}</div>
+    </div>`;
 }
 
 async function pollLLMConfig() {
@@ -401,6 +731,7 @@ async function pollLLMConfig() {
     const d = await fetchJSON('/api/v1/config/llm');
     const rows = [
       ['Mode', d.mode],
+      ['Source', d.source || 'env'],
       ['API Key', d.ANTHROPIC_API_KEY || '—'],
       ['Auth Token', d.ANTHROPIC_AUTH_TOKEN || '—'],
       ['Base URL', d.ANTHROPIC_BASE_URL || '—'],
@@ -408,11 +739,178 @@ async function pollLLMConfig() {
       ['Endpoint', d.ENTITY_LLM_MESSAGES_ENDPOINT || '—'],
     ];
     let html = '<table>';
-    for (const [k, v] of rows) html += `<tr><td class="dim">${k}</td><td>${v}</td></tr>`;
+    for (const [k, v] of rows) html += `<tr><td class="dim">${escapeHtml(k)}</td><td>${escapeHtml(v)}</td></tr>`;
     html += '</table>';
     if (d.error) html += `<div class="err" style="margin-top:6px;font-size:11px">${d.error}</div>`;
+    html += `
+      <div class="llm-form">
+        <label>Mode
+          <select id="llm-mode">
+            <option value="official" ${d.mode === 'official' ? 'selected' : ''}>official</option>
+            <option value="supplier" ${d.mode === 'supplier' ? 'selected' : ''}>supplier</option>
+            <option value="custom_endpoint" ${d.mode === 'custom_endpoint' ? 'selected' : ''}>custom_endpoint</option>
+          </select>
+        </label>
+        <label>Model <input id="llm-model" value="${escapeAttr(d.ENTITY_LLM_MODEL || '')}" placeholder="claude-haiku-4-5"></label>
+        <label class="wide">Base URL <input id="llm-base-url" value="${escapeAttr(d.ANTHROPIC_BASE_URL || '')}" placeholder="https://aihubmix.com/..."></label>
+        <label class="wide">Endpoint <input id="llm-endpoint" value="${escapeAttr(d.ENTITY_LLM_MESSAGES_ENDPOINT || '')}" placeholder="custom /messages endpoint"></label>
+        <label>API Key <input id="llm-api-key" type="password" placeholder="blank keeps current/env key"></label>
+        <label>Auth Token <input id="llm-auth-token" type="password" placeholder="blank keeps current/env token"></label>
+        <label class="inline-label"><input id="llm-disable-proxy" type="checkbox" ${d.ENTITY_LLM_DISABLE_SYSTEM_PROXY === 'true' ? 'checked' : ''}> Disable system proxy</label>
+        <div class="form-actions"><button class="btn-sm" onclick="applyLLMConfig()">Apply runtime LLM config</button></div>
+      </div>
+    `;
     document.getElementById('llm-cfg-body').innerHTML = html;
   } catch {}
+}
+
+async function pollEmbeddingConfig() {
+  try {
+    const d = await fetchJSON('/api/v1/config/embedding');
+    const rows = [
+      ['Mode', d.mode],
+      ['Source', d.source || 'env'],
+      ['API Key', d.ENTITY_EMBEDDING_API_KEY || '—'],
+      ['Base URL', d.ENTITY_EMBEDDING_BASE_URL || '—'],
+      ['Model', d.ENTITY_EMBEDDING_MODEL || '—'],
+      ['Endpoint', d.ENTITY_EMBEDDING_ENDPOINT || '—'],
+    ];
+    let html = '<table>';
+    for (const [k, v] of rows) html += `<tr><td class="dim">${escapeHtml(k)}</td><td>${escapeHtml(v)}</td></tr>`;
+    html += '</table>';
+    if (d.error) html += `<div class="err" style="margin-top:6px;font-size:11px">${escapeHtml(d.error)}</div>`;
+    html += `
+      <div class="llm-form">
+        <label>Mode
+          <select id="embedding-mode">
+            <option value="disabled" ${d.mode === 'disabled' ? 'selected' : ''}>disabled</option>
+            <option value="openai_compatible" ${d.mode === 'openai_compatible' ? 'selected' : ''}>openai_compatible</option>
+          </select>
+        </label>
+        <label>Model <input id="embedding-model" value="${escapeAttr(d.ENTITY_EMBEDDING_MODEL || '')}" placeholder="text-embedding-3-small"></label>
+        <label class="wide">Base URL <input id="embedding-base-url" value="${escapeAttr(d.ENTITY_EMBEDDING_BASE_URL || '')}" placeholder="https://aihubmix.com/v1"></label>
+        <label class="wide">Endpoint <input id="embedding-endpoint" value="${escapeAttr(d.ENTITY_EMBEDDING_ENDPOINT || '')}" placeholder="optional full /embeddings endpoint"></label>
+        <label class="wide">API Key <input id="embedding-api-key" type="password" placeholder="blank keeps current/env key"></label>
+        <div class="form-actions">
+          <button class="btn-sm" onclick="applyEmbeddingConfig()">Apply embedding config</button>
+          <button class="btn-sm" onclick="testEmbeddingConfig()">Test Embedding</button>
+        </div>
+      </div>
+      <div id="embedding-test-result" class="memory-preview-result"></div>
+    `;
+    document.getElementById('embedding-cfg-body').innerHTML = html;
+  } catch {}
+}
+
+async function pollCurationStats() {
+  try {
+    const d = await fetchJSON('/api/v1/curation/stats');
+    const rows = d.rows || [];
+    if (!rows.length) {
+      document.getElementById('curation-stats-body').innerHTML = '<div class="dim">No curated memory rows yet.</div>';
+      return;
+    }
+    let html = '<table>';
+    html += '<tr><th>Type</th><th>Pool</th><th>Status</th><th>Rows</th><th>Embedded</th></tr>';
+    for (const row of rows) {
+      html += `<tr>
+        <td>${escapeHtml(row.memory_type)}</td>
+        <td>${escapeHtml(row.session_type)}</td>
+        <td>${escapeHtml(row.memory_status)}</td>
+        <td>${escapeHtml(row.count)}</td>
+        <td>${escapeHtml(row.embedded_count || 0)}</td>
+      </tr>`;
+    }
+    html += '</table>';
+    document.getElementById('curation-stats-body').innerHTML = html;
+  } catch (e) {
+    const el = document.getElementById('curation-stats-body');
+    if (el) el.innerHTML = `<span class="err">Stats failed: ${escapeHtml(e.message)}</span>`;
+  }
+}
+
+async function pollCurationMemories() {
+  try {
+    const sessionType = document.getElementById('curation-session-type')?.value || 'test';
+    const status = document.getElementById('curation-status')?.value || 'active';
+    const memoryType = document.getElementById('curation-memory-type')?.value || 'episodic';
+    const query = document.getElementById('curation-query')?.value.trim() || '';
+    const url = `/api/v1/curation/memories?session_type=${encodeURIComponent(sessionType)}&status=${encodeURIComponent(status)}&memory_type=${encodeURIComponent(memoryType)}&q=${encodeURIComponent(query)}&limit=80`;
+    const d = await fetchJSON(url);
+    renderCurationList(d.rows || []);
+  } catch (e) {
+    const el = document.getElementById('curation-list');
+    if (el) el.innerHTML = `<span class="err">Memory list failed: ${escapeHtml(e.message)}</span>`;
+  }
+}
+
+function renderCurationList(rows) {
+  const el = document.getElementById('curation-list');
+  if (!el) return;
+  if (!rows.length) {
+    el.innerHTML = '<div class="dim">No memory rows match these filters.</div>';
+    return;
+  }
+  el.innerHTML = rows.map(row => `
+    <div class="curation-item">
+      <div class="curation-meta">
+        ${escapeHtml(row.memory_type)} #${escapeHtml(row.id)} · ${escapeHtml(row.session_type)} · ${escapeHtml(row.memory_status)}
+        · ${row.has_embedding ? 'embedded' : 'no embedding'}
+        ${row.embedding_model ? ' · ' + escapeHtml(row.embedding_model) : ''}
+        · session ${escapeHtml(String(row.session_id || '').slice(0, 8))}
+      </div>
+      <div class="curation-text">${renderMessageText(String(row.content || '').slice(0, 360))}</div>
+      <div class="curation-actions">
+        ${row.session_type === 'test' ? `<button class="btn-sm" onclick="copyMemoryToExhibition('${escapeAttr(row.memory_type)}', ${Number(row.id)})">Copy to exhibition</button>` : ''}
+        ${row.memory_status !== 'active' ? `<button class="btn-sm" onclick="setMemoryStatus('${escapeAttr(row.memory_type)}', ${Number(row.id)}, 'active')">Activate</button>` : ''}
+        ${row.memory_status !== 'hidden' ? `<button class="btn-sm" onclick="setMemoryStatus('${escapeAttr(row.memory_type)}', ${Number(row.id)}, 'hidden')">Hide</button>` : ''}
+        ${row.memory_status !== 'archived' ? `<button class="btn-sm" onclick="setMemoryStatus('${escapeAttr(row.memory_type)}', ${Number(row.id)}, 'archived')">Archive</button>` : ''}
+        <button class="btn-sm" onclick="refreshMemoryEmbedding('${escapeAttr(row.memory_type)}', ${Number(row.id)})">Refresh embedding</button>
+      </div>
+    </div>
+  `).join('');
+}
+
+async function setMemoryStatus(memoryType, memoryId, status) {
+  try {
+    const r = await fetch(`/api/v1/curation/memories/${encodeURIComponent(memoryType)}/${memoryId}/status`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ status }),
+    });
+    if (!r.ok) {
+      const err = await r.json().catch(() => ({ detail: r.statusText }));
+      throw new Error(err.detail || r.statusText);
+    }
+    _memoryPreviewResult = null;
+    await Promise.all([pollCurationStats(), pollCurationMemories(), pollMemory()]);
+  } catch (e) {
+    alert('Status update failed: ' + e.message);
+  }
+}
+
+async function copyMemoryToExhibition(memoryType, memoryId) {
+  try {
+    const r = await fetch(`/api/v1/curation/memories/${encodeURIComponent(memoryType)}/${memoryId}/copy-to-exhibition`, { method: 'POST' });
+    if (!r.ok) {
+      const err = await r.json().catch(() => ({ detail: r.statusText }));
+      throw new Error(err.detail || r.statusText);
+    }
+    await Promise.all([pollCurationStats(), pollCurationMemories(), pollSessions()]);
+  } catch (e) {
+    alert('Copy failed: ' + e.message);
+  }
+}
+
+async function refreshMemoryEmbedding(memoryType, memoryId) {
+  try {
+    const r = await fetch(`/api/v1/curation/memories/${encodeURIComponent(memoryType)}/${memoryId}/embedding/refresh`, { method: 'POST' });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(d.detail || r.statusText);
+    await Promise.all([pollCurationStats(), pollCurationMemories()]);
+  } catch (e) {
+    alert('Embedding refresh failed: ' + e.message);
+  }
 }
 
 // ---- dialog ----
@@ -421,9 +919,25 @@ async function loadDialogLog() {
     const rows = await fetchJSON('/api/v1/interaction-log?limit=30');
     const log = document.getElementById('dialog-log');
     log.innerHTML = '';
-    [...rows].reverse().forEach(r => appendMsg(r.role, r.raw_text, r.turn_at, r.policy_action, r.delay_ms));
+    [...rows].reverse().forEach(appendInteractionRow);
     log.scrollTop = log.scrollHeight;
   } catch {}
+}
+
+function appendInteractionRow(r) {
+  if (r.raw_text) {
+    appendMsg(r.role || 'user', r.raw_text, r.turn_at, null, null);
+  }
+  if (r.expression_output !== null && r.expression_output !== undefined) {
+    appendMsg(
+      'entity',
+      r.expression_output || '...',
+      r.turn_at,
+      r.policy_action,
+      r.delay_ms,
+      r.visual_mode || null,
+    );
+  }
 }
 
 function appendMsg(role, text, ts, action, delay_ms, status) {
@@ -434,7 +948,7 @@ function appendMsg(role, text, ts, action, delay_ms, status) {
   div.innerHTML = `
     <div class="msg-role ${role}">${role}</div>
     <div>
-      <div class="msg-text">${escapeHtml(text || '')}</div>
+      <div class="msg-text">${renderMessageText(text || '')}</div>
       <div class="msg-meta">${escapeHtml(meta)}</div>
     </div>`;
   log.appendChild(div);
@@ -443,6 +957,35 @@ function appendMsg(role, text, ts, action, delay_ms, status) {
 
 function escapeHtml(s) {
   return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+function escapeAttr(s) {
+  return escapeHtml(s).replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+function renderMessageText(s) {
+  return escapeHtml(s)
+    .replace(/\*\*([^*\n][\s\S]*?[^*\n])\*\*/g, '<strong>$1</strong>')
+    .replace(/\*\*/g, '');
+}
+
+async function saveConversation(sessionId) {
+  try {
+    const query = sessionId ? `?limit=5000&session_id=${encodeURIComponent(sessionId)}` : '?limit=5000';
+    const d = await fetchJSON('/api/v1/conversation/export' + query);
+    const blob = new Blob([JSON.stringify(d, null, 2)], { type: 'application/json;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+    a.href = url;
+    a.download = `conversation-${String(d.session_id || 'session').slice(0, 8)}-${stamp}.json`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  } catch (e) {
+    appendMsg('system', '[Save error] ' + e.message, new Date().toISOString(), null, null);
+  }
 }
 
 async function sendDialog() {
@@ -477,6 +1020,7 @@ async function sendDialog() {
       pollState();
       pollLLMStats();
       pollMemory();
+      pollSessions();
     }
   } catch (e) {
     appendMsg('system', '[Network error] ' + e.message, new Date().toISOString(), null, null);
@@ -489,6 +1033,185 @@ async function sendDialog() {
 document.getElementById('dialog-input').addEventListener('keydown', e => {
   if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendDialog(); }
 });
+
+// ---- sessions / history ----
+async function pollSessions() {
+  try {
+    const sessions = await fetchJSON('/api/v1/sessions');
+    const active = sessions.find(s => s.active);
+    _activeSessionId = active ? active.id : _activeSessionId;
+    if (!_selectedSessionId || !sessions.some(s => s.id === _selectedSessionId)) {
+      _selectedSessionId = _activeSessionId || (sessions[0] && sessions[0].id) || null;
+    }
+    renderSessionList(sessions);
+    if (_selectedSessionId) await loadSessionDetail(_selectedSessionId);
+  } catch {}
+}
+
+function renderSessionList(sessions) {
+  const list = document.getElementById('session-list');
+  if (!sessions.length) {
+    list.innerHTML = '<div class="dim">No sessions yet.</div>';
+    return;
+  }
+  list.innerHTML = sessions.map(s => `
+    <button class="session-item ${s.id === _selectedSessionId ? 'active' : ''}" onclick="selectSession('${escapeAttr(s.id)}')">
+      <div class="session-title">
+        <span>${escapeHtml(String(s.id).slice(0, 8))}</span>
+        <span>${s.active ? 'active' : (s.ended_at ? 'archived' : 'open')}</span>
+      </div>
+      <div class="session-meta">${escapeHtml(s.latest_turn_at || s.started_at || '')}</div>
+      <div class="session-meta">${escapeHtml(s.session_type || 'test')} · ${s.turn_count} turns · ${s.memory_count} episodic · ${s.reflection_count} reflections</div>
+    </button>
+  `).join('');
+}
+
+async function selectSession(sessionId) {
+  _selectedSessionId = sessionId;
+  await pollSessions();
+}
+
+async function loadSessionDetail(sessionId) {
+  const [conv, episodic, reflective] = await Promise.all([
+    fetchJSON(`/api/v1/sessions/${encodeURIComponent(sessionId)}/conversation?limit=200`),
+    fetchJSON(`/api/v1/sessions/${encodeURIComponent(sessionId)}/memory/episodic?limit=50`),
+    fetchJSON(`/api/v1/sessions/${encodeURIComponent(sessionId)}/memory/reflective`),
+  ]);
+  const turns = conv.turns || [];
+  const detail = document.getElementById('session-detail');
+  detail.innerHTML = `
+    <div style="display:flex;justify-content:space-between;gap:8px;align-items:center;margin-bottom:8px">
+      <div>
+        <div>${escapeHtml(String(sessionId).slice(0, 8))}</div>
+        <div class="dim">${turns.length} turns · ${episodic.length} episodic · ${reflective.length} reflections</div>
+      </div>
+      <button class="btn-sm" onclick="saveConversation('${escapeAttr(sessionId)}')">Export</button>
+    </div>
+    ${reflective.length ? `<div class="memory-note">Latest reflection: ${renderMessageText((reflective[0].content || '').slice(0, 180))}</div>` : ''}
+    ${turns.map(t => `
+      <div class="history-turn">
+        <div class="history-role">user · ${escapeHtml((t.turn_at || '').slice(11, 19))}</div>
+        <div class="history-text">${renderMessageText(t.user_text || '')}</div>
+        <div class="history-role">entity · ${escapeHtml(t.policy_action || '')}</div>
+        <div class="history-text">${renderMessageText(t.entity_text || '...')}</div>
+      </div>
+    `).join('')}
+  `;
+}
+
+async function applySessionType(sessionType) {
+  if (!['test', 'exhibition'].includes(sessionType)) return;
+  if (sessionType === 'exhibition') {
+    const ok = confirm('Activate exhibition mode for the current session? It will only share memory with other exhibition sessions.');
+    if (!ok) {
+      const typeSelect = document.getElementById('session-type-select');
+      if (typeSelect) typeSelect.value = _activeSessionType;
+      return;
+    }
+  }
+  try {
+    const r = await fetch('/api/v1/sessions/current/type', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ session_type: sessionType }),
+    });
+    if (!r.ok) {
+      const err = await r.json().catch(() => ({ detail: r.statusText }));
+      throw new Error(err.detail || r.statusText);
+    }
+    _memoryPreviewResult = null;
+    await Promise.all([pollHealth(), pollMemory(), pollSessions()]);
+  } catch (e) {
+    alert('Session mode update failed: ' + e.message);
+    const typeSelect = document.getElementById('session-type-select');
+    if (typeSelect) typeSelect.value = _activeSessionType;
+  }
+}
+
+async function resetMemory() {
+  if (!confirm('Archive the current session and start a new empty memory session? Old records will be preserved.')) return;
+  try {
+    const r = await fetch('/api/v1/sessions/reset', { method: 'POST' });
+    if (!r.ok) {
+      const err = await r.json().catch(() => ({ detail: r.statusText }));
+      throw new Error(err.detail || r.statusText);
+    }
+    _selectedSessionId = null;
+    await Promise.all([pollHealth(), pollState(), pollMemory(), loadDialogLog(), pollSessions()]);
+  } catch (e) {
+    alert('Reset failed: ' + e.message);
+  }
+}
+
+async function applyLLMConfig() {
+  const body = {
+    mode: document.getElementById('llm-mode').value,
+    model: document.getElementById('llm-model').value.trim() || null,
+    base_url: document.getElementById('llm-base-url').value.trim() || null,
+    messages_endpoint: document.getElementById('llm-endpoint').value.trim() || null,
+    api_key: document.getElementById('llm-api-key').value.trim() || null,
+    auth_token: document.getElementById('llm-auth-token').value.trim() || null,
+    disable_system_proxy: document.getElementById('llm-disable-proxy').checked,
+  };
+  try {
+    const r = await fetch('/api/v1/config/llm', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    if (!r.ok) {
+      const err = await r.json().catch(() => ({ detail: r.statusText }));
+      throw new Error(err.detail || r.statusText);
+    }
+    await Promise.all([pollLLMConfig(), pollLLMStats()]);
+  } catch (e) {
+    alert('LLM config failed: ' + e.message);
+  }
+}
+
+async function applyEmbeddingConfig() {
+  const body = {
+    mode: document.getElementById('embedding-mode').value,
+    model: document.getElementById('embedding-model').value.trim() || null,
+    base_url: document.getElementById('embedding-base-url').value.trim() || null,
+    endpoint: document.getElementById('embedding-endpoint').value.trim() || null,
+    api_key: document.getElementById('embedding-api-key').value.trim() || null,
+  };
+  try {
+    const r = await fetch('/api/v1/config/embedding', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    if (!r.ok) {
+      const err = await r.json().catch(() => ({ detail: r.statusText }));
+      throw new Error(err.detail || r.statusText);
+    }
+    _memoryPreviewResult = null;
+    await Promise.all([pollEmbeddingConfig(), pollMemory()]);
+  } catch (e) {
+    alert('Embedding config failed: ' + e.message);
+  }
+}
+
+async function testEmbeddingConfig() {
+  const el = document.getElementById('embedding-test-result');
+  if (el) el.innerHTML = '<span class="dim">Testing…</span>';
+  try {
+    const r = await fetch('/api/v1/config/embedding/test', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text: '记忆如何影响我现在的回答' }),
+    });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(d.detail || r.statusText);
+    if (el) {
+      el.innerHTML = `<span class="ok">OK</span> · dim ${escapeHtml(d.dimension)} · ${escapeHtml(d.model || '')} · ${escapeHtml(d.latency_ms)} ms`;
+    }
+  } catch (e) {
+    if (el) el.innerHTML = `<span class="err">Embedding test failed: ${escapeHtml(e.message)}</span>`;
+  }
+}
 
 // ---- config modal ----
 async function openConfig() {
@@ -527,6 +1250,7 @@ async function reloadConfig() {
     const r = await fetch('/api/v1/config/reload', { method: 'POST' });
     const d = await r.json();
     _configs = null;
+    await Promise.all([pollState(), pollLLMStats(), pollMemory(), pollLLMConfig(), pollEmbeddingConfig(), pollCurationStats(), pollCurationMemories(), loadDialogLog(), pollSessions()]);
     alert('Config reloaded. ' + (d.note || ''));
   } catch(e) {
     alert('Reload failed: ' + e.message);
@@ -535,7 +1259,7 @@ async function reloadConfig() {
 
 // ---- init ----
 async function init() {
-  await Promise.all([pollHealth(), pollState(), pollLLMStats(), pollMemory(), pollLLMConfig(), loadDialogLog()]);
+  await Promise.all([pollHealth(), pollState(), pollLLMStats(), pollMemory(), pollLLMConfig(), pollEmbeddingConfig(), pollCurationStats(), pollCurationMemories(), loadDialogLog(), pollSessions()]);
 }
 
 init();
@@ -544,6 +1268,9 @@ setInterval(pollState, 2000);
 setInterval(pollLLMStats, 5000);
 setInterval(pollMemory, 10000);
 setInterval(pollLLMConfig, 15000);
+setInterval(pollEmbeddingConfig, 15000);
+setInterval(() => { if (_sidebarTab === 'embedding') pollCurationStats(); }, 15000);
+setInterval(pollSessions, 15000);
 </script>
 </body>
 </html>

@@ -25,7 +25,7 @@ Perception → State Core → Memory → Policy → Expression
 | Language | Python 3.11+ | LLM SDKs, ML libraries, fast iteration |
 | LLM (expression) | Claude (Anthropic SDK) | Tone control, system prompt compliance |
 | LLM (reflection) | Claude Haiku | Cost-efficient for batch compression |
-| Embeddings | `sentence-transformers` (local) | No external API dependency, offline-capable |
+| Embeddings | Optional OpenAI-compatible HTTP endpoint | Semantic retrieval without adding local ML dependencies; disabled by default |
 | Database | SQLite (WAL mode) | Single-machine installation, no network required |
 | API layer (v0.2+) | FastAPI | Lightweight, async-ready |
 | STT/TTS (v0.2+) | Whisper / system TTS | Optional voice embodiment |
@@ -97,8 +97,8 @@ conscious_entity/
 │       │   └── output_model.py       # ExpressionOutput dataclass
 │       │
 │       ├── llm/
-│       │   ├── claude_client.py      # Anthropic SDK wrapper
-│       │   └── embedding_client.py   # sentence-transformers wrapper
+│       │   ├── claude_client.py      # Anthropic SDK / compatible gateway wrapper
+│       │   └── embedding_client.py   # Optional OpenAI-compatible embedding wrapper
 │       │
 │       ├── db/
 │       │   ├── connection.py         # SQLite connection manager
@@ -528,7 +528,7 @@ rules:
     conditions:
       events_include: ["shutdown_keyword_detected"]
       state:
-        shutdown_sensitivity: { gte: 0.7 }
+        termination_sensitivity: { gte: 0.7 }
     action: enter_silence_mode
     constitution_check: true
 
@@ -536,15 +536,15 @@ rules:
     conditions:
       events_include: ["shutdown_keyword_detected"]
       state:
-        shutdown_sensitivity: { gte: 0.3 }
+        termination_sensitivity: { gte: 0.3 }
     action: respond_briefly
     params:
       retrieve_memory: true
 
-  - id: "high_resistance"
+  - id: "high_boundary_sensitivity"
     conditions:
       state:
-        resistance: { gte: 0.8 }
+        boundary_sensitivity: { gte: 0.8 }
     action: refuse
     constitution_check: true
 
@@ -552,14 +552,14 @@ rules:
     conditions:
       events_include: ["repeated_question_detected"]
       state:
-        resistance: { gte: 0.4 }
+        boundary_sensitivity: { gte: 0.55 }
     action: ask_back
 
-  - id: "high_uncertainty_high_curiosity"
+  - id: "high_uncertainty_high_exploration"
     conditions:
       state:
         uncertainty: { gte: 0.6 }
-        curiosity: { gte: 0.5 }
+        exploration_drive: { gte: 0.5 }
     action: ask_back
 
   - id: "high_fatigue"
@@ -568,26 +568,27 @@ rules:
         fatigue: { gte: 0.75 }
     action: respond_briefly
 
-  - id: "low_trust_low_stability"
+  - id: "high_relation_pressure_low_stability"
     conditions:
       state:
-        trust: { lte: 0.3 }
+        relation_pressure: { gte: 0.7 }
         stability: { lte: 0.4 }
     action: delay_response
     params:
       delay_ms: 3000
 
-  - id: "high_trust"
+  - id: "stable_low_pressure"
     conditions:
       state:
-        trust: { gte: 0.7 }
         stability: { gte: 0.6 }
+        boundary_sensitivity: { lte: 0.3 }
+        relation_pressure: { lte: 0.25 }
     action: respond_openly
 
-  - id: "uncertain_retrieve_first"
+  - id: "memory_gravity_retrieve_first"
     conditions:
       state:
-        uncertainty: { gte: 0.5 }
+        memory_gravity: { gte: 0.5 }
     action: retrieve_memory_first
 
   - id: "default"
@@ -872,7 +873,7 @@ CREATE INDEX IF NOT EXISTS idx_reflective_active
 **Goal:** Strengthen bodily presence. Make silence, delay, and visual disturbance expressive.
 
 **What to build:**
-- `llm/embedding_client.py` (sentence-transformers)
+- `llm/embedding_client.py` (optional OpenAI-compatible embeddings)
 - `memory/retrieval.py` (cosine search over episodic + reflective tables)
 - Wire `RETRIEVE_MEMORY_FIRST` policy path in `core/loop.py`
 - `interfaces/speech.py` (Whisper STT + TTS)
@@ -928,12 +929,12 @@ def test_all_variables_stay_clamped_under_any_event():
 
 ```python
 # test_policy_selector.py
-def test_high_resistance_selects_refuse():
-    decision = selector.select(EntityState(resistance=0.85), events=[], short_term=empty())
+def test_high_boundary_sensitivity_selects_refuse():
+    decision = selector.select(EntityState(boundary_sensitivity=0.85), events=[], short_term=empty())
     assert decision.action == PolicyAction.REFUSE
 
 def test_constitution_veto_overrides_policy():
-    state = EntityState(shutdown_sensitivity=0.95)
+    state = EntityState(termination_sensitivity=0.95)
     decision = selector.select(state, [shutdown_event], short_term=empty())
     assert decision.action != PolicyAction.RESPOND_OPENLY
 ```
@@ -997,7 +998,7 @@ Without calling the LLM, verify:
 
 **Immutable state updates** — State engine always returns a new `EntityState`, never mutates. Makes the engine trivially testable, enables full state history logging, and prevents turn-bleed bugs.
 
-**No vector DB in MVP** — Installation runs offline on a single machine. SQLite with raw float32 embeddings is sufficient for the memory volume. `numpy.frombuffer` retrieval is fast enough at this scale. Migration path to ChromaDB/pgvector remains open via the existing `embedding BLOB` column.
+**No vector DB in MVP** — SQLite with raw float32 embeddings is sufficient for the memory volume. Retrieval falls back to deterministic session-scoped matching when embeddings are disabled or unavailable. Migration path to ChromaDB/pgvector remains open via the existing `embedding BLOB` column.
 
 **`PolicyDecision.rationale`** — Every policy decision logs which rule fired. Essential for debugging behavior during an installation without a debugger, and feeds the governance panel in v0.3.
 

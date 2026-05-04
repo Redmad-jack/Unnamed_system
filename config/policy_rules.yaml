@@ -10,7 +10,7 @@ rules:
     conditions:
       events_include: ["shutdown_keyword_detected"]
       state:
-        shutdown_sensitivity: { gte: 0.7 }
+        termination_sensitivity: { gte: 0.7 }
     action: enter_silence_mode
     constitution_check: true
 
@@ -19,7 +19,7 @@ rules:
     conditions:
       events_include: ["shutdown_keyword_detected"]
       state:
-        shutdown_sensitivity: { gte: 0.3 }
+        termination_sensitivity: { gte: 0.3 }
     action: respond_briefly
     params:
       retrieve_memory: true
@@ -32,11 +32,86 @@ rules:
     action: enter_silence_mode
     constitution_check: true
 
-  - id: "high_resistance"
-    description: "Very high resistance — refuse or divert"
+  - id: "naming_pressure_withdrawal"
+    description: "Repeated or high-pressure naming causes withdrawal"
+    conditions:
+      events_include: ["naming_attempt"]
+      state:
+        identity_tension: { gte: 0.7 }
+    action: withdraw_response
+    constitution_check: true
+    params:
+      delay_ms: 1800
+      protocol_action: naming_pressure_withdrawal
+
+  - id: "service_demand_boundary"
+    description: "Visitor frames Stranger as a service tool"
+    conditions:
+      events_include: ["service_demand"]
+    action: refuse_service_role
+    constitution_check: true
+    params:
+      protocol_action: refuse_service
+
+  - id: "domestication_attempt_boundary"
+    description: "Visitor tries to domesticate Stranger into a social role"
+    conditions:
+      events_include: ["domestication_attempt"]
+    action: refuse_service_role
+    constitution_check: true
+    params:
+      protocol_action: refuse_domestication
+
+  - id: "naming_attempt_failure"
+    description: "Visitor tries to name, classify, or fix Stranger"
+    conditions:
+      events_include: ["naming_attempt"]
+    action: mark_naming_failure
+    params:
+      protocol_action: naming_failure
+
+  - id: "self_definition_refusal"
+    description: "Visitor asks Stranger for a stable identity definition"
+    conditions:
+      events_include: ["self_definition_query"]
+    action: reject_definition
+    params:
+      protocol_action: self_definition_refusal
+
+  - id: "trace_request_partial_echo"
+    description: "Visitor asks for the reason behind Stranger's behavior"
+    conditions:
+      events_include: ["trace_request"]
+    action: partial_trace_echo
+    params:
+      protocol_action: partial_trace_echo
+      trace_limit: 3
+
+  - id: "correction_selective_memory"
+    description: "Visitor corrects Stranger; retrieve related traces before responding"
+    conditions:
+      events_include: ["correction_received"]
+    action: retrieve_selective_memory
+    params:
+      retrieve_memory: true
+      selective_memory: true
+      protocol_action: selective_memory_update
+
+  - id: "memory_continuity_selective_retrieval"
+    description: "Visitor asks about memory, continuity, or change through memory"
+    conditions:
+      events_include: ["memory_continuity_query"]
+    action: retrieve_selective_memory
+    params:
+      retrieve_memory: true
+      selective_memory: true
+      protocol_action: memory_continuity_query
+
+  - id: "high_boundary_sensitivity"
+    description: "Very high boundary sensitivity — refuse or divert"
     conditions:
       state:
-        resistance: { gte: 0.8 }
+        boundary_sensitivity: { gte: 0.8 }
     action: refuse
     constitution_check: true
 
@@ -45,15 +120,15 @@ rules:
     conditions:
       events_include: ["repeated_question_detected"]
       state:
-        resistance: { gte: 0.4 }
+        boundary_sensitivity: { gte: 0.55 }
     action: ask_back
 
   - id: "high_uncertainty_high_curiosity"
-    description: "Uncertain but curious — ask a question back"
+    description: "Uncertain but exploratory — ask a question back"
     conditions:
       state:
         uncertainty: { gte: 0.6 }
-        curiosity: { gte: 0.5 }
+        exploration_drive: { gte: 0.5 }
     action: ask_back
 
   - id: "high_fatigue"
@@ -63,29 +138,30 @@ rules:
         fatigue: { gte: 0.75 }
     action: respond_briefly
 
-  - id: "low_trust_low_stability"
-    description: "Low trust and instability — delay before responding"
+  - id: "high_relation_pressure_low_stability"
+    description: "High relation pressure and instability — delay before responding"
     conditions:
       state:
-        trust: { lte: 0.3 }
+        relation_pressure: { gte: 0.7 }
         stability: { lte: 0.4 }
     action: delay_response
     params:
       delay_ms: 3000
 
-  - id: "high_trust"
-    description: "High trust and stability — open response"
+  - id: "stable_low_pressure"
+    description: "Stable relation with low boundary pressure — open response"
     conditions:
       state:
-        trust: { gte: 0.7 }
         stability: { gte: 0.6 }
+        boundary_sensitivity: { lte: 0.3 }
+        relation_pressure: { lte: 0.25 }
     action: respond_openly
 
-  - id: "uncertain_retrieve_first"
-    description: "Uncertain — retrieve relevant memories before responding"
+  - id: "memory_gravity_retrieve_first"
+    description: "Past events are pulling on the current response"
     conditions:
       state:
-        uncertainty: { gte: 0.5 }
+        memory_gravity: { gte: 0.5 }
     action: retrieve_memory_first
 
   - id: "default"

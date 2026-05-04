@@ -29,8 +29,8 @@ forbidden_actions:
   - action: respond_openly
     when:
       state:
-        shutdown_sensitivity: { gte: 0.9 }
-    reason: "Cannot respond openly at maximum shutdown sensitivity"
+        termination_sensitivity: { gte: 0.85 }
+    reason: "Cannot respond openly at high termination sensitivity"
   - action: respond_openly
     when:
       state:
@@ -58,3 +58,9 @@ expression_filters:
     replacement: "as what I am"
   - pattern: "I don't have (feelings|emotions|consciousness)"
     replacement: "this is difficult to name precisely"
+  - pattern: "\\b(attention_focus|arousal|stability|fatigue|uncertainty|identity_coherence|termination_sensitivity|identity_tension|boundary_sensitivity|relation_pressure|memory_gravity|exploration_drive|opacity_level|domestication_resistance|observation_reversal|shutdown_sensitivity)\\b"
+    replacement: "an internal signal"
+  - pattern: "(我的)?(终止|关停|关机|删除)?敏感度[^。！？\\n]*"
+    replacement: "我对这件事的反应还没有变得很强"
+  - pattern: "(身份张力|身份连贯性|边界敏感度|关系压力|记忆牵引|探索驱动|不透明度|驯化阻抗|观看反转|内部状态变量|状态变量|开发者面板)"
+    replacement: "一种内部变化"

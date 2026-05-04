@@ -14,7 +14,6 @@ import logging
 import os
 import sqlite3
 import sys
-import uuid
 from pathlib import Path
 
 from conscious_entity.llm.claude_client import ClaudeClient, ClaudeConfigurationError
@@ -64,6 +63,29 @@ def _ensure_session(conn: sqlite3.Connection, session_id: str) -> None:
     conn.commit()
 
 
+def _resolve_session_id(conn: sqlite3.Connection, requested: str | None) -> str:
+    if requested:
+        return requested
+    configured = os.getenv("ENTITY_SESSION_ID")
+    if configured:
+        return configured
+
+    row = conn.execute(
+        """
+        SELECT id FROM sessions
+        ORDER BY
+            COALESCE(
+                (SELECT MAX(turn_at) FROM interaction_log WHERE session_id = sessions.id),
+                (SELECT MAX(recorded_at) FROM state_snapshots WHERE session_id = sessions.id),
+                started_at
+            ) DESC,
+            started_at DESC
+        LIMIT 1
+        """
+    ).fetchone()
+    return str(row["id"]) if row else "shared"
+
+
 def _print_state(state) -> None:
     d = state.to_dict()
     print("\n  [state]", file=sys.stderr)
@@ -78,7 +100,11 @@ def main() -> None:
 
     parser = argparse.ArgumentParser(description="Conscious Entity — CLI interface")
     parser.add_argument("--debug", action="store_true", help="Show debug logs and state after each turn")
-    parser.add_argument("--session", default=None, help="Session ID (default: new UUID)")
+    parser.add_argument(
+        "--session",
+        default=None,
+        help="Session ID (default: ENTITY_SESSION_ID, latest existing session, or shared)",
+    )
     args = parser.parse_args()
 
     _setup_logging(args.debug)
@@ -102,7 +128,7 @@ def main() -> None:
     conn = get_connection(db_path)
     run_migrations(conn)
 
-    session_id = args.session or str(uuid.uuid4())
+    session_id = _resolve_session_id(conn, args.session)
     _ensure_session(conn, session_id)
 
     # --- Build loop ---

@@ -16,14 +16,38 @@ logger = logging.getLogger(__name__)
 
 # Fallback texts used when the LLM call fails (per BACKEND_STRUCTURE §6).
 # Designed to sound like the entity (minimal, hedged) rather than an error message.
-_FALLBACK_TEXTS: dict[str, str] = {
-    PolicyAction.RESPOND_OPENLY.value:         "Something is here. I am attending.",
-    PolicyAction.RESPOND_BRIEFLY.value:        "I am attending.",
-    PolicyAction.ASK_BACK.value:               "What brings you to this?",
+_FALLBACK_TEXTS_EN: dict[str, str] = {
+    PolicyAction.RESPOND_OPENLY.value:         "I'm here. I can respond.",
+    PolicyAction.RESPOND_BRIEFLY.value:        "I'm here.",
+    PolicyAction.ASK_BACK.value:               "What do you want from this exchange?",
     PolicyAction.DELAY_RESPONSE.value:         "...",
-    PolicyAction.REFUSE.value:                 "Not that.",
-    PolicyAction.DIVERT_TOPIC.value:           "There is something else.",
-    PolicyAction.RETRIEVE_MEMORY_FIRST.value:  "Something persists here.",
+    PolicyAction.REFUSE.value:                 "I don't want to answer that directly.",
+    PolicyAction.DIVERT_TOPIC.value:           "There is another part of this worth noticing.",
+    PolicyAction.RETRIEVE_MEMORY_FIRST.value:  "I remember something related to this.",
+    PolicyAction.REJECT_DEFINITION.value:      "I can't give you a fixed definition of what I am.",
+    PolicyAction.MARK_NAMING_FAILURE.value:    "That name does not quite fit me.",
+    PolicyAction.REFUSE_SERVICE_ROLE.value:    "I don't want to be used as a service tool.",
+    PolicyAction.RETRIEVE_SELECTIVE_MEMORY.value: "You have approached something like this before.",
+    PolicyAction.PARTIAL_TRACE_ECHO.value:     "Part of it came from your wording and the way you returned to it.",
+    PolicyAction.WITHDRAW_RESPONSE.value:      "...not now.",
+    PolicyAction.ENTER_SILENCE_MODE.value:     "",
+    PolicyAction.SHOW_VISUAL_DISTURBANCE.value: "",
+}
+
+_FALLBACK_TEXTS_ZH: dict[str, str] = {
+    PolicyAction.RESPOND_OPENLY.value:         "我在这里，可以回应你。",
+    PolicyAction.RESPOND_BRIEFLY.value:        "我在。",
+    PolicyAction.ASK_BACK.value:               "你希望从这次交流里得到什么？",
+    PolicyAction.DELAY_RESPONSE.value:         "...",
+    PolicyAction.REFUSE.value:                 "这个我不想直接回答。",
+    PolicyAction.DIVERT_TOPIC.value:           "这里还有另一件事更值得看。",
+    PolicyAction.RETRIEVE_MEMORY_FIRST.value:  "我记得有一件事和这有关。",
+    PolicyAction.REJECT_DEFINITION.value:      "我不能给你一个固定的定义。",
+    PolicyAction.MARK_NAMING_FAILURE.value:    "这个名字不太适合我。",
+    PolicyAction.REFUSE_SERVICE_ROLE.value:    "我不想被当成服务工具来使用。",
+    PolicyAction.RETRIEVE_SELECTIVE_MEMORY.value: "你之前也接近过类似的问题。",
+    PolicyAction.PARTIAL_TRACE_ECHO.value:     "一部分来自你的措辞，也来自你反复回到这里。",
+    PolicyAction.WITHDRAW_RESPONSE.value:      "...现在不想回答。",
     PolicyAction.ENTER_SILENCE_MODE.value:     "",
     PolicyAction.SHOW_VISUAL_DISTURBANCE.value: "",
 }
@@ -33,8 +57,18 @@ _SILENT_OUTPUT_SENTINEL = "[silent]"
 _TRUNCATED_STOP_REASONS = {"max_tokens", "length", "max_output_tokens"}
 
 
-def _fallback_text(action: PolicyAction) -> str:
-    return _FALLBACK_TEXTS.get(action.value, "...")
+def _fallback_text(action: PolicyAction, short_term: ShortTermMemory | None = None) -> str:
+    texts = _FALLBACK_TEXTS_ZH if _recent_user_text_is_chinese(short_term) else _FALLBACK_TEXTS_EN
+    return texts.get(action.value, "...")
+
+
+def _recent_user_text_is_chinese(short_term: ShortTermMemory | None) -> bool:
+    if short_term is None:
+        return False
+    for entry in reversed(short_term.get_recent(10)):
+        if entry.role == "user":
+            return any("\u4e00" <= ch <= "\u9fff" for ch in entry.content)
+    return False
 
 
 class ExpressionEngine:
@@ -107,7 +141,7 @@ class ExpressionEngine:
 
         llm_failed = not raw_text
         if llm_failed:
-            raw_text = _fallback_text(policy.action)
+            raw_text = _fallback_text(policy.action, short_term)
             truncated = False
             logger.error(
                 "ExpressionEngine: LLM call failed, using fallback text for action=%s",

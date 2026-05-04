@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 from conscious_entity.memory.short_term import ShortTermMemory
 from conscious_entity.perception.event_types import EventType, PerceptionEvent
 from conscious_entity.perception.keyword_detector import KeywordDetector
+from conscious_entity.perception.relationship_detector import RelationshipDetector
 from conscious_entity.perception.salience_scorer import SalienceScorer
 from conscious_entity.state.state_core import EntityState
 
@@ -28,9 +29,11 @@ class TextParser:
         self,
         keyword_detector: KeywordDetector,
         salience_scorer: SalienceScorer,
+        relationship_detector: RelationshipDetector | None = None,
     ) -> None:
         self._detector = keyword_detector
         self._scorer = salience_scorer
+        self._relationship_detector = relationship_detector
 
     def parse(
         self,
@@ -63,6 +66,18 @@ class TextParser:
                 salience=shutdown_salience,
                 metadata={"matched_keywords": matched},
             ))
+
+        # --- Stranger Text Protocol relationship postures ---
+        if self._relationship_detector is not None:
+            for signal in self._relationship_detector.detect(raw_text):
+                salience = self._scorer.score(signal.event_type, raw_text, current_state, short_term)
+                events.append(PerceptionEvent(
+                    event_type=signal.event_type,
+                    raw_text=raw_text,
+                    timestamp=now,
+                    salience=salience,
+                    metadata=signal.metadata,
+                ))
 
         # --- REPEATED_QUESTION_DETECTED ---
         if short_term.count_repetitions(raw_text) >= _REPETITION_THRESHOLD:

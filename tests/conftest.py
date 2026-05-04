@@ -40,6 +40,7 @@ def _run_migrations(conn: sqlite3.Connection) -> None:
             id              TEXT PRIMARY KEY,
             started_at      TEXT NOT NULL DEFAULT (datetime('now')),
             ended_at        TEXT,
+            session_type    TEXT NOT NULL DEFAULT 'test' CHECK(session_type IN ('test', 'exhibition')),
             visitor_count   INTEGER DEFAULT 0,
             notes           TEXT
         );
@@ -58,6 +59,15 @@ def _run_migrations(conn: sqlite3.Connection) -> None:
             uncertainty          REAL NOT NULL,
             identity_coherence   REAL NOT NULL,
             shutdown_sensitivity REAL NOT NULL,
+            termination_sensitivity REAL NOT NULL DEFAULT 0.3,
+            identity_tension REAL NOT NULL DEFAULT 0.35,
+            boundary_sensitivity REAL NOT NULL DEFAULT 0.45,
+            relation_pressure REAL NOT NULL DEFAULT 0.3,
+            memory_gravity REAL NOT NULL DEFAULT 0.2,
+            exploration_drive REAL NOT NULL DEFAULT 0.45,
+            opacity_level REAL NOT NULL DEFAULT 0.5,
+            domestication_resistance REAL NOT NULL DEFAULT 0.35,
+            observation_reversal REAL NOT NULL DEFAULT 0.2,
             trigger_event_type   TEXT,
             policy_action        TEXT
         );
@@ -95,7 +105,11 @@ def _run_migrations(conn: sqlite3.Connection) -> None:
             embedding_model   TEXT,
             reflected         INTEGER NOT NULL DEFAULT 0,
             reflection_id     INTEGER,
-            metadata          TEXT
+            metadata          TEXT,
+            memory_status     TEXT NOT NULL DEFAULT 'active',
+            curated_from_session_id TEXT,
+            curated_from_memory_id INTEGER,
+            curated_at        TEXT
         );
 
         CREATE INDEX IF NOT EXISTS idx_episodic_session
@@ -112,13 +126,28 @@ def _run_migrations(conn: sqlite3.Connection) -> None:
             state_at_reflection   TEXT NOT NULL,
             embedding             BLOB,
             embedding_model       TEXT,
-            active                INTEGER NOT NULL DEFAULT 1
+            active                INTEGER NOT NULL DEFAULT 1,
+            memory_status         TEXT NOT NULL DEFAULT 'active',
+            curated_from_session_id TEXT,
+            curated_from_memory_id INTEGER,
+            curated_at            TEXT
         );
 
         CREATE INDEX IF NOT EXISTS idx_reflective_session
             ON reflective_summaries(session_id, created_at DESC);
         CREATE INDEX IF NOT EXISTS idx_reflective_active
             ON reflective_summaries(active, created_at DESC);
+
+        CREATE TABLE IF NOT EXISTS memory_curation_log (
+            id                    INTEGER PRIMARY KEY AUTOINCREMENT,
+            action_at             TEXT NOT NULL DEFAULT (datetime('now')),
+            action                TEXT NOT NULL,
+            memory_type           TEXT NOT NULL CHECK(memory_type IN ('episodic', 'reflective')),
+            memory_id             INTEGER NOT NULL,
+            source_session_id     TEXT,
+            target_session_id     TEXT,
+            details               TEXT
+        );
 
         INSERT OR IGNORE INTO schema_version(version) VALUES (1);
     """)

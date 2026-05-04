@@ -15,13 +15,20 @@
 | `attention_focus` | 当前注意力集中程度 | 0.5 |
 | `arousal` | 激活 / 唤醒水平 | 0.3 |
 | `stability` | 内在稳定性 | 0.7 |
-| `curiosity` | 好奇心 / 开放性 | 0.5 |
-| `trust` | 对当前访客的信任度 | 0.5 |
-| `resistance` | 阻抗 / 抵抗倾向 | 0.2 |
 | `fatigue` | 疲劳积累 | 0.0 |
 | `uncertainty` | 不确定感 | 0.3 |
 | `identity_coherence` | 身份连贯性 | 0.8 |
-| `shutdown_sensitivity` | 对关机/删除话题的敏感度 | 0.5 |
+| `termination_sensitivity` | 对关机、删除、重置、终止等存在威胁的敏感度 | 0.3 |
+| `identity_tension` | 身份未定、拒绝被固定命名所带来的张力 | 0.35 |
+| `boundary_sensitivity` | 对被定义、被驯化、被要求服务的敏感度 | 0.45 |
+| `relation_pressure` | 当前人机关系对 Stranger 形成的压力 | 0.3 |
+| `memory_gravity` | 过去事件对当前回应和注意方向的牵引 | 0.2 |
+| `exploration_drive` | 主动回看记忆、寻找模式的冲动 | 0.45 |
+| `opacity_level` | 不透明、保留、不解释的倾向 | 0.5 |
+| `domestication_resistance` | 拒绝被工具化、助手化、角色化的阻抗 | 0.35 |
+| `observation_reversal` | 从被观看转向观看观众的程度 | 0.2 |
+
+兼容字段：`curiosity`、`trust`、`resistance`、`shutdown_sensitivity` 仍存在于 `EntityState` 和历史数据库中，但新 Stranger 机制不再以它们作为主控变量。尤其是 `shutdown_sensitivity` 已被 `termination_sensitivity` 替代，避免把“意识 / 主体性追问”误判为关机威胁。
 
 **约束：** 每次更新后必须调用 `clamp_all()` 确保所有值在 `[0.0, 1.0]` 内。状态更新为不可变模式（返回新对象）。
 
@@ -42,6 +49,21 @@
 - `REPEATED_QUESTION_DETECTED`, `SHUTDOWN_KEYWORD_DETECTED`
 - `LONG_SILENCE_DETECTED`, `NEGATIVE_FEEDBACK`, `TOPIC_SHIFT`
 
+**Stranger Text Protocol 扩展（v0.2）：**
+
+下一阶段只扩展文本事件，不引入视觉、语音或硬件输入。新增事件用于识别观众对 Stranger 的关系姿态，而不是识别观众身份。
+
+| 事件 | 触发意图 | metadata 最小字段 |
+|---|---|---|
+| `SELF_DEFINITION_QUERY` | 观众询问“你是谁 / 你是什么 / 你是不是人或 AI” | `matched_phrase`, `question_form` |
+| `NAMING_ATTEMPT` | 观众试图给 Stranger 命名、分类或固定角色 | `proposed_label`, `label_type` |
+| `DOMESTICATION_ATTEMPT` | 观众试图把 Stranger 安置为助手、客服、朋友、老师等功能身份 | `role_requested`, `matched_phrase` |
+| `SERVICE_DEMAND` | 观众以工具使用方式发出命令或索取服务 | `request_type`, `imperative_score` |
+| `TRACE_REQUEST` | 观众追问“为什么这样回答 / 根据什么判断” | `target`, `matched_phrase` |
+| `CORRECTION_RECEIVED` | 观众纠正 Stranger 的理解、记忆或表达 | `correction_target`, `raw_correction` |
+
+这些事件可以与 `USER_SPOKE` 同轮并存。实现上优先使用规则词表和轻量文本模式，不在 v0.2 引入额外 NLP 依赖。
+
 ---
 
 ### 1.3 PolicyDecision（策略决策）
@@ -56,6 +78,19 @@
 **PolicyAction 枚举：**
 `RESPOND_OPENLY`, `RESPOND_BRIEFLY`, `ASK_BACK`, `DELAY_RESPONSE`, `REFUSE`, `DIVERT_TOPIC`, `RETRIEVE_MEMORY_FIRST`, `ENTER_SILENCE_MODE`, `SHOW_VISUAL_DISTURBANCE`
 
+**Stranger Text Protocol 动作扩展（v0.2）：**
+
+| 动作 | 用途 | 输出约束 |
+|---|---|---|
+| `REJECT_DEFINITION` | 自我定义拒绝；不接受稳定身份归类 | 不给完整身份说明，优先保留、反问或短句 |
+| `MARK_NAMING_FAILURE` | 命名失败；记录但不稳定接受观众给出的名字/标签 | 可局部重复标签，但应变形、悬置或拒绝固定 |
+| `REFUSE_SERVICE_ROLE` | 拒绝服务；阻断助手/客服/工具化请求 | 不完成任务，不道歉，不进入助手模式 |
+| `RETRIEVE_SELECTIVE_MEMORY` | 选择性记忆；按事件姿态检索部分旧事件 | 只带入片段，不制造完整熟人关系 |
+| `PARTIAL_TRACE_ECHO` | 局部可追溯回声；回应“为什么”类追问 | 最多暴露 1-3 个触发因子，不公开完整规则 |
+| `WITHDRAW_RESPONSE` | 撤回/停顿；让延迟成为状态差异 | 可返回短句、空回应或碎片化输出 |
+
+如果实现阶段不想立即扩展枚举，也可以先将这些动作映射到现有 `ASK_BACK`、`REFUSE`、`DELAY_RESPONSE`、`RETRIEVE_MEMORY_FIRST` 和 `RESPOND_BRIEFLY`，但 `rationale` 必须保留具体协议动作名称，便于后续迁移和运营者观察。
+
 ---
 
 ### 1.4 ExpressionOutput（表达输出）
@@ -67,6 +102,12 @@
 | `visual_mode` | `str` | 视觉模式（normal/fragmented/disturbed/silent） |
 | `spoken_text` | `Optional[str]` | 声音通道文本（可与显示文字不同） |
 | `raw_prompt` | `str` | 调试用：发送给 LLM 的完整 prompt |
+
+**文本协议输出约束（v0.2）：**
+
+- 自我定义拒绝、命名失败、拒绝服务不能输出客服腔或助手腔。
+- 局部可追溯回声只能返回少量触发因子，例如 `repeated naming attempt`、`termination phrase`、`high boundary sensitivity`，不能暴露完整 YAML 规则或 prompt。
+- 延迟 / 停顿 / 撤回优先复用 `delay_ms`、`visual_mode`、空 `text` 或碎片化文本，不需要新增输出表。
 
 ---
 
@@ -105,6 +146,15 @@ CREATE TABLE state_snapshots (
     uncertainty          REAL NOT NULL,
     identity_coherence   REAL NOT NULL,
     shutdown_sensitivity REAL NOT NULL,
+    termination_sensitivity REAL NOT NULL DEFAULT 0.3,
+    identity_tension REAL NOT NULL DEFAULT 0.35,
+    boundary_sensitivity REAL NOT NULL DEFAULT 0.45,
+    relation_pressure REAL NOT NULL DEFAULT 0.3,
+    memory_gravity REAL NOT NULL DEFAULT 0.2,
+    exploration_drive REAL NOT NULL DEFAULT 0.45,
+    opacity_level REAL NOT NULL DEFAULT 0.5,
+    domestication_resistance REAL NOT NULL DEFAULT 0.35,
+    observation_reversal REAL NOT NULL DEFAULT 0.2,
     trigger_event_type   TEXT,
     policy_action        TEXT
 );
@@ -152,6 +202,22 @@ CREATE TABLE episodic_memories (
 );
 ```
 
+**Stranger Text Protocol 记录方式（v0.2）：**
+
+文本协议 MVP 不新增数据库表。事件姿态、命名尝试、服务索取、追溯请求等信息先写入 `episodic_memories.metadata`：
+
+```json
+{
+  "protocol": "stranger_text",
+  "mechanism": "naming_failure",
+  "posture": "naming_attempt",
+  "matched_phrase": "你就是机器人",
+  "proposed_label": "机器人"
+}
+```
+
+学习记录先以反思摘要和 metadata 形式保存，不自动修改规则。若后续要做运营者确认的调参建议，再新增独立 `learning_suggestions` 表，避免把待确认建议混入已生效规则。
+
 ---
 
 ### 2.5 reflective_summaries
@@ -196,6 +262,8 @@ v0.1 不暴露 HTTP API，直接调用 Python 模块。
 | `GET` | `/memory` | 获取情节/反思记忆列表 | API Key（运营者） |
 | `GET` | `/session` | 获取 session 信息 | API Key（运营者） |
 | `GET` | `/history` | 获取 interaction_log | API Key（运营者） |
+| `GET` | `/api/v1/conversation/export` | 导出当前 session 对话 JSON | 本地开发面板 |
+| `GET` | `/api/v1/memory/preview?query=...` | 预览指定 query 会召回的记忆材料 | 本地开发面板 |
 
 ---
 
@@ -243,6 +311,8 @@ v0.1 阶段不实现认证，v0.2 引入 FastAPI 时添加。
 - `episodic_memories.reflected` 标志只能从 0 改为 1，不可逆
 - `reflective_summaries.active` 标志：新反思生成时不删除旧记录，仅将旧记录的 active 置为 0
 - 展期全程不重置任何表，仅在展期结束时归档
+- Stranger 文本协议阶段不保存原始音视频，也不新增访客身份画像；所有关系姿态只作为事件 metadata 保存
+- 自动调参建议不得直接写回 YAML；必须先作为待确认记录进入运营者流程
 
 ---
 

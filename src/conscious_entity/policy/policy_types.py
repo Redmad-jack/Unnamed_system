@@ -13,6 +13,12 @@ class PolicyAction(str, Enum):
     REFUSE = "refuse"
     DIVERT_TOPIC = "divert_topic"
     RETRIEVE_MEMORY_FIRST = "retrieve_memory_first"
+    REJECT_DEFINITION = "reject_definition"
+    MARK_NAMING_FAILURE = "mark_naming_failure"
+    REFUSE_SERVICE_ROLE = "refuse_service_role"
+    RETRIEVE_SELECTIVE_MEMORY = "retrieve_selective_memory"
+    PARTIAL_TRACE_ECHO = "partial_trace_echo"
+    WITHDRAW_RESPONSE = "withdraw_response"
     ENTER_SILENCE_MODE = "enter_silence_mode"
     SHOW_VISUAL_DISTURBANCE = "show_visual_disturbance"
 
@@ -23,10 +29,16 @@ _ACTION_LEVEL: dict[PolicyAction, int] = {
     PolicyAction.RESPOND_OPENLY: 0,
     PolicyAction.RESPOND_BRIEFLY: 1,
     PolicyAction.ASK_BACK: 2,
+    PolicyAction.PARTIAL_TRACE_ECHO: 2,
     PolicyAction.DELAY_RESPONSE: 3,
     PolicyAction.RETRIEVE_MEMORY_FIRST: 3,
+    PolicyAction.RETRIEVE_SELECTIVE_MEMORY: 3,
+    PolicyAction.REJECT_DEFINITION: 4,
+    PolicyAction.MARK_NAMING_FAILURE: 4,
     PolicyAction.DIVERT_TOPIC: 4,
     PolicyAction.REFUSE: 5,
+    PolicyAction.REFUSE_SERVICE_ROLE: 5,
+    PolicyAction.WITHDRAW_RESPONSE: 6,
     PolicyAction.SHOW_VISUAL_DISTURBANCE: 5,
     PolicyAction.ENTER_SILENCE_MODE: 6,
 }

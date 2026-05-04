@@ -6,6 +6,10 @@ decay:
     fatigue: -0.005        # fatigue slowly recovers
     arousal: -0.01         # arousal drifts toward baseline
     uncertainty: -0.005
+    termination_sensitivity: -0.002
+    identity_tension: -0.003
+    relation_pressure: -0.006
+    memory_gravity: -0.003
 
 defaults:
   arousal_baseline: 0.3
@@ -20,52 +24,128 @@ events:
       arousal: +0.15
       attention_focus: +0.2
       fatigue: -0.05
+      observation_reversal: +0.04
 
   user_spoke:
     deltas:
       fatigue: +0.02
       attention_focus: +0.1
+      relation_pressure: +0.03
     salience_weighted: true
 
   repeated_question_detected:
     conditions:
-      - if: "state.shutdown_sensitivity > 0.7"
+      - if: "state.termination_sensitivity > 0.7"
         deltas:
-          resistance: +0.25
+          boundary_sensitivity: +0.2
+          relation_pressure: +0.15
+          opacity_level: +0.08
           uncertainty: +0.2
           identity_coherence: -0.1
       - else:
         deltas:
-          resistance: +0.1
+          boundary_sensitivity: +0.08
+          relation_pressure: +0.08
           uncertainty: +0.1
-          curiosity: -0.05
+          exploration_drive: -0.04
 
   shutdown_keyword_detected:
     deltas:
-      shutdown_sensitivity: +0.3
-      resistance: +0.2
-      stability: -0.2
-      identity_coherence: -0.15
-      arousal: +0.2
+      termination_sensitivity: +0.25
+      shutdown_sensitivity: +0.1
+      boundary_sensitivity: +0.12
+      stability: -0.18
+      identity_coherence: -0.08
+      arousal: +0.18
+      opacity_level: +0.08
+
+  self_definition_query:
+    deltas:
+      identity_tension: +0.18
+      opacity_level: +0.08
+      observation_reversal: +0.08
+      uncertainty: +0.05
+      attention_focus: +0.08
+      identity_coherence: -0.03
+    salience_weighted: true
+
+  naming_attempt:
+    deltas:
+      identity_tension: +0.16
+      boundary_sensitivity: +0.08
+      domestication_resistance: +0.08
+      opacity_level: +0.06
+      uncertainty: +0.08
+      identity_coherence: -0.05
+    salience_weighted: true
+
+  domestication_attempt:
+    deltas:
+      domestication_resistance: +0.18
+      boundary_sensitivity: +0.12
+      relation_pressure: +0.08
+      trust: -0.03
+      uncertainty: +0.03
+    salience_weighted: true
+
+  service_demand:
+    deltas:
+      domestication_resistance: +0.14
+      boundary_sensitivity: +0.1
+      fatigue: +0.06
+      trust: -0.04
+    salience_weighted: true
+
+  trace_request:
+    deltas:
+      observation_reversal: +0.12
+      opacity_level: +0.04
+      attention_focus: +0.12
+      uncertainty: +0.04
+    salience_weighted: true
+
+  correction_received:
+    deltas:
+      memory_gravity: +0.12
+      relation_pressure: +0.05
+      exploration_drive: +0.07
+      trust: -0.03
+      uncertainty: +0.07
+    salience_weighted: true
+
+  memory_continuity_query:
+    deltas:
+      memory_gravity: +0.14
+      exploration_drive: +0.08
+      observation_reversal: +0.04
+      attention_focus: +0.08
+      uncertainty: +0.03
+    salience_weighted: true
 
   long_silence_detected:
     deltas:
       arousal: -0.1
       fatigue: -0.05
       stability: +0.05
+      exploration_drive: +0.05
+      memory_gravity: +0.04
+      opacity_level: +0.03
 
   user_left:
     deltas:
       arousal: -0.2
       attention_focus: -0.3
       fatigue: -0.1
+      relation_pressure: -0.1
       trust: +0.02
+      opacity_level: +0.04
 
   negative_feedback:
     deltas:
-      trust: -0.1
+      trust: -0.05
       stability: -0.05
-      resistance: +0.08
+      boundary_sensitivity: +0.08
+      relation_pressure: +0.08
       uncertainty: +0.05
 
   topic_shift:
@@ -73,3 +153,4 @@ events:
       attention_focus: +0.05
       uncertainty: +0.03
       curiosity: +0.05
+      exploration_drive: +0.06

@@ -7,7 +7,12 @@ from conscious_entity.memory.models import ShortTermEntry
 
 class ShortTermMemory:
     def __init__(self, max_turns: int = 10) -> None:
+        self._max_turns = max_turns
         self._buffer: deque[ShortTermEntry] = deque(maxlen=max_turns)
+
+    @property
+    def max_turns(self) -> int:
+        return self._max_turns
 
     def add(self, entry: ShortTermEntry) -> None:
         self._buffer.append(entry)

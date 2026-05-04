@@ -27,10 +27,11 @@ def engine(config_dir):
 
 # --- Event delta tests ---
 
-def test_shutdown_keyword_raises_resistance(engine):
-    state = EntityState(resistance=0.3, shutdown_sensitivity=0.4)
+def test_shutdown_keyword_raises_termination_sensitivity(engine):
+    state = EntityState(termination_sensitivity=0.3, boundary_sensitivity=0.4)
     result = engine.apply_event(state, make_event(EventType.SHUTDOWN_KEYWORD_DETECTED))
-    assert result.resistance > state.resistance
+    assert result.termination_sensitivity > state.termination_sensitivity
+    assert result.boundary_sensitivity > state.boundary_sensitivity
     assert result.stability < state.stability
 
 
@@ -54,6 +55,20 @@ def test_long_silence_lowers_arousal(engine):
     assert result.arousal < state.arousal
 
 
+def test_naming_attempt_raises_identity_tension_and_boundary(engine):
+    state = EntityState(identity_tension=0.3, boundary_sensitivity=0.4)
+    result = engine.apply_event(state, make_event(EventType.NAMING_ATTEMPT, salience=1.0))
+    assert result.identity_tension > state.identity_tension
+    assert result.boundary_sensitivity > state.boundary_sensitivity
+
+
+def test_service_demand_raises_domestication_resistance(engine):
+    state = EntityState(trust=0.5, domestication_resistance=0.35)
+    result = engine.apply_event(state, make_event(EventType.SERVICE_DEMAND, salience=1.0))
+    assert result.trust < state.trust
+    assert result.domestication_resistance > state.domestication_resistance
+
+
 # --- Salience weighting ---
 
 def test_salience_weighted_zero_produces_no_delta(engine):
@@ -72,27 +87,27 @@ def test_salience_weighted_full_produces_max_delta(engine):
 
 # --- Conditional branches (repeated_question_detected) ---
 
-def test_conditional_high_shutdown_sensitivity_larger_resistance_delta(engine):
-    # shutdown_sensitivity > 0.7 → larger resistance delta
-    state_high = EntityState(resistance=0.3, shutdown_sensitivity=0.8)
-    state_low = EntityState(resistance=0.3, shutdown_sensitivity=0.3)
+def test_conditional_high_termination_sensitivity_larger_boundary_delta(engine):
+    # termination_sensitivity > 0.7 → larger boundary delta
+    state_high = EntityState(boundary_sensitivity=0.3, termination_sensitivity=0.8)
+    state_low = EntityState(boundary_sensitivity=0.3, termination_sensitivity=0.3)
     result_high = engine.apply_event(state_high, make_event(EventType.REPEATED_QUESTION_DETECTED))
     result_low = engine.apply_event(state_low, make_event(EventType.REPEATED_QUESTION_DETECTED))
-    assert result_high.resistance > result_low.resistance
+    assert result_high.boundary_sensitivity > result_low.boundary_sensitivity
 
 
-def test_conditional_low_shutdown_sensitivity_uses_else_branch(engine):
-    state = EntityState(resistance=0.3, shutdown_sensitivity=0.3)
+def test_conditional_low_termination_sensitivity_uses_else_branch(engine):
+    state = EntityState(boundary_sensitivity=0.3, termination_sensitivity=0.3)
     result = engine.apply_event(state, make_event(EventType.REPEATED_QUESTION_DETECTED))
-    # else branch: resistance +0.1
-    assert pytest.approx(result.resistance, abs=1e-6) == min(1.0, 0.3 + 0.1)
+    # else branch: boundary_sensitivity +0.08
+    assert pytest.approx(result.boundary_sensitivity, abs=1e-6) == min(1.0, 0.3 + 0.08)
 
 
-def test_conditional_high_shutdown_sensitivity_correct_deltas(engine):
-    state = EntityState(resistance=0.3, shutdown_sensitivity=0.8)
+def test_conditional_high_termination_sensitivity_correct_deltas(engine):
+    state = EntityState(boundary_sensitivity=0.3, termination_sensitivity=0.8)
     result = engine.apply_event(state, make_event(EventType.REPEATED_QUESTION_DETECTED))
-    # if branch: resistance +0.25
-    assert pytest.approx(result.resistance, abs=1e-6) == min(1.0, 0.3 + 0.25)
+    # if branch: boundary_sensitivity +0.2
+    assert pytest.approx(result.boundary_sensitivity, abs=1e-6) == min(1.0, 0.3 + 0.2)
 
 
 # --- Clamping ---

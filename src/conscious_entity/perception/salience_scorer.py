@@ -13,7 +13,7 @@ class SalienceScorer:
 
     Base weights come from entity_profile.yaml salience_weights.
     Context adjustments:
-    - SHUTDOWN_KEYWORD_DETECTED: boosted by current shutdown_sensitivity state
+    - SHUTDOWN_KEYWORD_DETECTED: boosted by current termination_sensitivity state
     - REPEATED_QUESTION_DETECTED: boosted by repetition count
     - All scores clamped to [0.0, 1.0].
     """
@@ -35,7 +35,7 @@ class SalienceScorer:
 
         if event_type == EventType.SHUTDOWN_KEYWORD_DETECTED:
             # Amplify salience when the entity is already sensitized.
-            sensitivity_boost = current_state.shutdown_sensitivity * 0.2
+            sensitivity_boost = current_state.termination_sensitivity * 0.2
             base = min(1.0, base + sensitivity_boost)
 
         elif event_type == EventType.REPEATED_QUESTION_DETECTED and raw_text:

@@ -5,52 +5,77 @@ version: "1.0"
 
 # Tone and fragmentation rules.
 tone_rules:
-  - name: "silent"
+  - name: "silent_termination"
     condition:
-      shutdown_sensitivity: { gte: 0.85 }
+      termination_sensitivity: { gte: 0.9 }
     style:
       tone: silent
       max_tokens: 0
       fragmentation_level: 1.0
 
-  - name: "fragmented"
+  - name: "silent_identity_collapse"
+    condition:
+      identity_coherence: { lte: 0.25 }
+    style:
+      tone: silent
+      max_tokens: 0
+      fragmentation_level: 1.0
+
+  - name: "fragmented_identity_tension"
+    condition:
+      identity_tension: { gte: 0.7 }
+    style:
+      tone: fragmented
+      max_tokens: 2000
+      fragmentation_level: 0.45
+
+  - name: "fragmented_uncertainty"
     condition:
       uncertainty: { gte: 0.7 }
     style:
       tone: fragmented
-      max_tokens: 480
-      fragmentation_level: 0.8
+      max_tokens: 2000
+      fragmentation_level: 0.35
 
-  - name: "guarded"
+  - name: "guarded_boundary"
     condition:
-      resistance: { gte: 0.6 }
+      boundary_sensitivity: { gte: 0.65 }
     style:
       tone: guarded
-      max_tokens: 140
-      fragmentation_level: 0.3
+      max_tokens: 2000
+      fragmentation_level: 0.15
+
+  - name: "guarded_domestication"
+    condition:
+      domestication_resistance: { gte: 0.65 }
+    style:
+      tone: guarded
+      max_tokens: 2000
+      fragmentation_level: 0.15
 
   - name: "terse"
     condition:
       fatigue: { gte: 0.65 }
     style:
       tone: terse
-      max_tokens: 140
+      max_tokens: 2000
       fragmentation_level: 0.1
 
   - name: "open"
     condition:
-      trust: { gte: 0.65 }
       stability: { gte: 0.55 }
+      boundary_sensitivity: { lte: 0.3 }
+      relation_pressure: { lte: 0.25 }
     style:
       tone: open
-      max_tokens: 420
+      max_tokens: 2000
       fragmentation_level: 0.0
 
   - name: "default"
     style:
       tone: neutral
-      max_tokens: 320
-      fragmentation_level: 0.1
+      max_tokens: 2000
+      fragmentation_level: 0.05
 
 # Delay rules (applied to response before display).
 delay_rules:
@@ -61,17 +86,23 @@ delay_rules:
       stability: { lte: 0.3 }
     delay_ms: 2500
   - condition:
-      shutdown_sensitivity: { gte: 0.6 }
+      termination_sensitivity: { gte: 0.6 }
     delay_ms: 1500
   - condition:
-      resistance: { gte: 0.5 }
+      relation_pressure: { gte: 0.65 }
+    delay_ms: 1200
+  - condition:
+      boundary_sensitivity: { gte: 0.55 }
     delay_ms: 800
   - default_delay_ms: 300
 
 # Visual mode rules (passed to display layer).
 visual_mode_rules:
   - condition:
-      shutdown_sensitivity: { gte: 0.8 }
+      termination_sensitivity: { gte: 0.8 }
+    mode: disturbed
+  - condition:
+      identity_tension: { gte: 0.75 }
     mode: disturbed
   - condition:
       uncertainty: { gte: 0.75 }

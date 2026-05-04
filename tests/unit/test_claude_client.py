@@ -166,6 +166,29 @@ class TestClaudeClientConfig:
 
         assert fake_http_client.init_kwargs[0]["trust_env"] is False
 
+    def test_runtime_config_can_ignore_environment_supplier_credentials(
+        self,
+        monkeypatch,
+        fake_anthropic,
+        fake_http_client,
+    ):
+        monkeypatch.setenv("ANTHROPIC_AUTH_TOKEN", "supplier-token")
+        monkeypatch.setenv("ANTHROPIC_BASE_URL", "https://provider.example/anthropic")
+        monkeypatch.setenv("ENTITY_LLM_MODEL", "provider-custom-model")
+
+        client = ClaudeClient(
+            model="runtime-model",
+            api_key="runtime-official-key",
+            disable_system_proxy=True,
+            use_env=False,
+        )
+
+        assert client._model == "runtime-model"
+        assert fake_anthropic.last_init_kwargs["api_key"] == "runtime-official-key"
+        assert fake_anthropic.last_init_kwargs["auth_token"] is None
+        assert fake_anthropic.last_init_kwargs["base_url"] is None
+        assert fake_http_client.init_kwargs[0]["trust_env"] is False
+
     def test_missing_supplier_model_raises_clear_error(self, monkeypatch):
         monkeypatch.setenv("ANTHROPIC_AUTH_TOKEN", "supplier-token")
         monkeypatch.setenv("ANTHROPIC_BASE_URL", "https://provider.example/anthropic")

@@ -22,21 +22,23 @@
 
 ## 当前开发状态（2026-04）
 
-**v0.1 的核心逻辑已基本完成。**
+**核心逻辑与 Stranger 文本协议已可运行。**
 
 | Phase | 内容 | 状态 |
 |---|---|---|
 | Phase 0 | 环境搭建（依赖、目录结构、YAML 配置、数据库迁移） | ✅ 完成 |
-| Phase 1 | 状态机核心（10 个状态变量，事件驱动更新，时间衰减） | ✅ 完成 |
+| Phase 1 | 状态机核心（底层运行状态 + Stranger 关系状态，事件驱动更新，时间衰减） | ✅ 完成 |
 | Phase 2 | 记忆系统（短期 / 情节 / 反思三层） | ✅ 完成 |
 | Phase 3 | 策略与治理（YAML 规则驱动的行为决策 + 宪法约束层） | ✅ 完成 |
 | Phase 4 | LLM 层 + 表达层（Claude API 接入，风格映射，Prompt 组装） | ✅ 完成 |
 | Phase 5 | 感知层 + 反思层 + 主循环 + CLI | ✅ 完成，CLI 冒烟测试通过 |
-| Phase 6 | Debug 工具脚本（`inspect_state`、`replay_session`、`export_memories`） | 待完成 |
+| Phase 6 | Debug 工具脚本 + FastAPI 开发者 API + Web 看板 | ✅ 完成 |
+| Phase 7 | Stranger 文本协议（身份拒绝、命名失败、拒绝服务、局部追溯、选择性记忆） | ✅ 完成 |
+| Phase 8 | 记忆召回增强（可解释召回 + 可选 embedding 语义召回 + Memory Preview） | ✅ 完成 |
 
-**现在可以运行：** 通过命令行与实体交互，实体有状态记忆、行为规则、LLM 表达，一切持久化到 SQLite。
+**现在可以运行：** 通过命令行或本地 Web 看板与 Stranger 交互，实体有状态记忆、行为规则、LLM 表达和文本关系姿态识别，一切持久化到 SQLite。
 
-**还未做的（v0.2 及以后）：** 网页界面、语音输入/输出、Embedding 语义检索、运营者监控面板、访客身份识别、展期终止仪式。
+**还未做的（后续阶段）：** 语音输入/输出、摄像头/空间感知、访客身份识别、展期终止仪式。
 
 ---
 
@@ -95,6 +97,12 @@ LLM 只负责表达，不参与任何决策逻辑。这是这个项目最重要�
 
 ## 本地运行
 
+以下命令默认在项目根目录执行：
+
+```bash
+cd /Users/jackzhang/Unnamed_sys
+```
+
 **前置要求：**
 - Python 3.11+
 - 可用的 LLM 凭证，三选一：
@@ -105,6 +113,12 @@ LLM 只负责表达，不参与任何决策逻辑。这是这个项目最重要�
 **安装：**
 ```bash
 pip install -e ".[dev]"
+```
+
+如果要运行 Web 看板 / API，再安装 API 依赖：
+
+```bash
+pip install -e ".[dev,api]"
 ```
 
 **配置 `.env`：**
@@ -118,6 +132,7 @@ ANTHROPIC_AUTH_TOKEN=your_supplier_token_here
 ANTHROPIC_BASE_URL=https://code.newcli.com/claude/aws
 ENTITY_LLM_MODEL=your_supplier_model_name
 ENTITY_DB_PATH=data/memory.db
+ENTITY_SESSION_ID=shared
 ENTITY_CONFIG_DIR=config/
 ENTITY_PROMPTS_DIR=prompts/
 ENTITY_LOG_LEVEL=INFO
@@ -130,6 +145,7 @@ ANTHROPIC_AUTH_TOKEN=your_supplier_token_here
 ENTITY_LLM_MODEL=your_supplier_model_name
 ENTITY_LLM_MESSAGES_ENDPOINT=https://your-provider.example/path/to/messages
 ENTITY_DB_PATH=data/memory.db
+ENTITY_SESSION_ID=shared
 ENTITY_CONFIG_DIR=config/
 ENTITY_PROMPTS_DIR=prompts/
 ENTITY_LOG_LEVEL=INFO
@@ -142,6 +158,7 @@ ANTHROPIC_API_KEY=your_official_key_here
 # Optional: disable inherited system proxy variables if your local proxy breaks TLS
 # ENTITY_LLM_DISABLE_SYSTEM_PROXY=1
 ENTITY_DB_PATH=data/memory.db
+ENTITY_SESSION_ID=shared
 ENTITY_CONFIG_DIR=config/
 ENTITY_PROMPTS_DIR=prompts/
 ENTITY_LOG_LEVEL=INFO
@@ -149,20 +166,75 @@ ENTITY_LOG_LEVEL=INFO
 
 **初始化数据库：**
 ```bash
-python scripts/init_db.py
+python3 scripts/init_db.py
 ```
 
 **启动 CLI：**
 ```bash
-python -m conscious_entity.interfaces.cli
+PYTHONPATH=src python3 -m conscious_entity.interfaces.cli
 
 # 显示实体内部状态（debug 模式）：
-python -m conscious_entity.interfaces.cli --debug
+PYTHONPATH=src python3 -m conscious_entity.interfaces.cli --debug
 ```
+
+CLI 启动后，直接输入文本即可对话；输入空行或按 `Ctrl+C` 退出。
+
+**会话和历史继承：**
+
+默认会复用 `ENTITY_SESSION_ID` 指定的 session；如果没有设置，会自动继承数据库中最近一次使用的 session；如果数据库为空，则使用 `shared`。状态快照、情节记忆、反思摘要和对话记录都保存在 `ENTITY_DB_PATH` 指向的 SQLite 数据库中。程序重启后会恢复最近状态，并把最近的对话窗口重新放回短期上下文，使 Stranger 能继续承接之前的交流。
+
+**启动 Web 看板 / API：**
+
+```bash
+PYTHONPATH=src python3 scripts/start_api.py --host 127.0.0.1 --port 8000
+```
+
+启动后打开：
+
+```text
+http://127.0.0.1:8000/
+```
+
+API 文档：
+
+```text
+http://127.0.0.1:8000/docs
+```
+
+Web 看板顶部的 `Save Dialog` 会把当前 session 的对话导出为 JSON。也可以直接访问：
+
+```text
+http://127.0.0.1:8000/api/v1/conversation/export?download=true
+```
+
+**回答长度：**
+
+非沉默状态下的生成上限已放宽到 `2000` tokens。若需要继续调整，在 `config/expression_mappings.yaml` 中修改各 tone 的 `max_tokens`。
+
+**记忆召回与 Memory Preview：**
+
+当前系统会在记忆、连续性、纠正、重复追问等场景下检索当前 session 的最近对话、情节记忆和反思摘要。开发者面板的 Memory System 区域可以输入一条 query，点击 `Preview` 查看本轮会取用哪些记忆材料。
+
+默认使用可解释检索，不需要额外服务。若要启用 embedding 语义召回，在 `.env` 中配置：
+
+```env
+ENTITY_EMBEDDING_MODE=openai_compatible
+ENTITY_EMBEDDING_MODEL=text-embedding-3-small
+ENTITY_EMBEDDING_BASE_URL=https://api.openai.com/v1
+ENTITY_EMBEDDING_API_KEY=your_embedding_key_here
+```
+
+已有历史记忆可补生成 embedding：
+
+```bash
+PYTHONPATH=src python3 scripts/backfill_embeddings.py
+```
+
+embedding 调用失败不会中断对话，系统会自动退回可解释检索。
 
 **运行测试：**
 ```bash
-pytest
+PYTHONPATH=src python3 -m pytest -p no:debugging
 ```
 所有测试中的 LLM 调用均为 mock，不消耗 API 配额。
 

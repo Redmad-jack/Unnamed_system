@@ -60,6 +60,8 @@ class ClaudeClient:
         auth_token: Optional[str] = None,
         base_url: Optional[str] = None,
         messages_endpoint: Optional[str] = None,
+        disable_system_proxy: bool | None = None,
+        use_env: bool = True,
     ) -> None:
         config = self.resolve_config(
             model=model,
@@ -67,6 +69,8 @@ class ClaudeClient:
             auth_token=auth_token,
             base_url=base_url,
             messages_endpoint=messages_endpoint,
+            disable_system_proxy=disable_system_proxy,
+            use_env=use_env,
         )
         self._model = config.model
         self._messages_endpoint = config.messages_endpoint
@@ -96,13 +100,21 @@ class ClaudeClient:
         auth_token: str | None = None,
         base_url: str | None = None,
         messages_endpoint: str | None = None,
+        disable_system_proxy: bool | None = None,
+        use_env: bool = True,
     ) -> ClaudeClientConfig:
-        resolved_model = model or os.environ.get("ENTITY_LLM_MODEL")
-        resolved_api_key = api_key or os.environ.get("ANTHROPIC_API_KEY")
-        resolved_auth_token = auth_token or os.environ.get("ANTHROPIC_AUTH_TOKEN")
-        resolved_base_url = base_url or os.environ.get("ANTHROPIC_BASE_URL")
-        resolved_messages_endpoint = messages_endpoint or os.environ.get("ENTITY_LLM_MESSAGES_ENDPOINT")
-        disable_system_proxy = cls._env_flag("ENTITY_LLM_DISABLE_SYSTEM_PROXY")
+        resolved_model = model or (os.environ.get("ENTITY_LLM_MODEL") if use_env else None)
+        resolved_api_key = api_key or (os.environ.get("ANTHROPIC_API_KEY") if use_env else None)
+        resolved_auth_token = auth_token or (os.environ.get("ANTHROPIC_AUTH_TOKEN") if use_env else None)
+        resolved_base_url = base_url or (os.environ.get("ANTHROPIC_BASE_URL") if use_env else None)
+        resolved_messages_endpoint = messages_endpoint or (
+            os.environ.get("ENTITY_LLM_MESSAGES_ENDPOINT") if use_env else None
+        )
+        resolved_disable_system_proxy = (
+            disable_system_proxy
+            if disable_system_proxy is not None
+            else cls._env_flag("ENTITY_LLM_DISABLE_SYSTEM_PROXY")
+        )
 
         if resolved_messages_endpoint:
             if resolved_auth_token:
@@ -117,7 +129,7 @@ class ClaudeClient:
                     auth_token=resolved_auth_token,
                     base_url=resolved_base_url,
                     messages_endpoint=resolved_messages_endpoint,
-                    disable_system_proxy=disable_system_proxy,
+                    disable_system_proxy=resolved_disable_system_proxy,
                 )
 
             if resolved_api_key:
@@ -127,7 +139,7 @@ class ClaudeClient:
                     auth_token=None,
                     base_url=resolved_base_url,
                     messages_endpoint=resolved_messages_endpoint,
-                    disable_system_proxy=disable_system_proxy,
+                    disable_system_proxy=resolved_disable_system_proxy,
                 )
 
             raise ClaudeConfigurationError(
@@ -153,7 +165,7 @@ class ClaudeClient:
                 auth_token=resolved_auth_token,
                 base_url=resolved_base_url,
                 messages_endpoint=None,
-                disable_system_proxy=disable_system_proxy,
+                disable_system_proxy=resolved_disable_system_proxy,
             )
 
         if resolved_api_key:
@@ -163,7 +175,7 @@ class ClaudeClient:
                 auth_token=None,
                 base_url=resolved_base_url,
                 messages_endpoint=None,
-                disable_system_proxy=disable_system_proxy,
+                disable_system_proxy=resolved_disable_system_proxy,
             )
 
         if resolved_base_url or resolved_model:

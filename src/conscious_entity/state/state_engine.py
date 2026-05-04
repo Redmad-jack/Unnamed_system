@@ -6,7 +6,7 @@ from typing import Any
 from conscious_entity.perception.event_types import PerceptionEvent
 from conscious_entity.state.state_core import EntityState
 
-# Matches patterns like "state.shutdown_sensitivity > 0.7"
+# Matches patterns like "state.termination_sensitivity > 0.7"
 _CONDITION_RE = re.compile(
     r"state\.(\w+)\s*(>=|<=|>|<|==)\s*([\d.]+)"
 )

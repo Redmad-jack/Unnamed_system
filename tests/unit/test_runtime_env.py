@@ -55,3 +55,18 @@ class TestRuntimeEnvLoader:
         load_project_env(env_path)
 
         assert os.environ["ANTHROPIC_BASE_URL"] == "https://provider.example/claude/aws"
+
+    def test_duplicate_keys_warn_and_keep_first_value_by_default(self, tmp_path, monkeypatch, caplog):
+        env_path = tmp_path / ".env"
+        env_path.write_text(
+            "ENTITY_EMBEDDING_MODE=disabled\n"
+            "ENTITY_EMBEDDING_MODE=openai_compatible\n",
+            encoding="utf-8",
+        )
+
+        monkeypatch.delenv("ENTITY_EMBEDDING_MODE", raising=False)
+
+        load_project_env(env_path)
+
+        assert os.environ["ENTITY_EMBEDDING_MODE"] == "disabled"
+        assert "Duplicate key ENTITY_EMBEDDING_MODE" in caplog.text

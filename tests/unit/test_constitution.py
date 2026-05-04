@@ -46,25 +46,25 @@ def default_state():
 
 
 class TestForbiddenActions:
-    def test_respond_openly_vetoed_at_max_shutdown_sensitivity(self, constitution, default_state):
-        state = EntityState(shutdown_sensitivity=0.95)
+    def test_respond_openly_vetoed_at_max_termination_sensitivity(self, constitution, default_state):
+        state = EntityState(termination_sensitivity=0.95)
         permitted, reason = constitution.check(PolicyAction.RESPOND_OPENLY, state, [])
         assert not permitted
         assert reason  # some explanation provided
 
     def test_respond_openly_allowed_below_threshold(self, constitution):
-        state = EntityState(shutdown_sensitivity=0.5)
+        state = EntityState(termination_sensitivity=0.5)
         permitted, _ = constitution.check(PolicyAction.RESPOND_OPENLY, state, [])
         assert permitted
 
     def test_respond_openly_vetoed_at_threshold_boundary(self, constitution):
-        # gte: 0.9 — exact boundary must veto
-        state = EntityState(shutdown_sensitivity=0.9)
+        # gte: 0.85 — exact boundary must veto
+        state = EntityState(termination_sensitivity=0.85)
         permitted, _ = constitution.check(PolicyAction.RESPOND_OPENLY, state, [])
         assert not permitted
 
     def test_other_actions_not_vetoed_by_shutdown_rule(self, constitution):
-        state = EntityState(shutdown_sensitivity=0.95)
+        state = EntityState(termination_sensitivity=0.95)
         permitted, _ = constitution.check(PolicyAction.RESPOND_BRIEFLY, state, [])
         assert permitted
 
@@ -165,6 +165,18 @@ class TestExpressionFilters:
         filtered = constitution.apply_expression_constraints(text)
         assert "as an AI" not in filtered.lower()
         assert "programmer" not in filtered
+
+    def test_internal_state_variable_name_replaced(self, constitution):
+        text = "My termination_sensitivity is low right now."
+        filtered = constitution.apply_expression_constraints(text)
+        assert "termination_sensitivity" not in filtered
+        assert "internal signal" in filtered
+
+    def test_chinese_status_language_replaced(self, constitution):
+        text = "我的终止敏感度在当前状态里比较低。"
+        filtered = constitution.apply_expression_constraints(text)
+        assert "终止敏感度" not in filtered
+        assert "我对这件事的反应还没有变得很强" in filtered
 
 
 # ---------------------------------------------------------------------------

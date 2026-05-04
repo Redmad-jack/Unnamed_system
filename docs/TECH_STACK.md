@@ -27,15 +27,16 @@
 | 项目 | 版本 | 用途 | 版本锁定 |
 |---|---|---|---|
 | anthropic | latest stable | Claude API 客户端（表达层、反思层） | 锁定在 pyproject.toml |
-| sentence-transformers | latest stable | 本地 Embedding 模型（语义记忆检索，v0.2 引入） | 锁定在 pyproject.toml |
+| httpx | latest stable | Anthropic 兼容网关与 OpenAI-compatible embedding HTTP 调用 | 锁定在 pyproject.toml |
 
 **Claude 模型分配：**
 - 表达层（ExpressionEngine）→ `claude-sonnet-4-6`（语气细节、开放生成）
 - 反思层（ReflectionEngine）→ `claude-haiku-4-5-20251001`（批量压缩，成本控制）
 
 **Embedding 模型：**
-- 默认使用 `all-MiniLM-L6-v2`（轻量，本地运行，中英文效果可接受）
-- 若效果不足，升级为 `paraphrase-multilingual-MiniLM-L12-v2`（更好的多语言支持）
+- 默认关闭：`ENTITY_EMBEDDING_MODE=disabled`，只使用可解释记忆召回
+- 可选启用 OpenAI-compatible embedding 接口：`ENTITY_EMBEDDING_MODE=openai_compatible`
+- 向量存储仍使用 SQLite `embedding` / `embedding_model` 字段，不引入 Chroma、pgvector 或本地 `sentence-transformers` 重依赖
 
 ### 数据库
 

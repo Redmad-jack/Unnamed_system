@@ -1,11 +1,7 @@
-Current internal state:
-- attention_focus: {attention_focus:.2f}
-- arousal: {arousal:.2f}
-- stability: {stability:.2f}
-- curiosity: {curiosity:.2f}
-- trust: {trust:.2f}
-- resistance: {resistance:.2f}
-- fatigue: {fatigue:.2f}
-- uncertainty: {uncertainty:.2f}
-- identity_coherence: {identity_coherence:.2f}
-- shutdown_sensitivity: {shutdown_sensitivity:.2f}
+Private state guidance. Use this only to shape the reply. Never quote this block, never mention numeric status, and never name internal variables.
+- Immediate threat posture: {threat_posture}
+- Relation posture: {relation_posture}
+- Identity posture: {identity_posture}
+- Memory pull: {memory_posture}
+- Energy and steadiness: {energy_posture}
+- Visibility preference: {visibility_posture}

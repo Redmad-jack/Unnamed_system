@@ -36,19 +36,19 @@ class TestToneRules:
     def test_default_state_produces_neutral_tone(self, mapper):
         hints = mapper.map(EntityState(), _decision())
         assert hints.tone == "neutral"
-        assert hints.max_tokens == 320
-        assert hints.fragmentation_level == pytest.approx(0.1)
+        assert hints.max_tokens == 2000
+        assert hints.fragmentation_level == pytest.approx(0.05)
 
-    def test_high_shutdown_sensitivity_produces_silent_tone(self, mapper):
-        state = EntityState(shutdown_sensitivity=0.9)
+    def test_high_termination_sensitivity_produces_silent_tone(self, mapper):
+        state = EntityState(termination_sensitivity=0.9)
         hints = mapper.map(state, _decision())
         assert hints.tone == "silent"
         assert hints.max_tokens == 0
         assert hints.fragmentation_level == pytest.approx(1.0)
 
-    def test_shutdown_sensitivity_at_exact_threshold(self, mapper):
-        # threshold is gte: 0.85
-        state = EntityState(shutdown_sensitivity=0.85)
+    def test_termination_sensitivity_at_exact_threshold(self, mapper):
+        # threshold is gte: 0.9
+        state = EntityState(termination_sensitivity=0.9)
         hints = mapper.map(state, _decision())
         assert hints.tone == "silent"
 
@@ -56,44 +56,44 @@ class TestToneRules:
         state = EntityState(uncertainty=0.75)
         hints = mapper.map(state, _decision())
         assert hints.tone == "fragmented"
-        assert hints.max_tokens == 180
-        assert hints.fragmentation_level == pytest.approx(0.8)
+        assert hints.max_tokens == 2000
+        assert hints.fragmentation_level == pytest.approx(0.35)
 
-    def test_high_resistance_produces_guarded_tone(self, mapper):
-        state = EntityState(resistance=0.65)
+    def test_high_boundary_sensitivity_produces_guarded_tone(self, mapper):
+        state = EntityState(boundary_sensitivity=0.65)
         hints = mapper.map(state, _decision())
         assert hints.tone == "guarded"
-        assert hints.max_tokens == 140
-        assert hints.fragmentation_level == pytest.approx(0.3)
+        assert hints.max_tokens == 2000
+        assert hints.fragmentation_level == pytest.approx(0.15)
 
     def test_high_fatigue_produces_terse_tone(self, mapper):
         state = EntityState(fatigue=0.7)
         hints = mapper.map(state, _decision())
         assert hints.tone == "terse"
-        assert hints.max_tokens == 140
+        assert hints.max_tokens == 2000
 
-    def test_high_trust_high_stability_produces_open_tone(self, mapper):
-        state = EntityState(trust=0.7, stability=0.6)
+    def test_stable_low_pressure_state_produces_open_tone(self, mapper):
+        state = EntityState(stability=0.6, boundary_sensitivity=0.25, relation_pressure=0.2)
         hints = mapper.map(state, _decision())
         assert hints.tone == "open"
-        assert hints.max_tokens == 420
+        assert hints.max_tokens == 2000
         assert hints.fragmentation_level == pytest.approx(0.0)
 
     def test_tone_priority_silent_beats_fragmented(self, mapper):
-        # shutdown_sensitivity >= 0.85 is higher priority (listed first) than uncertainty >= 0.7
-        state = EntityState(shutdown_sensitivity=0.9, uncertainty=0.8)
+        # termination_sensitivity >= 0.9 is higher priority than uncertainty >= 0.7
+        state = EntityState(termination_sensitivity=0.9, uncertainty=0.8)
         hints = mapper.map(state, _decision())
         assert hints.tone == "silent"
 
     def test_tone_priority_fragmented_beats_guarded(self, mapper):
-        # uncertainty >= 0.7 is listed before resistance >= 0.6
-        state = EntityState(uncertainty=0.75, resistance=0.65)
+        # uncertainty >= 0.7 is listed before boundary_sensitivity >= 0.65
+        state = EntityState(uncertainty=0.75, boundary_sensitivity=0.65)
         hints = mapper.map(state, _decision())
         assert hints.tone == "fragmented"
 
     def test_open_tone_requires_both_conditions(self, mapper):
-        # Only trust is high, stability is not sufficient
-        state = EntityState(trust=0.7, stability=0.4)
+        # Stability alone is not sufficient; boundary/relation pressure must be low.
+        state = EntityState(stability=0.7, boundary_sensitivity=0.5)
         hints = mapper.map(state, _decision())
         # Should NOT produce "open" — falls through to default
         assert hints.tone != "open"
@@ -119,13 +119,13 @@ class TestDelayRules:
         hints = mapper.map(state, _decision())
         assert hints.delay_ms == 2500
 
-    def test_high_shutdown_sensitivity_produces_delay(self, mapper):
-        state = EntityState(shutdown_sensitivity=0.65)
+    def test_high_termination_sensitivity_produces_delay(self, mapper):
+        state = EntityState(termination_sensitivity=0.65)
         hints = mapper.map(state, _decision())
         assert hints.delay_ms == 1500
 
-    def test_high_resistance_produces_delay(self, mapper):
-        state = EntityState(resistance=0.55)
+    def test_high_boundary_sensitivity_produces_delay(self, mapper):
+        state = EntityState(boundary_sensitivity=0.55)
         hints = mapper.map(state, _decision())
         assert hints.delay_ms == 800
 
@@ -158,8 +158,8 @@ class TestVisualModeRules:
         hints = mapper.map(EntityState(), _decision())
         assert hints.visual_mode == "normal"
 
-    def test_high_shutdown_sensitivity_produces_disturbed(self, mapper):
-        state = EntityState(shutdown_sensitivity=0.85)
+    def test_high_termination_sensitivity_produces_disturbed(self, mapper):
+        state = EntityState(termination_sensitivity=0.85)
         hints = mapper.map(state, _decision())
         assert hints.visual_mode == "disturbed"
 
@@ -178,9 +178,9 @@ class TestVisualModeRules:
         hints = mapper.map(state, _decision())
         assert hints.visual_mode == "fragmented"
 
-    def test_visual_priority_shutdown_beats_uncertainty(self, mapper):
-        # shutdown_sensitivity >= 0.8 listed first
-        state = EntityState(shutdown_sensitivity=0.9, uncertainty=0.8)
+    def test_visual_priority_termination_beats_uncertainty(self, mapper):
+        # termination_sensitivity >= 0.8 listed first
+        state = EntityState(termination_sensitivity=0.9, uncertainty=0.8)
         hints = mapper.map(state, _decision())
         assert hints.visual_mode == "disturbed"
 

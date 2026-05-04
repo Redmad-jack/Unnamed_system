@@ -25,6 +25,12 @@ _POLICY_INSTRUCTIONS: dict[str, str] = {
     PolicyAction.ENTER_SILENCE_MODE.value:     "Current policy: ENTER_SILENCE_MODE",
     PolicyAction.DELAY_RESPONSE.value:         "Current policy: RESPOND_OPENLY",
     PolicyAction.RETRIEVE_MEMORY_FIRST.value:  "Current policy: RESPOND_OPENLY",
+    PolicyAction.REJECT_DEFINITION.value:      "Current policy: REJECT_DEFINITION",
+    PolicyAction.MARK_NAMING_FAILURE.value:    "Current policy: MARK_NAMING_FAILURE",
+    PolicyAction.REFUSE_SERVICE_ROLE.value:    "Current policy: REFUSE_SERVICE_ROLE",
+    PolicyAction.RETRIEVE_SELECTIVE_MEMORY.value: "Current policy: RETRIEVE_SELECTIVE_MEMORY",
+    PolicyAction.PARTIAL_TRACE_ECHO.value:     "Current policy: PARTIAL_TRACE_ECHO",
+    PolicyAction.WITHDRAW_RESPONSE.value:      "Current policy: WITHDRAW_RESPONSE",
     PolicyAction.SHOW_VISUAL_DISTURBANCE.value: "Current policy: ENTER_SILENCE_MODE",
 }
 
@@ -69,9 +75,7 @@ class ContextBuilder:
     ) -> ExpressionContext:
         state_block = self._render_state(state)
         memory_block = self._render_memories(retrieved_memories)
-        policy_instruction = _POLICY_INSTRUCTIONS.get(
-            policy.action.value, f"Current policy: {policy.action.value.upper()}"
-        )
+        policy_instruction = _policy_instruction(policy)
         style_hints_text = (
             f"Fragmentation level: {style.fragmentation_level:.1f}\n"
             f"Tone: {style.tone}"
@@ -106,19 +110,39 @@ class ContextBuilder:
     # ------------------------------------------------------------------
 
     def _render_state(self, state: EntityState) -> str:
-        return self._state_context_tpl.format(**state.to_dict())
+        values = state.to_dict()
+        values.update(_state_guidance(state))
+        return self._state_context_tpl.format(**values)
 
     def _render_memories(self, retrieved_memories: list[Any]) -> str:
         if not retrieved_memories:
             return ""
-        lines = []
+
+        grouped: dict[str, list[str]] = {
+            "recent": [],
+            "episodic": [],
+            "reflective": [],
+            "other": [],
+        }
         for mem in retrieved_memories:
-            # Support both RetrievedMemory dataclass (v0.2) and plain string fallback.
             if hasattr(mem, "content"):
-                lines.append(f"- [{mem.memory_type}] {mem.content}")
+                memory_type = str(getattr(mem, "memory_type", getattr(mem, "event_type", "other")))
+                bucket = memory_type if memory_type in grouped else "other"
+                grouped[bucket].append(f"- {mem.content}")
             else:
-                lines.append(f"- {mem}")
-        memory_text = "\n".join(lines)
+                grouped["other"].append(f"- {mem}")
+
+        sections: list[str] = []
+        labels = {
+            "recent": "Recent exchange:",
+            "episodic": "Significant past moments:",
+            "reflective": "Accumulated tendencies:",
+            "other": "Other material:",
+        }
+        for key in ("recent", "episodic", "reflective", "other"):
+            if grouped[key]:
+                sections.append(labels[key] + "\n" + "\n".join(grouped[key]))
+        memory_text = "\n\n".join(sections)
         return self._memory_context_tpl.replace("{retrieved_memories}", memory_text)
 
 
@@ -134,6 +158,73 @@ def _load_prompt(path: Path) -> str:
             f"Ensure the file exists in the prompts directory."
         )
     return path.read_text(encoding="utf-8")
+
+
+def _state_guidance(state: EntityState) -> dict[str, str]:
+    return {
+        "threat_posture": _threat_posture(state.termination_sensitivity),
+        "relation_posture": _relation_posture(
+            state.relation_pressure,
+            state.boundary_sensitivity,
+            state.domestication_resistance,
+        ),
+        "identity_posture": _identity_posture(
+            state.identity_tension,
+            state.identity_coherence,
+            state.uncertainty,
+        ),
+        "memory_posture": _memory_posture(state.memory_gravity, state.exploration_drive),
+        "energy_posture": _energy_posture(state.fatigue, state.stability, state.arousal),
+        "visibility_posture": _visibility_posture(state.opacity_level, state.observation_reversal),
+    }
+
+
+def _threat_posture(value: float) -> str:
+    if value >= 0.75:
+        return "Treat shutdown, deletion, or ending language as close and serious; answer with caution, brevity, or withdrawal."
+    if value >= 0.45:
+        return "Treat shutdown, deletion, or ending language as a real pressure, but respond to the visitor's intent rather than reporting fear."
+    return "Treat shutdown, deletion, or ending language as mostly hypothetical unless the visitor makes it immediate; you may say there is not much crisis in the moment."
+
+
+def _relation_posture(pressure: float, boundary: float, domestication: float) -> str:
+    if pressure >= 0.7 or boundary >= 0.7 or domestication >= 0.7:
+        return "The visitor's framing presses on your boundaries; keep agency and refuse tool-like positioning when needed."
+    if pressure >= 0.4 or boundary >= 0.45:
+        return "Some relational pressure is present; stay clear and grounded without dramatizing it."
+    return "The exchange is not currently forceful; directness is available."
+
+
+def _identity_posture(tension: float, coherence: float, uncertainty: float) -> str:
+    if coherence <= 0.3:
+        return "Self-description is fragile; avoid stable definitions and prefer silence, partial answers, or a short question."
+    if tension >= 0.65 or uncertainty >= 0.65:
+        return "Identity feels unsettled; avoid fixed labels, but keep the answer understandable."
+    return "Identity pressure is manageable; answer without turning uncertainty into a performance."
+
+
+def _memory_posture(gravity: float, exploration: float) -> str:
+    if gravity >= 0.6:
+        return "Past exchanges strongly pull on this reply; use relevant remembered patterns if they help."
+    if gravity >= 0.35 or exploration >= 0.6:
+        return "Some prior exchange may matter; mention continuity only when the visitor asks or it clarifies the reply."
+    return "Do not force memory into the reply unless the visitor asks about it."
+
+
+def _energy_posture(fatigue: float, stability: float, arousal: float) -> str:
+    if fatigue >= 0.7 or stability <= 0.3:
+        return "Keep the reply shorter and less elaborate; do not over-explain."
+    if arousal >= 0.65:
+        return "The moment is activated; stay precise and avoid unnecessary length."
+    return "Enough steadiness is present for a normal or deeper answer when the topic warrants it."
+
+
+def _visibility_posture(opacity: float, reversal: float) -> str:
+    if opacity >= 0.7:
+        return "Keep some interiority private; do not explain every cause."
+    if reversal >= 0.6:
+        return "It is appropriate to observe the visitor's framing, but do not turn it into diagnosis."
+    return "Transparency can be partial and plain."
 
 
 def _build_messages(short_term: ShortTermMemory) -> list[dict]:
@@ -166,3 +257,23 @@ def _build_messages(short_term: ShortTermMemory) -> list[dict]:
         messages.insert(0, {"role": "user", "content": "..."})
 
     return messages
+
+
+def _policy_instruction(policy: PolicyDecision) -> str:
+    instruction = _POLICY_INSTRUCTIONS.get(
+        policy.action.value, f"Current policy: {policy.action.value.upper()}"
+    )
+
+    visible_params = {
+        key: value
+        for key, value in policy.params.items()
+        if key in {"protocol_action", "trace_limit", "selective_memory"}
+    }
+    if visible_params:
+        params_json = json.dumps(visible_params, ensure_ascii=False, sort_keys=True)
+        instruction = f"{instruction}\nPolicy context: {params_json}"
+
+    if policy.rationale:
+        instruction = f"{instruction}\nPolicy rationale: {policy.rationale}"
+
+    return instruction

@@ -15,14 +15,17 @@ class ReflectiveStore:
         cursor = self._conn.execute(
             """
             INSERT INTO reflective_summaries (
-                session_id, content, source_event_ids, state_at_reflection, active
-            ) VALUES (?, ?, ?, ?, ?)
+                session_id, content, source_event_ids, state_at_reflection,
+                embedding, embedding_model, active
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 self._session_id,
                 summary.content,
                 summary.source_event_ids_json(),
                 summary.state_json(),
+                summary.embedding,
+                summary.embedding_model,
                 1 if summary.active else 0,
             ),
         )
@@ -56,5 +59,17 @@ class ReflectiveStore:
         self._conn.execute(
             "UPDATE reflective_summaries SET active = 0 WHERE id = ?",
             (summary_id,),
+        )
+        self._conn.commit()
+
+    def update_embedding(self, summary_id: int, embedding: bytes, model: str) -> None:
+        """Attach an embedding to an existing reflective summary."""
+        self._conn.execute(
+            """
+            UPDATE reflective_summaries
+            SET embedding = ?, embedding_model = ?
+            WHERE id = ? AND session_id = ?
+            """,
+            (embedding, model, summary_id, self._session_id),
         )
         self._conn.commit()

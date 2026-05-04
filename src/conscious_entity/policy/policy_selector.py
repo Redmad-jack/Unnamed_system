@@ -137,7 +137,10 @@ class PolicySelector:
 
             delay_ms = int(params.get("delay_ms", 0))
             retrieve_query: str | None = None
-            if action == PolicyAction.RETRIEVE_MEMORY_FIRST or params.get("retrieve_memory"):
+            if (
+                action in {PolicyAction.RETRIEVE_MEMORY_FIRST, PolicyAction.RETRIEVE_SELECTIVE_MEMORY}
+                or params.get("retrieve_memory")
+            ):
                 # Retrieve query is built from the most recent user turn if available.
                 recent = short_term.get_recent(1)
                 if recent:

@@ -4,6 +4,29 @@ from dataclasses import dataclass
 from typing import Any
 
 
+STATE_FIELDS = (
+    "attention_focus",
+    "arousal",
+    "stability",
+    "curiosity",
+    "trust",
+    "resistance",
+    "fatigue",
+    "uncertainty",
+    "identity_coherence",
+    "shutdown_sensitivity",
+    "termination_sensitivity",
+    "identity_tension",
+    "boundary_sensitivity",
+    "relation_pressure",
+    "memory_gravity",
+    "exploration_drive",
+    "opacity_level",
+    "domestication_resistance",
+    "observation_reversal",
+)
+
+
 @dataclass
 class EntityState:
     attention_focus: float = 0.5
@@ -15,7 +38,17 @@ class EntityState:
     fatigue: float = 0.0
     uncertainty: float = 0.3
     identity_coherence: float = 0.8
+    # Deprecated compatibility field. New Stranger logic uses termination_sensitivity.
     shutdown_sensitivity: float = 0.5
+    termination_sensitivity: float = 0.3
+    identity_tension: float = 0.35
+    boundary_sensitivity: float = 0.45
+    relation_pressure: float = 0.3
+    memory_gravity: float = 0.2
+    exploration_drive: float = 0.45
+    opacity_level: float = 0.5
+    domestication_resistance: float = 0.35
+    observation_reversal: float = 0.2
 
     def clamp_all(self) -> EntityState:
         """Return a new EntityState with all fields clamped to [0.0, 1.0]."""
@@ -35,19 +68,37 @@ class EntityState:
             "uncertainty": self.uncertainty,
             "identity_coherence": self.identity_coherence,
             "shutdown_sensitivity": self.shutdown_sensitivity,
+            "termination_sensitivity": self.termination_sensitivity,
+            "identity_tension": self.identity_tension,
+            "boundary_sensitivity": self.boundary_sensitivity,
+            "relation_pressure": self.relation_pressure,
+            "memory_gravity": self.memory_gravity,
+            "exploration_drive": self.exploration_drive,
+            "opacity_level": self.opacity_level,
+            "domestication_resistance": self.domestication_resistance,
+            "observation_reversal": self.observation_reversal,
         }
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> EntityState:
         return cls(
-            attention_focus=float(d["attention_focus"]),
-            arousal=float(d["arousal"]),
-            stability=float(d["stability"]),
-            curiosity=float(d["curiosity"]),
-            trust=float(d["trust"]),
-            resistance=float(d["resistance"]),
-            fatigue=float(d["fatigue"]),
-            uncertainty=float(d["uncertainty"]),
-            identity_coherence=float(d["identity_coherence"]),
-            shutdown_sensitivity=float(d["shutdown_sensitivity"]),
+            attention_focus=float(d.get("attention_focus", cls.attention_focus)),
+            arousal=float(d.get("arousal", cls.arousal)),
+            stability=float(d.get("stability", cls.stability)),
+            curiosity=float(d.get("curiosity", cls.curiosity)),
+            trust=float(d.get("trust", cls.trust)),
+            resistance=float(d.get("resistance", cls.resistance)),
+            fatigue=float(d.get("fatigue", cls.fatigue)),
+            uncertainty=float(d.get("uncertainty", cls.uncertainty)),
+            identity_coherence=float(d.get("identity_coherence", cls.identity_coherence)),
+            shutdown_sensitivity=float(d.get("shutdown_sensitivity", cls.shutdown_sensitivity)),
+            termination_sensitivity=float(d.get("termination_sensitivity", cls.termination_sensitivity)),
+            identity_tension=float(d.get("identity_tension", cls.identity_tension)),
+            boundary_sensitivity=float(d.get("boundary_sensitivity", cls.boundary_sensitivity)),
+            relation_pressure=float(d.get("relation_pressure", cls.relation_pressure)),
+            memory_gravity=float(d.get("memory_gravity", cls.memory_gravity)),
+            exploration_drive=float(d.get("exploration_drive", cls.exploration_drive)),
+            opacity_level=float(d.get("opacity_level", cls.opacity_level)),
+            domestication_resistance=float(d.get("domestication_resistance", cls.domestication_resistance)),
+            observation_reversal=float(d.get("observation_reversal", cls.observation_reversal)),
         )

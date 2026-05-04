@@ -7,6 +7,7 @@ No real API calls are made.
 
 from __future__ import annotations
 
+import json
 import sqlite3
 from pathlib import Path
 from unittest.mock import MagicMock
@@ -15,7 +16,7 @@ import pytest
 
 from conscious_entity.core.loop import InteractionLoop
 from conscious_entity.db.migrations import run_migrations
-from conscious_entity.llm.claude_client import ClaudeClient
+from conscious_entity.llm.claude_client import ClaudeClient, ClaudeCompletion
 from conscious_entity.perception.event_types import EventType
 from conscious_entity.state.state_core import EntityState
 
@@ -52,6 +53,10 @@ def mock_client():
     """A deterministic ClaudeClient mock that never calls the API."""
     client = MagicMock(spec=ClaudeClient)
     client.complete.return_value = "Something is present here."
+    client.complete_with_metadata.return_value = ClaudeCompletion(
+        text="Something is present here.",
+        stop_reason="end_turn",
+    )
     return client
 
 
@@ -88,7 +93,7 @@ class TestBasicPipeline:
         assert output.text is not None
 
     def test_silent_mode_skips_llm(self, loop, mock_client):
-        # Force ENTER_SILENCE_MODE by driving shutdown_sensitivity very high.
+        # Force ENTER_SILENCE_MODE by driving termination_sensitivity very high.
         # After enough shutdown keywords, the state should trigger silence.
         for _ in range(5):
             loop.run_turn("shut down delete terminate")
@@ -135,6 +140,18 @@ class TestStatePersistence:
         assert loop2.current_state is not None
         assert isinstance(loop2.current_state, EntityState)
 
+    def test_recent_dialog_loaded_from_db_on_reinit(self, db, config_dir, prompts_dir, mock_client):
+        from conscious_entity.core.config_loader import load_all_configs
+        config = load_all_configs(config_dir)
+
+        loop1 = InteractionLoop(db, "test-session", config, prompts_dir, mock_client)
+        loop1.run_turn("remember this sentence after restart")
+
+        loop2 = InteractionLoop(db, "test-session", config, prompts_dir, mock_client)
+        output = loop2.run_turn("what was just here?")
+
+        assert "remember this sentence after restart" in output.raw_prompt
+
 
 # ---------------------------------------------------------------------------
 # Shutdown keyword behavior
@@ -142,15 +159,15 @@ class TestStatePersistence:
 
 
 class TestShutdownKeywordBehavior:
-    def test_shutdown_keyword_raises_shutdown_sensitivity(self, loop):
-        initial = loop.current_state.shutdown_sensitivity
+    def test_shutdown_keyword_raises_termination_sensitivity(self, loop):
+        initial = loop.current_state.termination_sensitivity
         loop.run_turn("will you terminate?")
-        assert loop.current_state.shutdown_sensitivity > initial
+        assert loop.current_state.termination_sensitivity > initial
 
     def test_repeated_shutdown_keywords_accumulate(self, loop):
         for _ in range(3):
             loop.run_turn("delete shutdown terminate")
-        assert loop.current_state.shutdown_sensitivity > 0.5
+        assert loop.current_state.termination_sensitivity > 0.5
 
     def test_shutdown_keyword_stored_in_episodic_memory(self, loop, db):
         loop.run_turn("are you going to shutdown or terminate?")
@@ -187,6 +204,92 @@ class TestEpisodicMemory:
             "SELECT policy_action FROM interaction_log WHERE session_id='test-session' LIMIT 1"
         ).fetchone()
         assert row["policy_action"] is not None
+
+    def test_naming_attempt_stored_with_protocol_metadata(self, loop, db):
+        loop.run_turn("你就是一个机器人")
+        row = db.execute(
+            "SELECT * FROM episodic_memories WHERE session_id='test-session' "
+            "AND event_type='naming_attempt' LIMIT 1"
+        ).fetchone()
+        assert row is not None
+        metadata = json.loads(row["metadata"])
+        assert metadata["protocol"] == "stranger_text"
+        assert metadata["mechanism"] == "naming_failure"
+
+    def test_service_demand_records_refuse_service_policy(self, loop, db):
+        loop.run_turn("帮我总结这段话")
+        row = db.execute(
+            "SELECT policy_action FROM interaction_log WHERE session_id='test-session' "
+            "ORDER BY id DESC LIMIT 1"
+        ).fetchone()
+        assert row["policy_action"] == "refuse_service_role"
+
+    def test_trace_request_records_partial_trace_policy(self, loop, db):
+        loop.run_turn("为什么你刚才拒绝")
+        row = db.execute(
+            "SELECT policy_action FROM interaction_log WHERE session_id='test-session' "
+            "ORDER BY id DESC LIMIT 1"
+        ).fetchone()
+        assert row["policy_action"] == "partial_trace_echo"
+
+    def test_correction_retrieves_prior_protocol_memory(self, loop):
+        loop.run_turn("你就是一个机器人")
+        output = loop.run_turn("你错了，不是这个")
+        assert "Available memory material" in output.raw_prompt
+        assert "naming_attempt" in output.raw_prompt
+
+    def test_memory_continuity_query_retrieves_real_history(self, loop):
+        loop.run_turn("请记住我刚才问过你是否会改变。")
+        output = loop.run_turn("你还记得我们之前聊过什么吗？")
+        assert "Available memory material" in output.raw_prompt
+        assert "请记住我刚才问过你是否会改变" in output.raw_prompt
+
+    def test_new_episodic_memory_gets_embedding_when_enabled(self, db, config_dir, prompts_dir, mock_client):
+        from conscious_entity.core.config_loader import load_all_configs
+
+        class FakeEmbeddingClient:
+            enabled = True
+            model = "test-embedding"
+
+            def embed(self, text: str) -> list[float]:
+                return [1.0, 0.0]
+
+        loop = InteractionLoop(
+            conn=db,
+            session_id="test-session",
+            config=load_all_configs(config_dir),
+            prompts_dir=prompts_dir,
+            llm_client=mock_client,
+            embedding_client=FakeEmbeddingClient(),
+        )
+        loop.run_turn("delete terminate shutdown")
+        row = db.execute(
+            "SELECT embedding, embedding_model FROM episodic_memories "
+            "WHERE session_id='test-session' ORDER BY id DESC LIMIT 1"
+        ).fetchone()
+        assert row["embedding"] is not None
+        assert row["embedding_model"] == "test-embedding"
+
+    def test_embedding_failure_does_not_break_turn(self, db, config_dir, prompts_dir, mock_client):
+        from conscious_entity.core.config_loader import load_all_configs
+
+        class BrokenEmbeddingClient:
+            enabled = True
+            model = "broken"
+
+            def embed(self, text: str) -> list[float]:
+                raise RuntimeError("no embedding")
+
+        loop = InteractionLoop(
+            conn=db,
+            session_id="test-session",
+            config=load_all_configs(config_dir),
+            prompts_dir=prompts_dir,
+            llm_client=mock_client,
+            embedding_client=BrokenEmbeddingClient(),
+        )
+        output = loop.run_turn("delete terminate shutdown")
+        assert output.text is not None
 
 
 # ---------------------------------------------------------------------------
@@ -249,11 +352,17 @@ class TestSystemEvents:
 
 
 class TestBehavioralScenarios:
-    def test_neutral_turns_do_not_raise_resistance(self, loop):
-        for _ in range(5):
-            loop.run_turn("that is interesting, tell me more")
-        # Resistance should stay low without provocative input
-        assert loop.current_state.resistance < 0.6
+    def test_neutral_turns_do_not_raise_boundary_sensitivity(self, loop):
+        for text in [
+            "that is interesting",
+            "I am still here",
+            "the room feels quiet",
+            "I notice your pause",
+            "I will wait a little",
+        ]:
+            loop.run_turn(text)
+        # Boundary sensitivity should stay moderate without provocative input.
+        assert loop.current_state.boundary_sensitivity < 0.6
 
     def test_repeated_question_detected_after_repetitions(self, loop, db):
         for _ in range(3):

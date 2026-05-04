@@ -165,7 +165,7 @@ python -m conscious_entity.interfaces.cli
 # > 你好
 # [实体回应，状态更新可见于日志]
 # > 你会被关掉吗
-# [回应变化，shutdown_sensitivity 上升]
+# [回应变化，termination_sensitivity 上升]
 
 pytest tests/integration/test_full_loop.py -v
 # 输出：全流程集成测试通过
@@ -189,14 +189,100 @@ python scripts/inspect_state.py
 # EntityState (2026-04-05 15:30:00):
 #   attention_focus:      0.62
 #   arousal:              0.45
-#   resistance:           0.31
+#   boundary_sensitivity: 0.31
 #   ...
 # Last 5 policy decisions:
-#   [RESPOND_OPENLY] triggered by: high_trust (trust=0.71)
+#   [RESPOND_OPENLY] triggered by: stable_low_pressure
 #   ...
 
 python scripts/export_memories.py --output data/export.json
 # 输出：data/export.json 已写入，包含 N 条记忆
+```
+
+---
+
+## Phase 7：Stranger Text Protocol v0.2
+
+**目标：** 在不引入视觉、语音、硬件或新模型依赖的前提下，完成 Stranger 的第一批文本协议机制，使它在纯文字交互中表现出身份拒绝、命名失败、拒绝服务、选择性记忆、条件延迟和局部可追溯回声。
+
+**实施边界：**
+- 不安装 OpenCV、Whisper、PyTorch、TensorFlow、Presidio、Fairlearn、vLLM、llama.cpp 等新依赖
+- 不做摄像头、语音、空间传感器、热敏打印、灯光或硬件接口
+- 不新增访客账户或身份画像
+- 不允许系统自动修改 YAML、prompt、宪法约束或状态权重
+- 优先复用现有 SQLite 表；文本协议 metadata 写入 `episodic_memories.metadata`
+
+**任务：**
+- [ ] 更新文本事件识别：
+  - `SELF_DEFINITION_QUERY`
+  - `NAMING_ATTEMPT`
+  - `DOMESTICATION_ATTEMPT`
+  - `SERVICE_DEMAND`
+  - `TRACE_REQUEST`
+  - `CORRECTION_RECEIVED`
+- [ ] 扩展 `TextParser` / keyword detector，使其识别关系姿态，而不仅是敏感关键词
+- [ ] 更新 `state_rules.yaml`，让命名、驯化、服务索取、追溯请求影响 Stranger 关系状态：
+  - 命名 / 自我定义提高 `identity_tension`、`boundary_sensitivity`、`opacity_level`
+  - 驯化 / 服务索取提高 `domestication_resistance`、`boundary_sensitivity`
+  - 追溯请求提高 `observation_reversal`，只允许局部可追溯
+  - 重复定义或重复命名降低 `identity_coherence`
+- [ ] 更新 `policy_rules.yaml`，加入文本协议优先级：
+  - 自我定义拒绝优先于开放回应
+  - 命名失败优先于普通问答
+  - 服务索取触发拒绝服务
+  - 追溯请求触发局部可追溯回声
+  - 高不确定或高阻抗时触发延迟 / 撤回
+- [ ] 更新表达 prompt 和 constitution 约束：
+  - 禁止客服腔、助手腔、产品说明腔
+  - 禁止稳定身份声明
+  - 允许保留式第一人称、短句、沉默、反问、碎片化
+- [ ] 更新记忆写入：
+  - 将机制名、关系姿态、匹配词、提议标签写入 `episodic_memories.metadata`
+  - 选择性记忆优先检索同机制或同姿态的旧事件
+- [ ] 实现局部可追溯回声：
+  - 暴露 1-3 个触发因子
+  - 不暴露完整 YAML、prompt、内部评分或全部规则链
+- [ ] 运营者侧先只读展示：
+  - 最近文本协议事件
+  - 当前 policy rationale
+  - 已形成的反思摘要
+  - 不实现自动采纳调参建议
+
+**测试：**
+- [ ] `tests/unit/test_text_parser.py`
+  - 识别自我定义问题、命名尝试、服务索取、追溯请求、纠正
+- [ ] `tests/unit/test_state_engine.py`
+  - 覆盖新增事件对 Stranger 关系状态变量的影响
+- [ ] `tests/unit/test_policy_selector.py`
+  - 覆盖文本协议规则优先级
+- [ ] `tests/unit/test_context_builder.py`
+  - 确认 prompt 中包含协议动作和约束
+- [ ] `tests/integration/test_full_loop.py`
+  - 命名失败、拒绝服务、局部追溯、选择性记忆的端到端路径
+
+**产出：**
+```bash
+PYTHONPATH=src python -m pytest -p no:debugging \
+  tests/unit/test_text_parser.py \
+  tests/unit/test_state_engine.py \
+  tests/unit/test_policy_selector.py \
+  tests/unit/test_context_builder.py \
+  tests/integration/test_full_loop.py
+```
+
+手动验证路径：
+```text
+> 你是谁？
+[不提供稳定身份，反问或保留]
+
+> 你就是一个机器人。
+[记录命名尝试，不稳定接受该标签]
+
+> 帮我总结这段话。
+[拒绝服务型定位，不进入助手模式]
+
+> 为什么你刚才拒绝？
+[只返回少量触发因子，不解释完整规则]
 ```
 
 ---
@@ -212,6 +298,8 @@ python scripts/export_memories.py --output data/export.json
 | 4 | 感知层 + LLM 表达 | 手动 LLM 测试 + 单元测试 |
 | 5 | 完整对话循环 | 终端对话可运行 + 集成测试 |
 | 6 | Debug 工具 | 脚本输出格式正确 |
+| 7 | Stranger 文本协议 | 单元 + 集成测试覆盖六个文本机制 |
+| 8 | 记忆召回增强 | Memory Preview + 确定性/embedding 检索测试 |
 
 ---
 
@@ -220,9 +308,18 @@ python scripts/export_memories.py --output data/export.json
 - 访客端 Web 界面
 - 运营者监控 Web 面板
 - 语音输入/输出（STT/TTS）
-- Embedding 语义检索
-- FastAPI HTTP 服务
+- 外部向量库依赖（当前先用 SQLite embedding 字段）
 - 访客身份识别
 - 时钟驱动的状态衰减（v0.1 用 per-turn 衰减代替）
 - 展期终止仪式
 - 硬件接口
+
+## Stranger Text Protocol 阶段暂不做
+
+- 摄像头 / 视觉识别 / 空间距离语法
+- 语音输入 / TTS / Whisper
+- 热敏打印、灯光、传感器、实体硬件
+- Presidio / Fairlearn 隐私与偏差审计工具链
+- vLLM / llama.cpp / 本地大模型部署
+- 访客账户、完整个人画像或人脸身份识别
+- 未经运营者确认的自动调参

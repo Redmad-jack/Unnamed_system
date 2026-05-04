@@ -17,8 +17,9 @@ class EpisodicStore:
             """
             INSERT INTO episodic_memories (
                 session_id, event_type, content, raw_text,
-                salience, state_snapshot_id, reflected, reflection_id, metadata
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                salience, state_snapshot_id, embedding, embedding_model,
+                reflected, reflection_id, metadata
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 self._session_id,
@@ -27,6 +28,8 @@ class EpisodicStore:
                 memory.raw_text,
                 memory.salience,
                 memory.state_snapshot_id,
+                memory.embedding,
+                memory.embedding_model,
                 1 if memory.reflected else 0,
                 memory.reflection_id,
                 memory.metadata_json(),
@@ -69,5 +72,17 @@ class EpisodicStore:
             WHERE id = ?
             """,
             (reflection_id, event_id),
+        )
+        self._conn.commit()
+
+    def update_embedding(self, memory_id: int, embedding: bytes, model: str) -> None:
+        """Attach an embedding to an existing episodic memory."""
+        self._conn.execute(
+            """
+            UPDATE episodic_memories
+            SET embedding = ?, embedding_model = ?
+            WHERE id = ? AND session_id = ?
+            """,
+            (embedding, model, memory_id, self._session_id),
         )
         self._conn.commit()

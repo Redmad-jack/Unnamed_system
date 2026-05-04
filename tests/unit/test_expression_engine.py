@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
+from datetime import datetime, timezone
 
 from conscious_entity.expression.expression_engine import ExpressionEngine
 from conscious_entity.expression.style_mapper import StyleHints
 from conscious_entity.llm.claude_client import ClaudeCompletion
+from conscious_entity.memory.models import ShortTermEntry
+from conscious_entity.memory.short_term import ShortTermMemory
 from conscious_entity.policy.policy_types import PolicyAction, PolicyDecision
 from conscious_entity.state.state_core import EntityState
 
@@ -98,5 +101,27 @@ def test_generate_uses_fallback_and_clears_truncation_on_empty_completion():
         short_term=None,
     )
 
-    assert output.text == "Something is here. I am attending."
+    assert output.text == "I'm here. I can respond."
+    assert output.truncated is False
+
+
+def test_generate_uses_chinese_fallback_for_recent_chinese_user_turn():
+    engine, _ = _build_engine(
+        ClaudeCompletion(text="", stop_reason="max_tokens"),
+        max_tokens=320,
+    )
+    short_term = ShortTermMemory(max_turns=10)
+    short_term.add(ShortTermEntry(
+        role="user",
+        content="你是谁？",
+        timestamp=datetime.now(timezone.utc),
+    ))
+
+    output = engine.generate(
+        policy=PolicyDecision(action=PolicyAction.REJECT_DEFINITION),
+        state=EntityState(),
+        short_term=short_term,
+    )
+
+    assert output.text == "我不能给你一个固定的定义。"
     assert output.truncated is False

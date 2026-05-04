@@ -56,6 +56,16 @@
 - 原因：展览期间无法 attach debugger，`raw_prompt` 是唯一的事后诊断途径
 - 如何应用：`ExpressionEngine.generate()` 必须在 `ExpressionOutput` 中填入 `raw_prompt`
 
+**L09：可选增强服务失败必须降级，不得中断对话**
+- 规则：embedding、preview、统计等增强能力失败时，只记录日志并回退到基础路径
+- 原因：Stranger 的现场对话不能因为语义召回供应商、网络或向量缺失而崩溃
+- 如何应用：`MemoryRetriever` 的 embedding 分支捕获异常后必须退回确定性检索
+
+**L10：`.env` 里同一 key 不能重复出现**
+- 规则：同一 `.env` 文件中重复 key 必须产生 warning；修改配置时只保留一个有效定义
+- 原因：加载器默认不覆盖已有变量，重复 key 会让第一处值生效，后面的值看起来写了但实际无效
+- 如何应用：切换 LLM / Embedding 供应商时，先检查重复 key，再看运行时配置面板的 `source` 与脱敏值
+
 ---
 
 ## 待观察（尚未验证）

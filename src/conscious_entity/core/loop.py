@@ -13,12 +13,16 @@ from conscious_entity.expression.expression_engine import ExpressionEngine
 from conscious_entity.expression.output_model import ExpressionOutput
 from conscious_entity.expression.style_mapper import StyleMapper
 from conscious_entity.llm.claude_client import ClaudeClient
+from conscious_entity.llm.embedding_client import EmbeddingClient, EmbeddingConfigurationError
 from conscious_entity.memory.episodic_store import EpisodicStore
 from conscious_entity.memory.models import EpisodicMemory, ShortTermEntry
 from conscious_entity.memory.reflective_store import ReflectiveStore
+from conscious_entity.memory.retrieval import MemoryRetriever
 from conscious_entity.memory.short_term import ShortTermMemory
+from conscious_entity.memory.vector import encode_embedding
 from conscious_entity.perception.event_types import EventType, PerceptionEvent
 from conscious_entity.perception.keyword_detector import KeywordDetector
+from conscious_entity.perception.relationship_detector import RelationshipDetector
 from conscious_entity.perception.salience_scorer import SalienceScorer
 from conscious_entity.perception.text_parser import TextParser
 from conscious_entity.policy.constitution import Constitution
@@ -64,6 +68,7 @@ class InteractionLoop:
         config: dict[str, Any],           # output of load_all_configs()
         prompts_dir: Path,
         llm_client: Optional[ClaudeClient] = None,
+        embedding_client: Optional[EmbeddingClient] = None,
         event_bus: Optional[EventBus] = None,
     ) -> None:
         self._conn = conn
@@ -88,12 +93,16 @@ class InteractionLoop:
         self._short_term = ShortTermMemory(
             max_turns=int(session_cfg.get("short_term_window", 10))
         )
+        self._hydrate_short_term_from_log()
         self._episodic_store = EpisodicStore(conn, session_id)
         self._reflective_store = ReflectiveStore(conn, session_id)
+        self._embedding_client = embedding_client if embedding_client is not None else _optional_embedding_client()
+        self._memory_retriever = MemoryRetriever(conn, session_id, self._embedding_client)
 
         keyword_detector = KeywordDetector(profile.get("topics_of_sensitivity", []))
         salience_scorer = SalienceScorer(profile.get("salience_weights", {}))
-        self._text_parser = TextParser(keyword_detector, salience_scorer)
+        relationship_detector = RelationshipDetector(profile.get("text_protocol", {}))
+        self._text_parser = TextParser(keyword_detector, salience_scorer, relationship_detector)
         self._salience_scorer = salience_scorer
 
         constitution = Constitution(config["constitution"])
@@ -167,22 +176,38 @@ class InteractionLoop:
                     metadata=event.metadata,
                 )
                 try:
-                    self._episodic_store.store(mem)
+                    memory_id = self._episodic_store.store(mem)
+                    self._store_episodic_embedding(memory_id, content)
                 except Exception as exc:
                     logger.error("Failed to store episodic memory: %s", exc)
 
         # Step 6: Select policy
         decision = self._policy_selector.select(new_state, events, self._short_term)
 
-        # Step 7: If RETRIEVE_MEMORY_FIRST → fetch recent memories, switch action
+        # Step 7: Memory retrieval policies
         retrieved_memories: list = []
+        should_retrieve = (
+            decision.action in {PolicyAction.RETRIEVE_MEMORY_FIRST, PolicyAction.RETRIEVE_SELECTIVE_MEMORY}
+            or bool(decision.params.get("retrieve_memory"))
+        )
+        if should_retrieve:
+            retrieved_memories = self._memory_retriever.retrieve(
+                decision.retrieve_query or raw_input,
+                events=events,
+            )
+
         if decision.action == PolicyAction.RETRIEVE_MEMORY_FIRST:
-            retrieved_memories = _get_recent_memories(self._episodic_store)
             decision = PolicyDecision(
                 action=PolicyAction.RESPOND_OPENLY,
                 rationale=f"post-retrieval:{decision.rationale}",
+                params=decision.params,
             )
             logger.debug("RETRIEVE_MEMORY_FIRST: fetched %d memories", len(retrieved_memories))
+        elif decision.action == PolicyAction.RETRIEVE_SELECTIVE_MEMORY:
+            logger.debug(
+                "RETRIEVE_SELECTIVE_MEMORY: fetched %d memories",
+                len(retrieved_memories),
+            )
 
         # Step 8: Generate expression
         output = self._expression_engine.generate(
@@ -211,9 +236,11 @@ class InteractionLoop:
 
         # Step 11: Maybe trigger reflection
         try:
-            self._reflection_engine.maybe_reflect(
+            summary = self._reflection_engine.maybe_reflect(
                 new_state, self._episodic_store, self._reflective_store
             )
+            if summary is not None and summary.id is not None:
+                self._store_reflective_embedding(summary.id, summary.content)
         except Exception as exc:
             logger.error("Reflection failed: %s", exc)
 
@@ -261,6 +288,34 @@ class InteractionLoop:
     # Private helpers
     # ------------------------------------------------------------------
 
+    def _hydrate_short_term_from_log(self) -> None:
+        """Restore the recent dialog window for prompt continuity after restart."""
+        limit = self._short_term.max_turns
+        rows = self._conn.execute(
+            """
+            SELECT raw_text, expression_output, turn_at
+            FROM interaction_log
+            WHERE session_id = ?
+            ORDER BY turn_at DESC, id DESC
+            LIMIT ?
+            """,
+            (self._session_id, limit),
+        ).fetchall()
+        for row in reversed(rows):
+            timestamp = _parse_timestamp(row["turn_at"])
+            if row["raw_text"]:
+                self._short_term.add(ShortTermEntry(
+                    role="user",
+                    content=row["raw_text"],
+                    timestamp=timestamp,
+                ))
+            if row["expression_output"] is not None:
+                self._short_term.add(ShortTermEntry(
+                    role="entity",
+                    content=row["expression_output"],
+                    timestamp=timestamp,
+                ))
+
     def _log_interaction(
         self,
         role: str,
@@ -296,6 +351,30 @@ class InteractionLoop:
         except Exception as exc:
             logger.error("Failed to write interaction_log: %s", exc)
 
+    def _store_episodic_embedding(self, memory_id: int, text: str) -> None:
+        if self._embedding_client is None or not self._embedding_client.enabled:
+            return
+        model = self._embedding_client.model
+        if not model:
+            return
+        try:
+            embedding = encode_embedding(self._embedding_client.embed(text))
+            self._episodic_store.update_embedding(memory_id, embedding, model)
+        except Exception as exc:
+            logger.warning("Failed to attach episodic embedding; continuing without it: %s", exc)
+
+    def _store_reflective_embedding(self, summary_id: int, text: str) -> None:
+        if self._embedding_client is None or not self._embedding_client.enabled:
+            return
+        model = self._embedding_client.model
+        if not model:
+            return
+        try:
+            embedding = encode_embedding(self._embedding_client.embed(text))
+            self._reflective_store.update_embedding(summary_id, embedding, model)
+        except Exception as exc:
+            logger.warning("Failed to attach reflective embedding; continuing without it: %s", exc)
+
 
 def _event_summary(event: PerceptionEvent) -> str:
     if event.raw_text:
@@ -303,6 +382,73 @@ def _event_summary(event: PerceptionEvent) -> str:
     return event.event_type.value
 
 
-def _get_recent_memories(episodic_store: EpisodicStore) -> list[EpisodicMemory]:
-    """v0.1 retrieval: recency-based (no embedding search)."""
-    return episodic_store.get_recent(limit=5)
+def _parse_timestamp(value: str | None) -> datetime:
+    if not value:
+        return datetime.now(timezone.utc)
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        try:
+            return datetime.strptime(value, "%Y-%m-%d %H:%M:%S").replace(tzinfo=timezone.utc)
+        except ValueError:
+            return datetime.now(timezone.utc)
+
+
+def _optional_embedding_client() -> EmbeddingClient | None:
+    try:
+        return EmbeddingClient.from_env()
+    except EmbeddingConfigurationError as exc:
+        logger.warning("Embedding configuration ignored; deterministic memory retrieval remains active: %s", exc)
+        return None
+
+
+def _get_selective_memories(
+    episodic_store: EpisodicStore,
+    events: list[PerceptionEvent],
+    limit: int = 5,
+) -> list[EpisodicMemory]:
+    """Protocol-aware retrieval from recent episodic memories, without embeddings."""
+    recent = episodic_store.get_recent(limit=30)
+    event_types, protocol_keys, current_raw_texts = _event_protocol_keys(events)
+
+    selected: list[EpisodicMemory] = []
+    fallback_protocol: list[EpisodicMemory] = []
+    for mem in recent:
+        if mem.raw_text in current_raw_texts:
+            continue
+        metadata = mem.metadata or {}
+        if metadata.get("protocol") == "stranger_text":
+            fallback_protocol.append(mem)
+
+        memory_keys = {
+            str(metadata.get("mechanism", "")),
+            str(metadata.get("posture", "")),
+        }
+        if mem.event_type in event_types or bool(protocol_keys & memory_keys):
+            selected.append(mem)
+        if len(selected) >= limit:
+            return selected
+
+    if selected:
+        return selected[:limit]
+    return fallback_protocol[:limit]
+
+
+def _event_protocol_keys(
+    events: list[PerceptionEvent],
+) -> tuple[set[str], set[str], set[str]]:
+    event_types: set[str] = set()
+    protocol_keys: set[str] = set()
+    raw_texts: set[str] = set()
+    for event in events:
+        if event.raw_text:
+            raw_texts.add(event.raw_text)
+        metadata = event.metadata or {}
+        if metadata.get("protocol") != "stranger_text":
+            continue
+        event_types.add(event.event_type.value)
+        for key in ("mechanism", "posture"):
+            value = metadata.get(key)
+            if value:
+                protocol_keys.add(str(value))
+    return event_types, protocol_keys, raw_texts

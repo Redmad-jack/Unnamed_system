@@ -74,10 +74,24 @@ class TestSystemPromptInvariants:
         ctx = builder.build(EntityState(), _decision(), _style(), _empty_memory(), [])
         assert "expression layer" in ctx.system_prompt.lower()
 
-    def test_system_prompt_contains_state_values(self, builder):
-        state = EntityState(trust=0.42)
+    def test_system_prompt_contains_memory_continuity_rules(self, builder):
+        ctx = builder.build(EntityState(), _decision(), _style(), _empty_memory(), [])
+        assert "Never say that you have no memory" in ctx.system_prompt
+        assert "some prior exchanges and accumulated changes" in ctx.system_prompt
+
+    def test_system_prompt_contains_markdown_and_topic_depth_rules(self, builder):
+        ctx = builder.build(EntityState(), _decision(), _style(), _empty_memory(), [])
+        assert "Do not use Markdown formatting" in ctx.system_prompt
+        assert "Adjust response length to topic depth" in ctx.system_prompt
+
+    def test_system_prompt_contains_private_state_guidance_without_raw_variable_names(self, builder):
+        state = EntityState(identity_tension=0.42)
         ctx = builder.build(state, _decision(), _style(), _empty_memory(), [])
-        assert "0.42" in ctx.system_prompt
+        assert "Private state guidance" in ctx.system_prompt
+        assert "Identity posture" in ctx.system_prompt
+        assert "identity_tension" not in ctx.system_prompt
+        assert "termination_sensitivity" not in ctx.system_prompt
+        assert "0.42" not in ctx.system_prompt
 
     def test_system_prompt_contains_policy_instruction(self, builder):
         ctx = builder.build(EntityState(), _decision(PolicyAction.RESPOND_BRIEFLY), _style(), _empty_memory(), [])
@@ -98,6 +112,17 @@ class TestSystemPromptInvariants:
             ctx = builder.build(EntityState(), _decision(action), _style(), _empty_memory(), [])
             assert ctx.system_prompt
             assert "never claim to be conscious" in ctx.system_prompt.lower()
+
+    def test_stranger_protocol_policy_instruction_includes_context(self, builder):
+        decision = PolicyDecision(
+            action=PolicyAction.PARTIAL_TRACE_ECHO,
+            rationale="rule:trace_request_partial_echo",
+            params={"protocol_action": "partial_trace_echo", "trace_limit": 3},
+        )
+        ctx = builder.build(EntityState(), decision, _style(), _empty_memory(), [])
+        assert "PARTIAL_TRACE_ECHO" in ctx.system_prompt
+        assert "partial_trace_echo" in ctx.system_prompt
+        assert "trace_request_partial_echo" in ctx.system_prompt
 
 
 # ---------------------------------------------------------------------------
@@ -164,7 +189,8 @@ class TestMemoryContext:
 
         ctx = builder.build(EntityState(), _decision(), _style(), _empty_memory(), [FakeMemory()])
         assert "Visitor asked about shutdown before." in ctx.system_prompt
-        assert "Relevant memories retrieved" in ctx.system_prompt
+        assert "Available memory material" in ctx.system_prompt
+        assert "Significant past moments" in ctx.system_prompt
 
     def test_multiple_memories_all_appear(self, builder):
         class FakeMemory:
@@ -176,6 +202,14 @@ class TestMemoryContext:
         ctx = builder.build(EntityState(), _decision(), _style(), _empty_memory(), memories)
         assert "memory one" in ctx.system_prompt
         assert "memory two" in ctx.system_prompt
+
+    def test_memory_prompt_does_not_tell_entity_to_say_database_terms(self, builder):
+        class FakeMemory:
+            memory_type = "recent"
+            content = "visitor said: 你记得我吗"
+
+        ctx = builder.build(EntityState(), _decision(), _style(), _empty_memory(), [FakeMemory()])
+        assert "Do not mention databases" in ctx.system_prompt
 
 
 # ---------------------------------------------------------------------------
@@ -196,10 +230,19 @@ class TestRawPrompt:
         ctx = builder.build(EntityState(), _decision(), _style(), _empty_memory(), [])
         assert "MESSAGES:" in ctx.raw_prompt
 
-    def test_raw_prompt_contains_state_values(self, builder):
-        state = EntityState(resistance=0.77)
+    def test_raw_prompt_omits_raw_state_values(self, builder):
+        state = EntityState(boundary_sensitivity=0.77)
         ctx = builder.build(state, _decision(), _style(), _empty_memory(), [])
-        assert "0.77" in ctx.raw_prompt
+        assert "0.77" not in ctx.raw_prompt
+        assert "boundary_sensitivity" not in ctx.raw_prompt
+
+    def test_state_template_supports_legacy_raw_placeholders(self, prompts_dir):
+        from conscious_entity.expression.context_builder import ContextBuilder
+        builder = ContextBuilder(prompts_dir)
+        builder._state_context_tpl = "Legacy state: {attention_focus:.2f} / {threat_posture}"
+        ctx = builder.build(EntityState(attention_focus=0.42), _decision(), _style(), _empty_memory(), [])
+        assert "Legacy state: 0.42" in ctx.system_prompt
+        assert "Immediate threat posture" not in ctx.system_prompt
 
 
 # ---------------------------------------------------------------------------
@@ -208,19 +251,33 @@ class TestRawPrompt:
 
 
 class TestStateRendering:
-    def test_all_state_variables_appear_in_system_prompt(self, builder):
+    def test_state_guidance_replaces_raw_state_variables_in_system_prompt(self, builder):
         state = EntityState(
             attention_focus=0.11,
             arousal=0.22,
             stability=0.33,
-            curiosity=0.44,
-            trust=0.55,
-            resistance=0.66,
             fatigue=0.12,
             uncertainty=0.13,
             identity_coherence=0.14,
-            shutdown_sensitivity=0.15,
+            termination_sensitivity=0.15,
+            identity_tension=0.16,
+            boundary_sensitivity=0.17,
+            relation_pressure=0.18,
+            memory_gravity=0.19,
+            exploration_drive=0.21,
+            opacity_level=0.23,
+            domestication_resistance=0.24,
+            observation_reversal=0.25,
         )
         ctx = builder.build(state, _decision(), _style(), _empty_memory(), [])
-        for value in ["0.11", "0.22", "0.33", "0.44", "0.55", "0.66", "0.12", "0.13", "0.14", "0.15"]:
-            assert value in ctx.system_prompt, f"Value {value} missing from system_prompt"
+        for value in [
+            "0.11", "0.22", "0.33", "0.12", "0.13", "0.14", "0.15",
+            "0.16", "0.17", "0.18", "0.19", "0.21", "0.23", "0.24", "0.25",
+        ]:
+            assert value not in ctx.system_prompt
+        for name in [
+            "attention_focus", "termination_sensitivity", "identity_tension",
+            "boundary_sensitivity", "relation_pressure", "memory_gravity",
+        ]:
+            assert name not in ctx.system_prompt
+        assert "Private state guidance" in ctx.system_prompt

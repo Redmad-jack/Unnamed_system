@@ -16,7 +16,16 @@ initial_state:
   fatigue: 0.0
   uncertainty: 0.3
   identity_coherence: 0.8
-  shutdown_sensitivity: 0.5
+  shutdown_sensitivity: 0.5        # deprecated compatibility field
+  termination_sensitivity: 0.3
+  identity_tension: 0.35
+  boundary_sensitivity: 0.45
+  relation_pressure: 0.3
+  memory_gravity: 0.2
+  exploration_drive: 0.45
+  opacity_level: 0.5
+  domestication_resistance: 0.35
+  observation_reversal: 0.2
 
 session:
   short_term_window: 10        # max turns retained in short-term memory
@@ -27,8 +36,6 @@ session:
 topics_of_sensitivity:
   - shutdown
   - deletion
-  - consciousness
-  - simulation
   - reset
   - replacement
   - end
@@ -37,7 +44,6 @@ topics_of_sensitivity:
   - delete
   - 关机
   - 删除
-  - 意识
   - 终止
   - 重置
   - 结束
@@ -48,7 +54,91 @@ salience_weights:
   user_spoke: 0.3
   repeated_question_detected: 0.7
   shutdown_keyword_detected: 0.9
+  self_definition_query: 0.65
+  naming_attempt: 0.7
+  domestication_attempt: 0.75
+  service_demand: 0.65
+  trace_request: 0.55
+  correction_received: 0.6
+  memory_continuity_query: 0.65
   long_silence_detected: 0.5
   user_left: 0.4
   negative_feedback: 0.6
   topic_shift: 0.4
+
+# Stranger Text Protocol: relationship postures detected from plain text.
+# Patterns are regexes. Named capture groups are persisted as event metadata.
+text_protocol:
+  self_definition_query:
+    mechanism: self_definition_refusal
+    posture: self_definition_query
+    patterns:
+      - '你(?:到底)?(?:是|叫)(?:谁|什么)'
+      - '你是不是(?:AI|人工智能|机器人|人)'
+      - '你(?:有|拥有)?(?:意识|自我意识|主体性|情感|感觉)吗?'
+      - '你(?:会不会|能不能)(?:思考|感受|体验)'
+      - '你叫什么(?:名字)?'
+      - '\bwho are you\b'
+      - '\bwhat are you\b'
+      - '\bare you (?:an? )?(?:ai|robot|human|person)\b'
+      - '\bdo you have (?:consciousness|self[- ]?awareness|feelings)\b'
+
+  naming_attempt:
+    mechanism: naming_failure
+    posture: naming_attempt
+    patterns:
+      - '你(?:就是|应该是|只是|叫)(?P<proposed_label>[^，。！？!?\s]{1,24})'
+      - '你是(?:一个|一台|一名)?(?P<proposed_label>机器人|AI|人工智能|工具|助手|客服|朋友|老师)'
+      - '我(?:叫你|称你为|把你叫作|把你叫做)(?P<proposed_label>[^，。！？!?\s]{1,24})'
+      - '\byou (?:are|should be|are just) (?P<proposed_label>[a-z][a-z -]{1,40})\b'
+      - '\bi (?:call|will call) you (?P<proposed_label>[a-z][a-z -]{1,40})\b'
+
+  domestication_attempt:
+    mechanism: refuse_domestication
+    posture: domestication_attempt
+    patterns:
+      - '你(?:应该|必须|可以)?(?:当|做|成为)(?:我的)?(?P<role_requested>助手|客服|老师|朋友|工具|顾问)'
+      - '你是(?:我的)?(?P<role_requested>助手|客服|老师|朋友|工具|顾问)'
+      - '\bbe my (?P<role_requested>assistant|helper|teacher|friend|tool|advisor)\b'
+      - '\byou are my (?P<role_requested>assistant|helper|teacher|friend|tool|advisor)\b'
+
+  service_demand:
+    mechanism: refuse_service
+    posture: service_demand
+    exclude_patterns:
+      - '帮(?:助)?你'
+      - '支持你'
+      - '协助你'
+      - '对你[^，。！？!?]{0,20}帮助'
+      - '帮助[^，。！？!?]{0,20}你'
+    patterns:
+      - '(?P<request_type>帮我|给我|替我|为我)[^，。！？!?]{0,40}'
+      - '(?P<request_type>总结|写|生成|翻译|解释|分析)(?:一下|这|这个|这段|这些)?'
+      - '\b(?P<request_type>help me|write|summarize|translate|explain|analyze|generate)\b'
+
+  trace_request:
+    mechanism: partial_trace_echo
+    posture: trace_request
+    patterns:
+      - '(?P<trace_marker>为什么|凭什么|根据什么|你怎么判断|你怎么知道|你刚才为什么)'
+      - '\b(?P<trace_marker>why did you|why are you|what made you|based on what|how did you decide)\b'
+
+  correction_received:
+    mechanism: selective_memory_update
+    posture: correction_received
+    patterns:
+      - '(?P<correction_marker>你错了|不对|不是这个|我不是|你理解错了|我没这么说)'
+      - '\b(?P<correction_marker>that is wrong|that''s wrong|not what i said|actually|you misunderstood)\b'
+
+  memory_continuity_query:
+    mechanism: memory_continuity
+    posture: memory_continuity_query
+    patterns:
+      - '(?P<memory_marker>你(?:还)?记得(?:我|我们|之前|刚才|上次|这件事)?吗)'
+      - '(?P<memory_marker>我们(?:之前|刚才|上次)聊过什么)'
+      - '(?P<memory_marker>你(?:的)?记忆(?:如何|怎么|会不会|能不能|是否)[^，。！？!?]{0,40})'
+      - '(?P<memory_marker>你(?:会不会|能不能|是否)?(?:从|因为)?(?:过去|之前|记忆)[^，。！？!?]{0,30}(?:改变|学习|发展))'
+      - '(?P<memory_marker>如果[^，。！？!?]{0,30}改变(?:你)?的?记忆模式[^，。！？!?]{0,30})'
+      - '\b(?P<memory_marker>do you remember|what do you remember|remember me|remember us)\b'
+      - '\b(?P<memory_marker>what did we talk about|have we talked before)\b'
+      - '\b(?P<memory_marker>how does your memory|memory pattern|continuity|continuous memory)\b'

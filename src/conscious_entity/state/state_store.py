@@ -3,7 +3,7 @@ from __future__ import annotations
 import sqlite3
 from typing import Optional
 
-from conscious_entity.state.state_core import EntityState
+from conscious_entity.state.state_core import EntityState, STATE_FIELDS
 
 
 class StateStore:
@@ -19,42 +19,28 @@ class StateStore:
     ) -> int:
         """Insert a state snapshot. Returns the new row id."""
         d = state.to_dict()
+        columns = ["session_id", *STATE_FIELDS, "trigger_event_type", "policy_action"]
+        placeholders = ", ".join("?" for _ in columns)
+        column_sql = ", ".join(columns)
+        values = [
+            self._session_id,
+            *(d[field] for field in STATE_FIELDS),
+            trigger_event_type,
+            policy_action,
+        ]
         cursor = self._conn.execute(
-            """
-            INSERT INTO state_snapshots (
-                session_id, attention_focus, arousal, stability, curiosity,
-                trust, resistance, fatigue, uncertainty, identity_coherence,
-                shutdown_sensitivity, trigger_event_type, policy_action
-            ) VALUES (
-                ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
-            )
-            """,
-            (
-                self._session_id,
-                d["attention_focus"],
-                d["arousal"],
-                d["stability"],
-                d["curiosity"],
-                d["trust"],
-                d["resistance"],
-                d["fatigue"],
-                d["uncertainty"],
-                d["identity_coherence"],
-                d["shutdown_sensitivity"],
-                trigger_event_type,
-                policy_action,
-            ),
+            f"INSERT INTO state_snapshots ({column_sql}) VALUES ({placeholders})",
+            values,
         )
         self._conn.commit()
         return cursor.lastrowid
 
     def load_latest(self) -> Optional[EntityState]:
         """Load the most recent state snapshot for this session."""
+        field_sql = ", ".join(STATE_FIELDS)
         row = self._conn.execute(
-            """
-            SELECT attention_focus, arousal, stability, curiosity, trust,
-                   resistance, fatigue, uncertainty, identity_coherence,
-                   shutdown_sensitivity
+            f"""
+            SELECT {field_sql}
             FROM state_snapshots
             WHERE session_id = ?
             ORDER BY recorded_at DESC, id DESC
