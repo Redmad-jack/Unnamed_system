@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
+
 from conscious_entity.core.config_loader import load_config
+from conscious_entity.memory.models import ShortTermEntry
 from conscious_entity.memory.short_term import ShortTermMemory
 from conscious_entity.perception.event_types import EventType
 from conscious_entity.perception.keyword_detector import KeywordDetector
@@ -21,6 +24,10 @@ def _parser(config_dir) -> TextParser:
 
 def _parse(parser: TextParser, text: str):
     return parser.parse(text, EntityState(), ShortTermMemory(max_turns=10))
+
+
+def _parse_with_memory(parser: TextParser, text: str, memory: ShortTermMemory):
+    return parser.parse(text, EntityState(), memory)
 
 
 def _event(events, event_type: EventType):
@@ -54,6 +61,38 @@ def test_service_demand_detected(config_dir):
     events = _parse(_parser(config_dir), "帮我总结这段话。")
     event = _event(events, EventType.SERVICE_DEMAND)
     assert event.metadata["mechanism"] == "refuse_service"
+    assert event.metadata["note"] == (
+        "Refuse task completion; topic discussion may continue when internally drawn to it."
+    )
+
+
+def test_short_followup_after_service_demand_is_still_service_demand(config_dir):
+    memory = ShortTermMemory(max_turns=10)
+    memory.add(ShortTermEntry(
+        role="user",
+        content="你帮我查查厦门大学。",
+        timestamp=datetime.now(timezone.utc),
+    ))
+
+    events = _parse_with_memory(_parser(config_dir), "历史背景", memory)
+
+    event = _event(events, EventType.SERVICE_DEMAND)
+    assert event.metadata["posture"] == "service_followup"
+    assert event.metadata["contextual_followup"] is True
+    assert event.metadata["continuation_of"] == "service_demand"
+
+
+def test_followup_exit_phrase_after_service_demand_is_not_service_demand(config_dir):
+    memory = ShortTermMemory(max_turns=10)
+    memory.add(ShortTermEntry(
+        role="user",
+        content="你帮我查查厦门大学。",
+        timestamp=datetime.now(timezone.utc),
+    ))
+
+    events = _parse_with_memory(_parser(config_dir), "算了，我们聊别的", memory)
+
+    assert all(event.event_type != EventType.SERVICE_DEMAND for event in events)
 
 
 def test_helping_stranger_is_not_service_demand(config_dir):

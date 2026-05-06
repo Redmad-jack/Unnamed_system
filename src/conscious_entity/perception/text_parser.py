@@ -69,7 +69,12 @@ class TextParser:
 
         # --- Stranger Text Protocol relationship postures ---
         if self._relationship_detector is not None:
-            for signal in self._relationship_detector.detect(raw_text):
+            relationship_signals = self._relationship_detector.detect(raw_text)
+            if not any(signal.event_type == EventType.SERVICE_DEMAND for signal in relationship_signals):
+                relationship_signals.extend(
+                    self._relationship_detector.detect_followup(raw_text, short_term.get_recent())
+                )
+            for signal in relationship_signals:
                 salience = self._scorer.score(signal.event_type, raw_text, current_state, short_term)
                 events.append(PerceptionEvent(
                     event_type=signal.event_type,

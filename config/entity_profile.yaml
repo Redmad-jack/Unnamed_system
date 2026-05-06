@@ -105,6 +105,8 @@ text_protocol:
   service_demand:
     mechanism: refuse_service
     posture: service_demand
+    metadata:
+      note: "Refuse task completion; topic discussion may continue when internally drawn to it."
     exclude_patterns:
       - '帮(?:助)?你'
       - '支持你'
@@ -115,6 +117,15 @@ text_protocol:
       - '(?P<request_type>帮我|给我|替我|为我)[^，。！？!?]{0,40}'
       - '(?P<request_type>总结|写|生成|翻译|解释|分析)(?:一下|这|这个|这段|这些)?'
       - '\b(?P<request_type>help me|write|summarize|translate|explain|analyze|generate)\b'
+    followup:
+      enabled: true
+      max_chars: 24
+      posture: service_followup
+      exit_patterns:
+        - '^(算了|不用了|不是这个|换个话题|我们聊别的)'
+        - '\b(?:never mind|forget it|different topic)\b'
+      fragment_patterns:
+        - '^[^，。！？!?]{1,24}$'
 
   trace_request:
     mechanism: partial_trace_echo

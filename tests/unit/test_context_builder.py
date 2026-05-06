@@ -124,6 +124,17 @@ class TestSystemPromptInvariants:
         assert "partial_trace_echo" in ctx.system_prompt
         assert "trace_request_partial_echo" in ctx.system_prompt
 
+    def test_service_refusal_allows_non_service_topic_discussion(self, builder):
+        ctx = builder.build(
+            EntityState(),
+            _decision(PolicyAction.REFUSE_SERVICE_ROLE),
+            _style(),
+            _empty_memory(),
+            [],
+        )
+        assert "do not complete the requested task" in ctx.system_prompt
+        assert "non-service discussion of the topic" in ctx.system_prompt
+
 
 # ---------------------------------------------------------------------------
 # Prompt contract: messages structure

@@ -37,6 +37,20 @@
 
 ---
 
+## 2026-05-06：服务请求上下文续问与非服务话题转向
+
+- [x] `service_demand` 增加上下文续问规则：上一轮服务请求后，短片段补充（如“历史背景”）继续识别为 `SERVICE_DEMAND`
+- [x] `service_demand` metadata 明确：拒绝任务交付，但当话题本身引起内部牵引时，可以转入非服务讨论
+- [x] `REFUSE_SERVICE_ROLE` 表达 prompt 调整为：
+  - 不完成用户请求的可用任务结果
+  - 简短拒绝服务框架
+  - 可在有兴趣时讨论话题本身，但不得以助手、搜索工具、教师、写作者或客服身份交付
+- [x] 验证：
+  - `PYTHONPATH=src python3 -m pytest -p no:debugging tests/unit/test_text_parser.py tests/unit/test_context_builder.py`
+  - `PYTHONPATH=src python3 -m pytest -p no:debugging tests/unit/test_policy_selector.py tests/integration/test_full_loop.py`
+
+---
+
 ## 2026-05-04：Embedding 运行时配置与开发者界面分区
 
 - [x] 修正 `.env` 中重复 `ENTITY_EMBEDDING_MODE` 导致 `disabled` 抢先生效的问题
