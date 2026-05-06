@@ -110,3 +110,89 @@ class RetrievedMemory:
             "source": self.source,
             "metadata": self.metadata,
         }
+
+
+@dataclass
+class MemoryOperationProposal:
+    operation: str
+    content: str = ""
+    memory_id: Optional[int] = None
+    patch: dict = field(default_factory=dict)
+    reason: str = ""
+    source_turn_ids: list[int] = field(default_factory=list)
+    entities: list[str] = field(default_factory=list)
+    topics: list[str] = field(default_factory=list)
+    confidence: float = 0.5
+    scope: str = "session"
+    metadata: dict = field(default_factory=dict)
+    id: Optional[int] = None
+    session_id: Optional[str] = None
+    created_at: Optional[datetime] = None
+    status: str = "pending"
+    raw_llm_output: Optional[str] = None
+
+    def operation_json(self) -> str:
+        return json.dumps({
+            "operation": self.operation,
+            "memory_id": self.memory_id,
+            "content": self.content,
+            "patch": self.patch,
+            "reason": self.reason,
+            "source_turn_ids": self.source_turn_ids,
+            "entities": self.entities,
+            "topics": self.topics,
+            "confidence": self.confidence,
+            "scope": self.scope,
+            "metadata": self.metadata,
+        }, ensure_ascii=False)
+
+    def to_public_dict(self) -> dict:
+        return {
+            "id": self.id,
+            "session_id": self.session_id,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+            "status": self.status,
+            "operation": self.operation,
+            "memory_id": self.memory_id,
+            "content": self.content,
+            "patch": self.patch,
+            "reason": self.reason,
+            "source_turn_ids": self.source_turn_ids,
+            "entities": self.entities,
+            "topics": self.topics,
+            "confidence": round(float(self.confidence), 4),
+            "scope": self.scope,
+            "metadata": self.metadata,
+        }
+
+    @classmethod
+    def from_row(cls, row) -> MemoryOperationProposal:
+        d = dict(row)
+        operation = json.loads(d["operation_json"]) if d.get("operation_json") else {}
+        return cls(
+            id=d["id"],
+            session_id=d["session_id"],
+            created_at=datetime.fromisoformat(d["created_at"]),
+            status=d["status"],
+            raw_llm_output=d.get("raw_llm_output"),
+            operation=str(operation.get("operation", d.get("operation_type") or "add")),
+            memory_id=operation.get("memory_id"),
+            content=str(operation.get("content", "")),
+            patch=operation.get("patch") if isinstance(operation.get("patch"), dict) else {},
+            reason=str(operation.get("reason", d.get("reason") or "")),
+            source_turn_ids=[
+                int(value) for value in operation.get("source_turn_ids", [])
+                if isinstance(value, int) or str(value).isdigit()
+            ],
+            entities=_string_list(operation.get("entities")),
+            topics=_string_list(operation.get("topics")),
+            confidence=float(operation.get("confidence", 0.5) or 0.5),
+            scope=str(operation.get("scope", "session")),
+            metadata=operation.get("metadata") if isinstance(operation.get("metadata"), dict) else {},
+        )
+
+
+def _string_list(value: object) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    return [str(item) for item in value if str(item).strip()]

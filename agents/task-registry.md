@@ -10,6 +10,22 @@ Prevents conflicts when multiple agents operate in the same codebase.
 ```
 | File | Agent | Status | Started |
 |------|-------|--------|---------|
+| src/conscious_entity/memory/models.py | Codex | done | 2026-05-06 |
+| src/conscious_entity/memory/managed.py | Codex | done | 2026-05-06 |
+| src/conscious_entity/memory/retrieval.py | Codex | done | 2026-05-06 |
+| src/conscious_entity/core/loop.py | Codex | done | 2026-05-06 |
+| src/conscious_entity/db/migrations.py | Codex | done | 2026-05-06 |
+| src/conscious_entity/interfaces/api.py | Codex | done | 2026-05-06 |
+| src/conscious_entity/interfaces/static/index.html | Codex | done | 2026-05-06 |
+| prompts/memory_proposal_system.txt | Codex | done | 2026-05-06 |
+| tests/conftest.py | Codex | done | 2026-05-06 |
+| tests/unit/test_managed_memory.py | Codex | done | 2026-05-06 |
+| tests/integration/test_full_loop.py | Codex | done | 2026-05-06 |
+| tests/unit/test_api_export.py | Codex | done | 2026-05-06 |
+| docs/BACKEND_STRUCTURE.md | Codex | done | 2026-05-06 |
+| docs/TECH_STACK.md | Codex | done | 2026-05-06 |
+| docs/progress.md | Codex | done | 2026-05-06 |
+| agents/task-registry.md | Codex | done | 2026-05-06 |
 | config/entity_profile.yaml | Codex | done | 2026-05-06 |
 | prompts/expression_system.txt | Codex | done | 2026-05-06 |
 | src/conscious_entity/perception/relationship_detector.py | Codex | done | 2026-05-06 |

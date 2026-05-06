@@ -198,6 +198,36 @@ class TestEpisodicMemory:
         ).fetchone()["cnt"]
         assert count >= 1
 
+    def test_managed_memory_auto_commit_still_records_proposal_first(self, loop, db):
+        loop.run_turn("我想知道你会不会把这次对话留下来。")
+
+        proposal_count = db.execute(
+            "SELECT COUNT(*) AS cnt FROM memory_operation_proposals WHERE session_id='test-session'"
+        ).fetchone()["cnt"]
+        managed_count = db.execute(
+            "SELECT COUNT(*) AS cnt FROM managed_memories WHERE session_id='test-session'"
+        ).fetchone()["cnt"]
+        log_count = db.execute(
+            "SELECT COUNT(*) AS cnt FROM memory_operation_log WHERE session_id='test-session'"
+        ).fetchone()["cnt"]
+
+        assert proposal_count >= 1
+        assert managed_count >= 1
+        assert log_count >= 1
+
+    def test_managed_memory_influence_log_preserves_turn_trace(self, loop, db):
+        loop.run_turn("我一直在问你记忆的事。")
+        loop.run_turn("你还记得这件事吗？")
+
+        row = db.execute(
+            "SELECT * FROM memory_influence_log WHERE session_id='test-session' ORDER BY id DESC LIMIT 1"
+        ).fetchone()
+
+        assert row is not None
+        assert row["turn_id"] is not None
+        assert row["state_snapshot_id"] is not None
+        assert row["policy_action"] is not None
+
     def test_interaction_log_records_policy_action(self, loop, db):
         loop.run_turn("hello")
         row = db.execute(

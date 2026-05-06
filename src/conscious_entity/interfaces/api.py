@@ -34,6 +34,8 @@ from conscious_entity.db.migrations import run_migrations
 from conscious_entity.llm.claude_client import ClaudeClient, ClaudeConfigurationError
 from conscious_entity.llm.embedding_client import EmbeddingClient, EmbeddingConfigurationError
 from conscious_entity.llm.stats_tracker import get_tracker
+from conscious_entity.memory.managed import build_memory_provider
+from conscious_entity.memory.models import MemoryOperationProposal
 from conscious_entity.memory.retrieval import MemoryRetriever
 from conscious_entity.memory.vector import encode_embedding
 from conscious_entity.runtime_env import load_project_env
@@ -126,6 +128,25 @@ class SessionTypeRequest(BaseModel):
 
 class MemoryStatusRequest(BaseModel):
     status: str
+
+
+class ManagedMemoryProposeRequest(BaseModel):
+    messages: list[dict]
+    context: dict[str, Any] = {}
+
+
+class ManagedMemoryCommitRequest(BaseModel):
+    proposal_ids: list[int] = []
+    operations: list[dict[str, Any]] = []
+
+
+class ManagedMemoryUpdateRequest(BaseModel):
+    patch: dict[str, Any]
+
+
+class MemoryInfluencePreviewRequest(BaseModel):
+    query: str
+    context: dict[str, Any] = {}
 
 
 # ---------------------------------------------------------------------------
@@ -406,6 +427,20 @@ def _active_embedding_client(request: Request) -> EmbeddingClient | None:
     except EmbeddingConfigurationError as exc:
         request.app.state.embedding_error = str(exc)
         return None
+
+
+def _managed_provider(request: Request, conn: sqlite3.Connection | None = None):
+    try:
+        llm_client: ClaudeClient | None = _active_llm_client(request)
+    except ClaudeConfigurationError:
+        llm_client = None
+    return build_memory_provider(
+        conn or request.app.state.conn,
+        request.app.state.session_id,
+        llm_client=llm_client,
+        embedding_client=_active_embedding_client(request),
+        prompts_dir=getattr(request.app.state, "prompts_dir", _prompts_dir()),
+    )
 
 
 def _rebuild_loop(
@@ -854,14 +889,150 @@ async def memory_preview(request: Request, query: str, limit: int = 9):
             embedding_client=_active_embedding_client(request),
         )
         results = retriever.retrieve(query, events=[], limit=limit)
+        influence = _managed_provider(request, conn).preview_influence(
+            query,
+            {"filters": {"session_type": _session_type(conn, request.app.state.session_id)}},
+        )
         return {
             "session_id": request.app.state.session_id,
             "session_type": _session_type(conn, request.app.state.session_id),
             "query": query,
             "results": [item.to_public_dict() for item in results],
+            "managed_influence": influence,
         }
     finally:
         conn.close()
+
+
+@app.get("/api/v1/managed-memory")
+async def managed_memory_list(
+    request: Request,
+    status: str = "active",
+    session_type: Optional[str] = None,
+    q: str = "",
+    limit: int = 100,
+):
+    conn = _read_conn(request)
+    try:
+        provider = _managed_provider(request, conn)
+        return {"rows": provider.get_all({
+            "status": status,
+            "session_type": session_type,
+            "q": q,
+            "limit": limit,
+        })}
+    finally:
+        conn.close()
+
+
+@app.post("/api/v1/managed-memory/proposals")
+async def managed_memory_propose(request: Request, body: ManagedMemoryProposeRequest):
+    provider = _managed_provider(request)
+    proposals = provider.propose(body.messages, body.context)
+    return {"proposals": [proposal.to_public_dict() for proposal in proposals]}
+
+
+@app.get("/api/v1/managed-memory/proposals")
+async def managed_memory_proposals(request: Request, status: str = "pending", limit: int = 100):
+    limit = max(1, min(limit, 500))
+    conn = _read_conn(request)
+    try:
+        where = ["session_id = ?"]
+        params: list[Any] = [request.app.state.session_id]
+        if status != "all":
+            where.append("status = ?")
+            params.append(status)
+        params.append(limit)
+        rows = conn.execute(
+            f"""
+            SELECT * FROM memory_operation_proposals
+            WHERE {" AND ".join(where)}
+            ORDER BY created_at DESC, id DESC
+            LIMIT ?
+            """,
+            params,
+        ).fetchall()
+        proposals = [MemoryOperationProposal.from_row(row).to_public_dict() for row in rows]
+        return {"proposals": proposals}
+    finally:
+        conn.close()
+
+
+@app.post("/api/v1/managed-memory/commit")
+async def managed_memory_commit(request: Request, body: ManagedMemoryCommitRequest):
+    provider = _managed_provider(request)
+    operations = [
+        MemoryOperationProposal(
+            operation=str(item.get("operation", "add")),
+            memory_id=item.get("memory_id") if isinstance(item.get("memory_id"), int) else None,
+            content=str(item.get("content", "")),
+            patch=item.get("patch") if isinstance(item.get("patch"), dict) else {},
+            reason=str(item.get("reason", "")),
+            source_turn_ids=[
+                int(value) for value in item.get("source_turn_ids", [])
+                if isinstance(value, int) or str(value).isdigit()
+            ],
+            entities=[str(value) for value in item.get("entities", []) if str(value).strip()],
+            topics=[str(value) for value in item.get("topics", []) if str(value).strip()],
+            confidence=float(item.get("confidence", 0.5) or 0.5),
+            scope=str(item.get("scope", "session")),
+            metadata=item.get("metadata") if isinstance(item.get("metadata"), dict) else {},
+        )
+        for item in body.operations
+    ]
+    return {"committed": provider.commit(proposal_ids=body.proposal_ids, operations=operations)}
+
+
+@app.post("/api/v1/managed-memory/preview-influence")
+async def managed_memory_preview_influence(request: Request, body: MemoryInfluencePreviewRequest):
+    conn = _read_conn(request)
+    try:
+        provider = _managed_provider(request, conn)
+        return provider.preview_influence(body.query, body.context)
+    finally:
+        conn.close()
+
+
+@app.get("/api/v1/managed-memory/influence-log")
+async def managed_memory_influence_log(request: Request, limit: int = 100):
+    limit = max(1, min(limit, 500))
+    conn = _read_conn(request)
+    try:
+        rows = conn.execute(
+            """
+            SELECT * FROM memory_influence_log
+            WHERE session_id = ?
+            ORDER BY influenced_at DESC, id DESC
+            LIMIT ?
+            """,
+            (request.app.state.session_id, limit),
+        ).fetchall()
+        return {"rows": [_row_to_dict(row) for row in rows]}
+    finally:
+        conn.close()
+
+
+@app.patch("/api/v1/managed-memory/{memory_id}")
+async def managed_memory_update(request: Request, memory_id: int, body: ManagedMemoryUpdateRequest):
+    return _managed_provider(request).update(memory_id, body.patch)
+
+
+@app.post("/api/v1/managed-memory/{memory_id}/archive")
+async def managed_memory_archive(request: Request, memory_id: int):
+    return _managed_provider(request).archive(memory_id)
+
+
+@app.post("/api/v1/managed-memory/{memory_id}/restore")
+async def managed_memory_restore(request: Request, memory_id: int):
+    return _managed_provider(request).restore(memory_id)
+
+
+@app.get("/api/v1/managed-memory/{memory_id}/explain")
+async def managed_memory_explain(request: Request, memory_id: int):
+    try:
+        return _managed_provider(request).explain(memory_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="managed memory not found")
 
 
 # ---------------------------------------------------------------------------

@@ -38,6 +38,11 @@
 - 可选启用 OpenAI-compatible embedding 接口：`ENTITY_EMBEDDING_MODE=openai_compatible`
 - 向量存储仍使用 SQLite `embedding` / `embedding_model` 字段，不引入 Chroma、pgvector 或本地 `sentence-transformers` 重依赖
 
+**Managed Memory：**
+- 默认本地实现：SQLite + FTS5 + 可选 embedding BLOB
+- 可选 `ENTITY_MEMORY_BACKEND=mem0`，作为 mem0ai 后端预留；未安装时安全回退到本地 provider
+- 记忆形成采用 proposal → commit：第一版默认 auto-commit，但仍保留审批接口
+
 ### 数据库
 
 | 项目 | 版本 | 用途 |
@@ -123,6 +128,13 @@ ENTITY_DB_PATH=data/memory.db
 ENTITY_CONFIG_DIR=config/
 ENTITY_PROMPTS_DIR=prompts/
 ENTITY_LOG_LEVEL=INFO
+
+# Managed memory
+ENTITY_MEMORY_BACKEND=local
+ENTITY_MEMORY_AUTO_COMMIT=true
+ENTITY_MEMORY_INFERENCE=true
+ENTITY_MEMORY_POLICY_INFLUENCE=true
+ENTITY_MEMORY_STATE_INFLUENCE=true
 ```
 
 ### 开发环境假设

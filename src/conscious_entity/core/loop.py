@@ -15,7 +15,8 @@ from conscious_entity.expression.style_mapper import StyleMapper
 from conscious_entity.llm.claude_client import ClaudeClient
 from conscious_entity.llm.embedding_client import EmbeddingClient, EmbeddingConfigurationError
 from conscious_entity.memory.episodic_store import EpisodicStore
-from conscious_entity.memory.models import EpisodicMemory, ShortTermEntry
+from conscious_entity.memory.managed import MemoryProvider, build_memory_provider
+from conscious_entity.memory.models import EpisodicMemory, RetrievedMemory, ShortTermEntry
 from conscious_entity.memory.reflective_store import ReflectiveStore
 from conscious_entity.memory.retrieval import MemoryRetriever
 from conscious_entity.memory.short_term import ShortTermMemory
@@ -97,7 +98,19 @@ class InteractionLoop:
         self._episodic_store = EpisodicStore(conn, session_id)
         self._reflective_store = ReflectiveStore(conn, session_id)
         self._embedding_client = embedding_client if embedding_client is not None else _optional_embedding_client()
-        self._memory_retriever = MemoryRetriever(conn, session_id, self._embedding_client)
+        self._managed_memory: MemoryProvider = build_memory_provider(
+            conn,
+            session_id,
+            llm_client=client,
+            embedding_client=self._embedding_client,
+            prompts_dir=prompts_dir,
+        )
+        self._memory_retriever = MemoryRetriever(
+            conn,
+            session_id,
+            self._embedding_client,
+            managed_provider=self._managed_memory,
+        )
 
         keyword_detector = KeywordDetector(profile.get("topics_of_sensitivity", []))
         salience_scorer = SalienceScorer(profile.get("salience_weights", {}))
@@ -154,6 +167,16 @@ class InteractionLoop:
             new_state = self._state_engine.apply_event(new_state, event)
         new_state = self._state_engine.apply_decay(new_state, _DECAY_SECONDS_PER_TURN)
 
+        memory_influence = self._managed_memory.preview_influence(
+            raw_input,
+            context={
+                "events": [event.event_type.value for event in events],
+                "state": new_state.to_dict(),
+                "filters": {"session_type": self._session_type()},
+            },
+        )
+        new_state = _apply_memory_state_influence(new_state, memory_influence)
+
         # Step 4: Save state snapshot
         trigger_types = ",".join(e.event_type.value for e in events)
         snapshot_id = self._state_store.save_snapshot(
@@ -183,6 +206,15 @@ class InteractionLoop:
 
         # Step 6: Select policy
         decision = self._policy_selector.select(new_state, events, self._short_term)
+        if (
+            decision.action == PolicyAction.RESPOND_OPENLY
+            and memory_influence.get("policy_influence", {}).get("suggested_action") == "retrieve_selective_memory"
+        ):
+            decision = PolicyDecision(
+                action=PolicyAction.RETRIEVE_SELECTIVE_MEMORY,
+                rationale=f"managed-memory:{decision.rationale}",
+                params={**decision.params, "managed_memory": True, "retrieve_memory": True},
+            )
 
         # Step 7: Memory retrieval policies
         retrieved_memories: list = []
@@ -195,6 +227,12 @@ class InteractionLoop:
                 decision.retrieve_query or raw_input,
                 events=events,
             )
+        else:
+            retrieved_memories = [
+                _public_memory_to_retrieved(item)
+                for item in memory_influence.get("expression_context", [])
+                if isinstance(item, dict)
+            ]
 
         if decision.action == PolicyAction.RETRIEVE_MEMORY_FIRST:
             decision = PolicyDecision(
@@ -225,7 +263,7 @@ class InteractionLoop:
         ))
 
         # Step 10: Log interaction
-        self._log_interaction(
+        turn_id = self._log_interaction(
             role="user",
             raw_text=raw_input,
             events=events,
@@ -233,6 +271,29 @@ class InteractionLoop:
             output=output,
             snapshot_id=snapshot_id,
         )
+        self._managed_memory.log_influence(
+            turn_id=turn_id,
+            query=raw_input,
+            influence=memory_influence,
+            state_snapshot_id=snapshot_id,
+            policy_action=decision.action.value,
+        )
+
+        try:
+            proposals = self._managed_memory.propose(
+                _recent_messages_for_memory(self._short_term),
+                context={
+                    "turn_id": turn_id,
+                    "source_turn_ids": [turn_id] if turn_id is not None else [],
+                    "events": [event.event_type.value for event in events],
+                    "policy_action": decision.action.value,
+                },
+            )
+            if proposals and self._managed_memory.auto_commit:
+                proposal_ids = [proposal.id for proposal in proposals if proposal.id is not None]
+                self._managed_memory.commit(proposal_ids=proposal_ids)
+        except Exception as exc:
+            logger.error("Managed memory proposal/commit failed: %s", exc)
 
         # Step 11: Maybe trigger reflection
         try:
@@ -324,10 +385,10 @@ class InteractionLoop:
         decision: PolicyDecision,
         output: ExpressionOutput,
         snapshot_id: int,
-    ) -> None:
+    ) -> int | None:
         event_types_json = json.dumps([e.event_type.value for e in events])
         try:
-            self._conn.execute(
+            cursor = self._conn.execute(
                 """
                 INSERT INTO interaction_log (
                     session_id, role, raw_text, event_types,
@@ -348,8 +409,10 @@ class InteractionLoop:
                 ),
             )
             self._conn.commit()
+            return int(cursor.lastrowid)
         except Exception as exc:
             logger.error("Failed to write interaction_log: %s", exc)
+            return None
 
     def _store_episodic_embedding(self, memory_id: int, text: str) -> None:
         if self._embedding_client is None or not self._embedding_client.enabled:
@@ -375,11 +438,54 @@ class InteractionLoop:
         except Exception as exc:
             logger.warning("Failed to attach reflective embedding; continuing without it: %s", exc)
 
+    def _session_type(self) -> str:
+        row = self._conn.execute(
+            "SELECT session_type FROM sessions WHERE id = ?",
+            (self._session_id,),
+        ).fetchone()
+        if row and row["session_type"] in {"test", "exhibition"}:
+            return str(row["session_type"])
+        return "test"
+
 
 def _event_summary(event: PerceptionEvent) -> str:
     if event.raw_text:
         return f"{event.event_type.value}: {event.raw_text[:200]}"
     return event.event_type.value
+
+
+def _apply_memory_state_influence(state: EntityState, influence: dict[str, Any]) -> EntityState:
+    state_influence = influence.get("state_influence", {}) if isinstance(influence, dict) else {}
+    deltas = state_influence.get("deltas", {}) if isinstance(state_influence, dict) else {}
+    if not isinstance(deltas, dict) or not deltas:
+        return state
+    values = state.to_dict()
+    for key, delta in deltas.items():
+        if key not in values:
+            continue
+        try:
+            values[key] = values[key] + float(delta)
+        except (TypeError, ValueError):
+            continue
+    return EntityState.from_dict(values).clamp_all()
+
+
+def _public_memory_to_retrieved(item: dict[str, Any]) -> RetrievedMemory:
+    return RetrievedMemory(
+        memory_type="managed",
+        content=str(item.get("content", "")),
+        score=float(item.get("score", 0.0) or 0.0),
+        source=str(item.get("source", "managed")),
+        metadata=item.get("metadata") if isinstance(item.get("metadata"), dict) else {},
+    )
+
+
+def _recent_messages_for_memory(short_term: ShortTermMemory) -> list[dict[str, str]]:
+    messages: list[dict[str, str]] = []
+    for entry in short_term.get_recent(6):
+        role = "assistant" if entry.role == "entity" else "user"
+        messages.append({"role": role, "content": entry.content})
+    return messages
 
 
 def _parse_timestamp(value: str | None) -> datetime:

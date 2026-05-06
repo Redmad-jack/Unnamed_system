@@ -37,6 +37,34 @@
 
 ---
 
+## 2026-05-06：Mem0-style 可审计 Managed Memory 第一版
+
+- [x] 新增 managed memory 本地 provider：
+  - `propose()` 只生成 `memory_operation_proposals`
+  - `commit()` 才写入 `managed_memories`
+  - `search(..., explain=True)` 返回 managed memory 及召回解释
+  - `preview_influence()` 预览 expression / policy / state 影响且不写入
+  - `archive()` / `restore()` 补齐可回滚管理路径
+- [x] 新增 SQLite 表：`managed_memories`、`memory_operation_proposals`、`memory_operation_log`、`memory_influence_log`，并在可用时创建 `managed_memories_fts`
+- [x] 主循环接入 managed memory：
+  - 每轮先 preview influence，再应用受限 `memory_gravity` state delta
+  - managed memory 可将普通开放策略牵引为选择性记忆策略
+  - 每轮结束先 proposal，再按默认 auto-commit 提交
+  - influence、operation、proposal 均可审计
+- [x] API 增加 managed memory endpoints：
+  - proposal / commit
+  - list / update / archive / restore / explain
+  - preview influence / influence log
+- [x] 开发者界面 Memory 区增加 Managed Memory、Proposals、Influence Trace 的最小入口
+- [x] 文档更新：
+  - `docs/BACKEND_STRUCTURE.md`
+  - `docs/TECH_STACK.md`
+- [x] 验证：
+  - `PYTHONPATH=src python3 -m pytest -p no:debugging`
+  - `285 passed`
+
+---
+
 ## 2026-05-06：服务请求上下文续问与非服务话题转向
 
 - [x] `service_demand` 增加上下文续问规则：上一轮服务请求后，短片段补充（如“历史背景”）继续识别为 `SERVICE_DEMAND`

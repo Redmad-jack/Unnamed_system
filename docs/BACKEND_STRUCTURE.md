@@ -216,7 +216,7 @@ CREATE TABLE episodic_memories (
 }
 ```
 
-学习记录先以反思摘要和 metadata 形式保存，不自动修改规则。若后续要做运营者确认的调参建议，再新增独立 `learning_suggestions` 表，避免把待确认建议混入已生效规则。
+学习记录现在分为两层：`interaction_log` / `episodic_memories` / `reflective_summaries` 保留原始追溯与显著事件；`managed_memories` 保存被提交后会影响行为的长期记忆。LLM 只能先写入 proposal，commit 后才进入行为记忆。
 
 ---
 
@@ -238,7 +238,28 @@ CREATE TABLE reflective_summaries (
 
 ---
 
-### 2.6 schema_version
+### 2.6 managed_memories / proposals / influence
+
+Managed memory 是 mem0-style 的行为记忆层。原始对话仍完整保留，系统运行时优先使用 committed managed memories。
+
+核心表：
+
+- `managed_memories`：已提交的行为记忆，支持 `active / superseded / archived / hidden`
+- `memory_operation_proposals`：LLM 或规则生成的候选记忆操作，默认先进入 `pending`
+- `memory_operation_log`：所有 commit / update / archive / restore 的审计记录
+- `memory_influence_log`：每轮对话中 managed memory 对 expression / policy / state 的影响记录
+- `managed_memories_fts`：SQLite FTS5 检索索引；不可用时自动退回普通查询
+
+重要约束：
+
+- `propose()` 不得直接写入 `managed_memories`
+- `commit()` 才能改变行为记忆
+- `preview_influence()` 不产生写入
+- archived / hidden managed memories 不参与行为
+
+---
+
+### 2.7 schema_version
 
 ```sql
 CREATE TABLE schema_version (

@@ -468,6 +468,27 @@
             </div>
           </div>
           <div id="curation-list" class="curation-list"><div class="dim">Loading…</div></div>
+          <div class="runtime-section">
+            <div class="section-title">Managed Memory</div>
+            <div class="llm-form">
+              <label>Status
+                <select id="managed-status" onchange="pollManagedMemory()">
+                  <option value="active">active</option>
+                  <option value="pending">pending proposals</option>
+                  <option value="archived">archived</option>
+                  <option value="hidden">hidden</option>
+                  <option value="all">all</option>
+                </select>
+              </label>
+              <label class="wide">Search <input id="managed-query" placeholder="managed memory query…" onkeydown="if(event.key==='Enter'){event.preventDefault();pollManagedMemory()}"></label>
+              <div class="form-actions">
+                <button class="btn-sm" onclick="pollManagedMemory()">Refresh managed layer</button>
+                <button class="btn-sm" onclick="pollInfluenceTrace()">Refresh influence</button>
+              </div>
+            </div>
+            <div id="managed-memory-list" class="curation-list"><div class="dim">Loading…</div></div>
+            <div id="memory-influence-list" class="curation-list"><div class="dim">Loading influence trace…</div></div>
+          </div>
         </div>
 
         <div class="sidebar-pane" id="pane-history">
@@ -701,6 +722,17 @@ function renderMemoryPreview(d) {
       ${collapsed.slice(0, 8).map(renderMemoryPreviewItem).join('')}
     </details>`;
   }
+  if (d.managed_influence) {
+    const inf = d.managed_influence;
+    const state = inf.state_influence && inf.state_influence.deltas
+      ? JSON.stringify(inf.state_influence.deltas)
+      : '{}';
+    html += `<div class="memory-preview-summary">
+      Managed influence preview · expression ${Number((inf.expression_context || []).length)}
+      · policy ${escapeHtml((inf.policy_influence && inf.policy_influence.suggested_action) || 'none')}
+      · state ${escapeHtml(state)}
+    </div>`;
+  }
   el.innerHTML = html;
 }
 
@@ -910,6 +942,135 @@ async function refreshMemoryEmbedding(memoryType, memoryId) {
     await Promise.all([pollCurationStats(), pollCurationMemories()]);
   } catch (e) {
     alert('Embedding refresh failed: ' + e.message);
+  }
+}
+
+async function pollManagedMemory() {
+  const status = document.getElementById('managed-status')?.value || 'active';
+  const query = document.getElementById('managed-query')?.value.trim() || '';
+  if (status === 'pending') {
+    await pollMemoryProposals();
+    return;
+  }
+  try {
+    const d = await fetchJSON(`/api/v1/managed-memory?status=${encodeURIComponent(status)}&q=${encodeURIComponent(query)}&limit=80`);
+    renderManagedMemory(d.rows || []);
+  } catch (e) {
+    const el = document.getElementById('managed-memory-list');
+    if (el) el.innerHTML = `<span class="err">Managed memory failed: ${escapeHtml(e.message)}</span>`;
+  }
+}
+
+async function pollMemoryProposals() {
+  try {
+    const d = await fetchJSON('/api/v1/managed-memory/proposals?status=pending&limit=80');
+    const rows = d.proposals || [];
+    const el = document.getElementById('managed-memory-list');
+    if (!el) return;
+    if (!rows.length) {
+      el.innerHTML = '<div class="dim">No pending proposals.</div>';
+      return;
+    }
+    el.innerHTML = rows.map(p => `
+      <div class="curation-item">
+        <div class="curation-meta">proposal #${escapeHtml(p.id)} · ${escapeHtml(p.operation)} · ${escapeHtml(p.status)} · confidence ${escapeHtml(p.confidence)}</div>
+        <div class="curation-text">${renderMessageText(String(p.content || p.reason || '').slice(0, 320))}</div>
+        <div class="curation-actions">
+          <button class="btn-sm" onclick="commitMemoryProposal(${Number(p.id)})">Commit</button>
+        </div>
+      </div>
+    `).join('');
+  } catch (e) {
+    const el = document.getElementById('managed-memory-list');
+    if (el) el.innerHTML = `<span class="err">Proposals failed: ${escapeHtml(e.message)}</span>`;
+  }
+}
+
+function renderManagedMemory(rows) {
+  const el = document.getElementById('managed-memory-list');
+  if (!el) return;
+  if (!rows.length) {
+    el.innerHTML = '<div class="dim">No managed memories match these filters.</div>';
+    return;
+  }
+  el.innerHTML = rows.map(row => `
+    <div class="curation-item">
+      <div class="curation-meta">
+        managed #${escapeHtml(row.id)} · ${escapeHtml(row.status)} · ${escapeHtml(row.memory_kind)}
+        · confidence ${escapeHtml(row.confidence)} · turns ${escapeHtml((row.source_turn_ids || []).join(','))}
+      </div>
+      <div class="curation-text">${renderMessageText(String(row.content || '').slice(0, 360))}</div>
+      <div class="curation-actions">
+        <button class="btn-sm" onclick="explainManagedMemory(${Number(row.id)})">Explain</button>
+        ${row.status === 'active' ? `<button class="btn-sm" onclick="archiveManagedMemory(${Number(row.id)})">Archive</button>` : ''}
+        ${row.status === 'archived' || row.status === 'hidden' ? `<button class="btn-sm" onclick="restoreManagedMemory(${Number(row.id)})">Restore</button>` : ''}
+      </div>
+    </div>
+  `).join('');
+}
+
+async function commitMemoryProposal(id) {
+  try {
+    const r = await fetch('/api/v1/managed-memory/commit', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ proposal_ids: [id], operations: [] }),
+    });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(d.detail || r.statusText);
+    await Promise.all([pollManagedMemory(), pollMemory()]);
+  } catch (e) {
+    alert('Proposal commit failed: ' + e.message);
+  }
+}
+
+async function archiveManagedMemory(id) {
+  await managedMemoryAction(`/api/v1/managed-memory/${id}/archive`);
+}
+
+async function restoreManagedMemory(id) {
+  await managedMemoryAction(`/api/v1/managed-memory/${id}/restore`);
+}
+
+async function managedMemoryAction(url) {
+  try {
+    const r = await fetch(url, { method: 'POST' });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(d.detail || r.statusText);
+    await Promise.all([pollManagedMemory(), pollMemory()]);
+  } catch (e) {
+    alert('Managed memory action failed: ' + e.message);
+  }
+}
+
+async function explainManagedMemory(id) {
+  try {
+    const d = await fetchJSON(`/api/v1/managed-memory/${id}/explain`);
+    alert(JSON.stringify(d, null, 2).slice(0, 4000));
+  } catch (e) {
+    alert('Explain failed: ' + e.message);
+  }
+}
+
+async function pollInfluenceTrace() {
+  try {
+    const d = await fetchJSON('/api/v1/managed-memory/influence-log?limit=8');
+    const rows = d.rows || [];
+    const el = document.getElementById('memory-influence-list');
+    if (!el) return;
+    if (!rows.length) {
+      el.innerHTML = '<div class="dim">No influence trace yet.</div>';
+      return;
+    }
+    el.innerHTML = rows.map(row => `
+      <div class="curation-item">
+        <div class="curation-meta">turn ${escapeHtml(row.turn_id || '—')} · ${escapeHtml(row.policy_action || '')} · ${escapeHtml(row.influenced_at || '')}</div>
+        <div class="curation-text">${renderMessageText(String(row.query || '').slice(0, 220))}</div>
+      </div>
+    `).join('');
+  } catch (e) {
+    const el = document.getElementById('memory-influence-list');
+    if (el) el.innerHTML = `<span class="err">Influence trace failed: ${escapeHtml(e.message)}</span>`;
   }
 }
 
@@ -1250,7 +1411,7 @@ async function reloadConfig() {
     const r = await fetch('/api/v1/config/reload', { method: 'POST' });
     const d = await r.json();
     _configs = null;
-    await Promise.all([pollState(), pollLLMStats(), pollMemory(), pollLLMConfig(), pollEmbeddingConfig(), pollCurationStats(), pollCurationMemories(), loadDialogLog(), pollSessions()]);
+    await Promise.all([pollState(), pollLLMStats(), pollMemory(), pollLLMConfig(), pollEmbeddingConfig(), pollCurationStats(), pollCurationMemories(), pollManagedMemory(), pollInfluenceTrace(), loadDialogLog(), pollSessions()]);
     alert('Config reloaded. ' + (d.note || ''));
   } catch(e) {
     alert('Reload failed: ' + e.message);
@@ -1259,7 +1420,7 @@ async function reloadConfig() {
 
 // ---- init ----
 async function init() {
-  await Promise.all([pollHealth(), pollState(), pollLLMStats(), pollMemory(), pollLLMConfig(), pollEmbeddingConfig(), pollCurationStats(), pollCurationMemories(), loadDialogLog(), pollSessions()]);
+  await Promise.all([pollHealth(), pollState(), pollLLMStats(), pollMemory(), pollLLMConfig(), pollEmbeddingConfig(), pollCurationStats(), pollCurationMemories(), pollManagedMemory(), pollInfluenceTrace(), loadDialogLog(), pollSessions()]);
 }
 
 init();
@@ -1270,6 +1431,8 @@ setInterval(pollMemory, 10000);
 setInterval(pollLLMConfig, 15000);
 setInterval(pollEmbeddingConfig, 15000);
 setInterval(() => { if (_sidebarTab === 'embedding') pollCurationStats(); }, 15000);
+setInterval(() => { if (_sidebarTab === 'embedding') pollManagedMemory(); }, 15000);
+setInterval(() => { if (_sidebarTab === 'embedding') pollInfluenceTrace(); }, 15000);
 setInterval(pollSessions, 15000);
 </script>
 </body>

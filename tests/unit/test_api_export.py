@@ -13,7 +13,10 @@ from conscious_entity.interfaces.api import (
     EmbeddingConfigRequest,
     EmbeddingTestRequest,
     LLMConfigRequest,
+    ManagedMemoryCommitRequest,
+    ManagedMemoryUpdateRequest,
     MemoryStatusRequest,
+    MemoryInfluencePreviewRequest,
     SessionTypeRequest,
     _conversation_export_payload,
     _resolve_session_id,
@@ -329,6 +332,58 @@ def test_memory_preview_returns_current_session_material(tmp_path):
     assert result["session_id"] == "current"
     assert result["results"]
     assert "你记住这句话" in result["results"][0]["content"]
+    assert "managed_influence" in result
+
+
+def test_managed_memory_commit_preview_archive_restore_api(tmp_path):
+    db_path = tmp_path / "memory.db"
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    run_migrations(conn)
+    conn.execute("INSERT INTO sessions (id, session_type) VALUES (?, ?)", ("current", "test"))
+    conn.commit()
+
+    request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(
+        conn=conn,
+        db_path=db_path,
+        session_id="current",
+        prompts_dir=api._prompts_dir(),
+        embedding_runtime_config=None,
+        embedding_error=None,
+    )))
+
+    committed = asyncio.run(api.managed_memory_commit(
+        request,
+        ManagedMemoryCommitRequest(operations=[{
+            "operation": "add",
+            "content": "Visitor returns to memory continuity questions.",
+            "topics": ["memory"],
+            "source_turn_ids": [1],
+        }]),
+    ))
+    memory_id = committed["committed"][0]["memory_id"]
+
+    preview = asyncio.run(api.managed_memory_preview_influence(
+        request,
+        MemoryInfluencePreviewRequest(query="memory", context={}),
+    ))
+    assert preview["results"]
+
+    asyncio.run(api.managed_memory_archive(request, memory_id))
+    rows = asyncio.run(api.managed_memory_list(request, status="active"))
+    assert rows["rows"] == []
+
+    asyncio.run(api.managed_memory_restore(request, memory_id))
+    explained = asyncio.run(api.managed_memory_explain(request, memory_id))
+    assert explained["memory"]["status"] == "active"
+
+    asyncio.run(api.managed_memory_update(
+        request,
+        memory_id,
+        ManagedMemoryUpdateRequest(patch={"topics": ["memory", "continuity"]}),
+    ))
+    assert conn.execute("SELECT COUNT(*) AS cnt FROM memory_operation_log").fetchone()["cnt"] >= 3
+    conn.close()
 
 
 def test_curation_can_hide_memory_and_copy_to_exhibition(tmp_path):

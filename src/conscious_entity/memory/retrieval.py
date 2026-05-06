@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 from typing import Iterable
 
 from conscious_entity.llm.embedding_client import EmbeddingClient
+from conscious_entity.memory.managed import MemoryProvider
 from conscious_entity.memory.models import RetrievedMemory
 from conscious_entity.memory.vector import cosine_similarity, decode_embedding
 from conscious_entity.perception.event_types import PerceptionEvent
@@ -31,11 +32,13 @@ class MemoryRetriever:
         session_id: str,
         embedding_client: EmbeddingClient | None = None,
         session_type: str | None = None,
+        managed_provider: MemoryProvider | None = None,
     ) -> None:
         self._conn = conn
         self._session_id = session_id
         self._embedding_client = embedding_client
         self._session_type = session_type or self._resolve_session_type()
+        self._managed_provider = managed_provider
 
     def retrieve(
         self,
@@ -46,6 +49,9 @@ class MemoryRetriever:
         query_text = (query or "").strip()
         deterministic = self._deterministic_retrieve(query_text, events or [], limit=limit)
         semantic = self._semantic_retrieve(query_text, events or [], limit=limit)
+        managed = self._managed_provider.search(query_text, limit=limit, explain=True) if self._managed_provider else []
+        if managed:
+            deterministic = managed + deterministic
         if not semantic:
             return deterministic[:limit]
         return _merge_results(deterministic, semantic, limit)

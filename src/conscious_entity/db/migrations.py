@@ -131,6 +131,76 @@ CREATE TABLE IF NOT EXISTS memory_curation_log (
     details               TEXT
 );
 
+CREATE TABLE IF NOT EXISTS managed_memories (
+    id                    INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id            TEXT NOT NULL REFERENCES sessions(id),
+    session_type          TEXT NOT NULL DEFAULT 'test',
+    created_at            TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at            TEXT NOT NULL DEFAULT (datetime('now')),
+    scope                 TEXT NOT NULL DEFAULT 'session',
+    memory_kind           TEXT NOT NULL DEFAULT 'observation',
+    content               TEXT NOT NULL,
+    entities              TEXT NOT NULL DEFAULT '[]',
+    topics                TEXT NOT NULL DEFAULT '[]',
+    confidence            REAL NOT NULL DEFAULT 0.5,
+    source_turn_ids       TEXT NOT NULL DEFAULT '[]',
+    status                TEXT NOT NULL DEFAULT 'active',
+    embedding             BLOB,
+    embedding_model       TEXT,
+    metadata              TEXT NOT NULL DEFAULT '{}'
+);
+
+CREATE INDEX IF NOT EXISTS idx_managed_session_status
+    ON managed_memories(session_id, status, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_managed_session_type_status
+    ON managed_memories(session_type, status, updated_at DESC);
+
+CREATE TABLE IF NOT EXISTS memory_operation_proposals (
+    id                    INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id            TEXT NOT NULL REFERENCES sessions(id),
+    created_at            TEXT NOT NULL DEFAULT (datetime('now')),
+    operation_type        TEXT NOT NULL,
+    operation_json        TEXT NOT NULL,
+    reason                TEXT,
+    raw_llm_output        TEXT,
+    source_turn_ids       TEXT NOT NULL DEFAULT '[]',
+    status                TEXT NOT NULL DEFAULT 'pending'
+);
+
+CREATE INDEX IF NOT EXISTS idx_memory_proposals_session_status
+    ON memory_operation_proposals(session_id, status, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS memory_operation_log (
+    id                    INTEGER PRIMARY KEY AUTOINCREMENT,
+    action_at             TEXT NOT NULL DEFAULT (datetime('now')),
+    session_id            TEXT NOT NULL REFERENCES sessions(id),
+    action                TEXT NOT NULL,
+    memory_id             INTEGER NOT NULL,
+    proposal_id           INTEGER,
+    source_turn_ids       TEXT NOT NULL DEFAULT '[]',
+    details               TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_memory_operation_log_memory
+    ON memory_operation_log(memory_id, action_at DESC);
+
+CREATE TABLE IF NOT EXISTS memory_influence_log (
+    id                    INTEGER PRIMARY KEY AUTOINCREMENT,
+    influenced_at         TEXT NOT NULL DEFAULT (datetime('now')),
+    session_id            TEXT NOT NULL REFERENCES sessions(id),
+    turn_id               INTEGER,
+    query                 TEXT,
+    retrieved_memory_ids  TEXT NOT NULL DEFAULT '[]',
+    expression_context    TEXT NOT NULL DEFAULT '[]',
+    policy_influence      TEXT NOT NULL DEFAULT '{}',
+    state_influence       TEXT NOT NULL DEFAULT '{}',
+    state_snapshot_id     INTEGER,
+    policy_action         TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_memory_influence_session
+    ON memory_influence_log(session_id, influenced_at DESC);
+
 INSERT OR IGNORE INTO schema_version(version) VALUES (1);
 """
 
@@ -140,6 +210,7 @@ def run_migrations(conn: sqlite3.Connection) -> None:
     conn.executescript(SCHEMA_SQL)
     _ensure_session_columns(conn)
     _ensure_memory_curation_columns(conn)
+    _ensure_managed_memory_schema(conn)
     _ensure_state_columns(conn)
     conn.commit()
 
@@ -202,6 +273,29 @@ def _ensure_columns(conn: sqlite3.Connection, table: str, columns: dict[str, str
         if column in existing:
             continue
         conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
+
+
+def _ensure_managed_memory_schema(conn: sqlite3.Connection) -> None:
+    """Create optional FTS index for managed memories when SQLite supports FTS5."""
+    try:
+        conn.execute(
+            """
+            CREATE VIRTUAL TABLE IF NOT EXISTS managed_memories_fts
+            USING fts5(content, entities, topics)
+            """
+        )
+    except sqlite3.Error:
+        return
+    try:
+        conn.execute("DELETE FROM managed_memories_fts")
+        conn.execute(
+            """
+            INSERT INTO managed_memories_fts(rowid, content, entities, topics)
+            SELECT id, content, entities, topics FROM managed_memories
+            """
+        )
+    except sqlite3.Error:
+        pass
 
 
 def _ensure_state_columns(conn: sqlite3.Connection) -> None:
