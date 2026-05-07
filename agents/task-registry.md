@@ -69,3 +69,5 @@ Status values: `in_progress`, `done`
 | docs/IMPLEMENTATION_PLAN.md | Codex | done | 2026-05-08 01:18 CST |
 | src/conscious_entity/core/loop.py | Codex | done | 2026-05-08 01:18 CST |
 | agents/task-registry.md | Codex | done | 2026-05-08 01:18 CST |
+| docs/progress.md | Codex | done | 2026-05-08 03:08 CST |
+| agents/task-registry.md | Codex | done | 2026-05-08 03:08 CST |
