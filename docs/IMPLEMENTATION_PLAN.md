@@ -153,7 +153,7 @@ pytest tests/unit/ -v
 
 **任务：**
 - [ ] `src/conscious_entity/core/event_bus.py`（简单同步事件路由）
-- [ ] `src/conscious_entity/core/loop.py` — InteractionLoop（11步流程）
+- [ ] `src/conscious_entity/core/loop.py` — InteractionLoop（当前主循环管道）
 - [ ] `src/conscious_entity/interfaces/cli.py` — 命令行对话界面
 - [ ] `tests/integration/test_full_loop.py`（mocked LLM）
 - [ ] `tests/conftest.py`（in-memory SQLite fixture）
@@ -303,7 +303,9 @@ PYTHONPATH=src python -m pytest -p no:debugging \
 
 ---
 
-## 明确暂不做（v0.1 阶段）
+## 明确暂不做（早期文本 MVP 阶段的历史边界）
+
+以下是早期计划的边界记录。FastAPI 开发者 API、Memory Preview、embedding 语义召回和 managed memory 已在后续阶段完成；当前真实状态以 `README.md` 与 `docs/progress.md` 为准。
 
 - 访客端 Web 界面
 - 运营者监控 Web 面板

@@ -14,7 +14,7 @@ Perception → State Core → Memory → Policy → Expression
                Reflection ←────────────── Episodic Store
 ```
 
-**Key design principle:** AI handles expression, semantic compression, and retrieval. The artist defines organization, state, rules, and structure. These responsibilities must never blur.
+**Key design principle:** AI handles expression, semantic compression, retrieval assistance, and managed-memory proposals inside auditable boundaries. The artist defines organization, state, rules, constitution, and configuration surfaces. These responsibilities must never blur.
 
 ---
 
@@ -27,8 +27,8 @@ Perception → State Core → Memory → Policy → Expression
 | LLM (reflection) | Claude Haiku | Cost-efficient for batch compression |
 | Embeddings | Optional OpenAI-compatible HTTP endpoint | Semantic retrieval without adding local ML dependencies; disabled by default |
 | Database | SQLite (WAL mode) | Single-machine installation, no network required |
-| API layer (v0.2+) | FastAPI | Lightweight, async-ready |
-| STT/TTS (v0.2+) | Whisper / system TTS | Optional voice embodiment |
+| API layer | FastAPI in optional `api` dependency group | Local developer API and Web dashboard, not part of core dependencies |
+| STT/TTS (future) | Whisper / system TTS | Optional voice embodiment, not currently declared |
 | Config format | YAML | Artist-editable without touching Python |
 | Testing | pytest | Standard, fixture-based |
 
@@ -79,7 +79,9 @@ conscious_entity/
 │       │   ├── short_term.py         # Sliding window buffer (in-memory deque)
 │       │   ├── episodic_store.py     # Write/read episodic events in SQLite
 │       │   ├── reflective_store.py   # Write/read reflective summaries in SQLite
-│       │   └── retrieval.py          # Semantic cosine search over memory tables
+│       │   ├── retrieval.py          # Deterministic + optional embedding memory retrieval
+│       │   ├── managed.py            # Managed memory provider facade + local SQLite implementation
+│       │   └── vector.py             # Embedding encode/decode helpers
 │       │
 │       ├── reflection/
 │       │   ├── reflection_engine.py  # Trigger check + LLM compression call
@@ -268,23 +270,37 @@ class ShortTermMemory:
 
 @dataclass
 class RetrievedMemory:
-    memory_type: str           # "episodic" or "reflective"
+    memory_type: str           # "recent", "episodic", "reflective", or "managed"
     content: str
-    similarity: float
-    timestamp: datetime
-    metadata: dict
+    timestamp: Optional[datetime] = None
+    score: float = 0.0
+    similarity: Optional[float] = None
+    source: str = "deterministic"
+    metadata: dict = field(default_factory=dict)
 
 class MemoryRetriever:
     def retrieve(
         self,
-        query: str,
-        top_k: int = 5,
-        include_reflective: bool = True,
+        query: str | None,
+        events: list[PerceptionEvent] | None = None,
+        limit: int = 9,
     ) -> list[RetrievedMemory]:
         """
-        Embed query, cosine-search across episodic + reflective tables.
-        Returns top_k results ranked by similarity.
+        Merge recent dialog, episodic memories, reflective summaries, and
+        committed managed memories. Deterministic retrieval is always active;
+        optional embeddings add semantic results when configured.
         """
+
+# memory/managed.py
+
+class MemoryProvider(Protocol):
+    auto_commit: bool
+
+    def preview_influence(self, query: str, context: dict | None = None) -> dict: ...
+    def propose(self, messages: list[dict], context: dict) -> list[MemoryOperationProposal]: ...
+    def commit(self, proposal_ids: Iterable[int] | None = None, operations: Iterable | None = None) -> list[dict]: ...
+    def search(self, query: str, filters: dict | None = None, limit: int = 9, explain: bool = True) -> list[RetrievedMemory]: ...
+    def log_influence(self, turn_id: int | None, query: str, influence: dict, state_snapshot_id: int | None = None, policy_action: str | None = None) -> None: ...
 ```
 
 ### 4.4 Reflection Layer
@@ -434,16 +450,19 @@ class InteractionLoop:
         """
         Full pipeline for one user turn:
         1.  Parse input → events
-        2.  Load current state
-        3.  Apply event deltas + time decay → new state
-        4.  Save state snapshot
-        5.  Store significant events in episodic memory (salience >= threshold)
-        6.  Select policy
-        7.  If RETRIEVE_MEMORY_FIRST: run retrieval, re-select policy
-        8.  Generate expression
-        9.  Add entity turn to short-term memory
-        10. Maybe trigger reflection
-        11. Return ExpressionOutput
+        2.  Add user turn to short-term memory
+        3.  Apply event deltas + per-turn decay → new state
+        4.  Preview managed memory influence and apply bounded state influence
+        5.  Save state snapshot
+        6.  Store significant events in episodic memory (salience >= threshold)
+        7.  Select policy and apply managed memory policy influence
+        8.  Retrieve memory when policy or managed memory asks for it
+        9.  Generate expression
+        10. Add entity turn to short-term memory
+        11. Log interaction and managed memory influence
+        12. Propose and optionally auto-commit managed memory updates
+        13. Maybe trigger reflection
+        14. Return ExpressionOutput
         """
 
     def handle_system_event(self, event_type: EventType) -> Optional[ExpressionOutput]:
@@ -845,54 +864,56 @@ CREATE INDEX IF NOT EXISTS idx_reflective_active
 
 ## 7. Development Roadmap
 
-### v0.1 — Text-Based MVP
+### Current — Text System + Developer API + Managed Memory
 
-**Goal:** Verify that state machine + persistent memory produce perceivable continuity, preference, and tension through text alone.
+**Goal:** Verify that state machine + persistent memory produce perceivable continuity, preference, and tension through text alone, while making memory influence visible and auditable.
 
-**What to build:**
+**Implemented:**
 - All `perception/`, `state/`, `policy/` modules
-- `memory/short_term.py` + `memory/episodic_store.py` (recency-only retrieval, no embeddings yet)
+- `memory/short_term.py`, `memory/episodic_store.py`, `memory/reflective_store.py`
+- `memory/retrieval.py` with deterministic retrieval and optional OpenAI-compatible embedding hybrid retrieval
+- `memory/managed.py` with proposal → commit, influence preview/log, archive/restore paths
 - `reflection/reflection_engine.py` triggered by count threshold
 - `expression/expression_engine.py` + `context_builder.py` + `style_mapper.py`
-- `llm/claude_client.py`
+- `llm/claude_client.py` and `llm/embedding_client.py`
 - `db/migrations.py` + `scripts/init_db.py`
-- `core/loop.py` + `interfaces/cli.py`
+- `core/loop.py`, `interfaces/cli.py`, and FastAPI developer API modules under `interfaces/api*.py`
+- Single-file local Web dashboard with Memory Preview and managed memory curation
 
-**Deliberately deferred:**
-- No embedding-based retrieval (fallback: recency)
-- No time decay (decay runs per-turn, not on a clock)
-- No STT/TTS, no visual output
+**Still deferred:**
+- Clock-based background decay; current decay runs per turn
+- STT/TTS voice channel
+- Visitor-facing visual embodiment layer
+- Presence / spatial sensing
+- Deployment authentication for any non-local operator panel
 
 **Acceptance criteria:**
 - 10-turn conversation shows measurable state drift (resistance rises, responses shorten)
 - Shutdown keywords trigger behavioral shift
 - Memory persists across process restarts
 - Reflection fires after threshold and summary is stored
+- Memory Preview and influence logs explain what memory material entered a turn
 
 ---
 
-### v0.2 — Semantic Retrieval + Voice + Visual Embodiment
+### Next — Voice + Visual Embodiment
 
 **Goal:** Strengthen bodily presence. Make silence, delay, and visual disturbance expressive.
 
 **What to build:**
-- `llm/embedding_client.py` (optional OpenAI-compatible embeddings)
-- `memory/retrieval.py` (cosine search over episodic + reflective tables)
-- Wire `RETRIEVE_MEMORY_FIRST` policy path in `core/loop.py`
 - `interfaces/speech.py` (Whisper STT + TTS)
-- `interfaces/api.py` + API support modules (FastAPI developer API)
 - Time-based decay using a background timer
-- `scripts/inspect_state.py` (live debug overlay)
 - Wire `delay_ms` and `visual_mode` to display layer
+- Visitor-facing display surface that reads `ExpressionOutput` and state values without exposing operator-only internals
 
 **Acceptance criteria:**
-- Semantically related shutdown questions retrieve prior shutdown memories despite different wording
 - Spoken input flows correctly into the perception pipeline
 - Visual state responds to state variables in real time
+- Operator-only memory and governance traces remain out of the visitor surface
 
 ---
 
-### v0.3 — Governance Visibility + Training + Termination Ritual
+### Later — Governance Visibility + Training + Termination Ritual
 
 **Goal:** Make ethics, regulation, and power structures visible as part of the artwork.
 

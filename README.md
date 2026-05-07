@@ -20,9 +20,9 @@
 
 ---
 
-## 当前开发状态（2026-04）
+## 当前开发状态（2026-05）
 
-**核心逻辑与 Stranger 文本协议已可运行。**
+**核心文本系统、开发者 API、Memory Preview 与 managed memory 主路径已可运行。**
 
 | Phase | 内容 | 状态 |
 |---|---|---|
@@ -35,8 +35,9 @@
 | Phase 6 | Debug 工具脚本 + FastAPI 开发者 API + Web 看板 | ✅ 完成 |
 | Phase 7 | Stranger 文本协议（身份拒绝、命名失败、拒绝服务、局部追溯、选择性记忆） | ✅ 完成 |
 | Phase 8 | 记忆召回增强（可解释召回 + 可选 embedding 语义召回 + Memory Preview） | ✅ 完成 |
+| Phase 9 | Managed Memory（proposal → commit、influence preview/log、developer curation） | ✅ 完成 |
 
-**现在可以运行：** 通过命令行或本地 Web 看板与 Stranger 交互，实体有状态记忆、行为规则、LLM 表达和文本关系姿态识别，一切持久化到 SQLite。
+**现在可以运行：** 通过命令行或本地 Web 看板与 Stranger 交互，实体有状态记忆、行为规则、LLM 表达、文本关系姿态识别、可解释记忆召回、Memory Preview 和可审计 managed memory 影响路径，一切持久化到 SQLite。
 
 **还未做的（后续阶段）：** 语音输入/输出、摄像头/空间感知、访客身份识别、展期终止仪式。
 
@@ -60,20 +61,22 @@
 
 LLM 不直接改写 YAML、宪法、核心状态权重或策略规则。它可以通过 proposal → commit 的 managed memory 流程参与长期记忆形成；进入行为路径的影响必须可预览、可记录、可回滚。
 
-### 核心数据流（每个对话回合，共 11 步）
+### 核心数据流（每个对话回合的关键阶段）
 
 ```
 1. 解析输入 → PerceptionEvent 列表（可包含多个事件类型）
-2. 加载当前 EntityState
-3. 对每个事件应用状态增量（读 state_rules.yaml）
-4. 应用时间衰减
+2. 用户输入写入短期记忆，保证重复追问等判断可见
+3. 对每个事件应用状态增量（读 state_rules.yaml），再应用 per-turn 衰减
+4. 预览 managed memory influence，并只应用被允许的 state influence
 5. 持久化状态快照到 SQLite
-6. 将显著事件写入情节记忆
+6. 将显著事件写入情节记忆，并在可用时补充 embedding
 7. 策略选择（读 policy_rules.yaml，Constitution 先行检查）
-8. [条件] 若需要检索记忆，先检索再重新选策略
-9. 表达层生成输出（StyleMapper → Claude → Constitution 过滤）
-10. 实体回应写入短期记忆
-11. 触发反思检查（情节事件积累到阈值 → Claude 压缩为洞察）
+8. 若 managed memory 建议选择性召回，将开放回应牵引为可审计的 retrieval action
+9. 按策略检索记忆；`RETRIEVE_MEMORY_FIRST` 在取回材料后归一化为开放表达
+10. 表达层生成输出（StyleMapper → Claude → Constitution 过滤）
+11. 实体回应写入短期记忆，并写入 interaction_log
+12. 写入 memory_influence_log，再生成 managed memory proposal，默认 auto-commit
+13. 触发反思检查（情节事件积累到阈值 → Claude 压缩为洞察）
 ```
 
 ---
@@ -256,16 +259,16 @@ PYTHONPATH=src python3 -m pytest -p no:debugging
 
 ## 待讨论 / 待确认的问题
 
-这些是目前搁置的设计决策，影响 v0.2 及以后的开发方向：
+这些是目前搁置的设计决策，影响后续视觉层、部署方式和展览阶段：
 
 | 问题 | 影响范围 |
 |---|---|
-| 展览视觉风格、设计语言 | v0.2 的视觉输出层 |
-| 前端技术选型（Web？本地应用？） | v0.2 API 层和界面架构 |
-| 语音输出的具体方案（TTS 选型） | v0.2 语音模块 |
-| 访客身份识别方式（摄像头？Token？完全匿名？） | v0.3 per-visitor 记忆设计 |
-| 运营者面板的访问方式（本地 localhost 还是局域网？） | v0.2 FastAPI 部署配置 |
-| 展期终止仪式的设计 | v0.3 功能范围 |
+| 展览视觉风格、设计语言 | 后续视觉输出层 |
+| 访客前端形态（Web？本地应用？投影界面？） | 访客端界面架构 |
+| 语音输出的具体方案（TTS 选型） | 后续语音模块 |
+| 访客身份识别方式（摄像头？Token？完全匿名？） | per-visitor 记忆设计 |
+| 运营者面板的访问方式（本地 localhost 还是局域网？） | FastAPI 部署与认证配置 |
+| 展期终止仪式的设计 | 展览收束功能范围 |
 
 ---
 
@@ -287,9 +290,9 @@ PYTHONPATH=src python3 -m pytest -p no:debugging
 ## 开发路线图
 
 ```
-v0.1（当前）  文字 CLI — 状态机 + 记忆 + 策略 + LLM 表达，验证核心逻辑
+当前文本系统  CLI + 本地 FastAPI 开发者 API + Memory Preview + Managed Memory
      ↓
-v0.2          语义检索 + 语音 + 视觉输出 + 运营者面板
+后续扩展      访客视觉层 + 语音输入/输出 + presence / spatial sensing
      ↓
-v0.3          治理可见性 + 访客身份感知 + 展期终止仪式
+展览阶段      访问控制 + 访客身份策略（如需要）+ 展期终止仪式
 ```

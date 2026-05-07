@@ -1,19 +1,21 @@
 # Tech Stack
 
-*Conscious Entity System — v0.1*
+*Conscious Entity System — current text system + developer API*
 
 ---
 
 ## 原则
 
 - 每个版本的技术选型必须有明确理由，不随意引入新依赖
-- 生产依赖与开发依赖分开管理
+- 核心运行依赖、API 依赖、开发测试依赖分开管理
 - 不允许在未经确认的情况下替换或升级版本
 - 离线可运行是硬约束（部署环境可能无外网，Claude API 除外）
 
 ---
 
 ## 核心技术栈
+
+以下是默认安装路径需要的依赖。FastAPI、uvicorn 和 pytest 等不放入核心 `dependencies`。
 
 ### 语言与运行时
 
@@ -32,6 +34,7 @@
 **Claude 模型分配：**
 - 表达层（ExpressionEngine）→ `claude-sonnet-4-6`（语气细节、开放生成）
 - 反思层（ReflectionEngine）→ `claude-haiku-4-5-20251001`（批量压缩，成本控制）
+- Managed memory proposal → 复用注入的 ClaudeClient，通过 proposal → commit 路径进入行为记忆
 
 **Embedding 模型：**
 - 默认关闭：`ENTITY_EMBEDDING_MODE=disabled`，只使用可解释记忆召回
@@ -60,33 +63,27 @@
 
 所有行为规则（状态更新、策略选择、宪法约束、表达映射）均存储在 YAML 文件中，不硬编码在 Python。
 
-### 测试
+## Optional Dependency Groups
 
-| 项目 | 版本 | 用途 |
-|---|---|---|
-| pytest | latest stable | 测试框架 |
-| pytest-mock | latest stable | Mock LLM 调用 |
+`pyproject.toml` 使用 optional dependency groups 控制非核心能力：
 
----
+| Group | 项目 | 用途 | 当前状态 |
+|---|---|---|---|
+| `api` | fastapi | 本地开发者 API 与 Web 看板 | 已实现，按需安装 |
+| `api` | uvicorn | FastAPI ASGI 服务器 | 已实现，按需安装 |
+| `dev` | pytest | 测试框架 | 已实现，开发时安装 |
+| `dev` | pytest-mock | Mock LLM 调用 | 已实现，开发时安装 |
+| 后续待定 | Whisper / 系统 TTS / gTTS | STT/TTS 语音通道 | 未引入，待设计确认 |
 
-## v0.2 新增依赖
-
-以下依赖在 v0.1 中**不引入**，v0.2 才添加：
-
-| 项目 | 用途 |
-|---|---|
-| fastapi | HTTP API 服务（运营者面板 + 访客 Web 界面） |
-| uvicorn | FastAPI ASGI 服务器 |
-| openai-whisper | STT 语音转文字 |
-| 系统 TTS / gTTS | TTS 文字转语音（具体选型待确认） |
+原则：后续语音、视觉、硬件或前端构建依赖不得并入核心 `dependencies`；只有完成设计确认并声明安装路径后，才加入对应 optional group。
 
 ---
 
 ## 前端技术
 
-**[ 待确认 ]** 前端技术选型尚未决定。
+当前开发者面板使用 FastAPI 静态页面 + 原生 HTML/CSS/JS，服务于本地调试、Memory Preview 和 managed memory curation。访客端视觉界面尚未定型。
 
-候选方案（供决策参考）：
+访客端候选方案（供后续决策参考）：
 
 | 方案 | 优点 | 缺点 | 适合场景 |
 |---|---|---|---|
@@ -94,7 +91,7 @@
 | React SPA | 组件化，状态管理清晰 | 需要 Node.js 构建链 | 复杂运营者面板 |
 | FastAPI + Jinja2 SSR | Python 全栈，无独立前端 | 动态交互受限 | MVP 快速落地 |
 
-决策前不引入任何前端构建工具或框架。
+访客端决策前不引入任何前端构建工具或框架。
 
 ---
 
@@ -142,7 +139,7 @@ ENTITY_MEMORY_STATE_INFLUENCE=true
 - macOS 或 Linux（Windows 未测试）
 - Python 3.11+ 已安装
 - 网络可访问 Anthropic API
-- 无需 Docker 或容器化（v0.1 阶段）
+- 无需 Docker 或容器化
 
 ---
 
@@ -151,4 +148,5 @@ ENTITY_MEMORY_STATE_INFLUENCE=true
 - 不允许在 Python 代码中硬编码 API Key
 - 不允许未经确认擅自替换已锁定的依赖版本
 - 不允许为 LLM 调用引入 LangChain 等框架（直接使用 Anthropic SDK）
-- 不允许在 v0.1 阶段引入 v0.2 的依赖（避免依赖膨胀）
+- 不允许把后续语音、视觉、硬件或前端构建依赖并入核心 `dependencies`
+- FastAPI / uvicorn 必须继续保留在 `api` optional group 中

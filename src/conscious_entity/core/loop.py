@@ -36,7 +36,7 @@ from conscious_entity.state.state_store import StateStore
 
 logger = logging.getLogger(__name__)
 
-# Per-turn elapsed seconds for v0.1 time-decay (clock-based decay is v0.2).
+# Per-turn elapsed seconds for the current decay model.
 _DECAY_SECONDS_PER_TURN: float = 120.0
 
 
@@ -45,20 +45,24 @@ class InteractionLoop:
     Orchestrates the full per-turn pipeline:
 
       1.  Parse input → events  (TextParser)
-      2.  Load current state    (StateStore or initial_state)
-      3.  Apply event + decay   (StateEngine)
-      4.  Save state snapshot   (StateStore)
-      5.  Store significant events in episodic memory (EpisodicStore)
-      6.  Select policy         (PolicySelector)
-      7.  If RETRIEVE_MEMORY_FIRST: fetch recent memories, switch to RESPOND_OPENLY
-      8.  Generate expression   (ExpressionEngine)
-      9.  Add entity turn to short-term memory
-      10. Log interaction       (interaction_log table)
-      11. Maybe trigger reflection (ReflectionEngine)
-      12. Emit events to EventBus for optional instrumentation
+      2.  Add user turn to short-term memory
+      3.  Apply events + decay  (StateEngine)
+      4.  Preview managed memory influence and apply bounded state deltas
+      5.  Save state snapshot   (StateStore)
+      6.  Store significant events in episodic memory (EpisodicStore)
+      7.  Select policy and apply managed memory policy influence
+      8.  Retrieve memory when policy or managed memory asks for it
+      9.  Generate expression   (ExpressionEngine)
+      10. Add entity turn to short-term memory
+      11. Log interaction and managed memory influence
+      12. Propose and optionally auto-commit managed memory updates
+      13. Maybe trigger reflection (ReflectionEngine)
+      14. Emit events to EventBus for optional instrumentation
       Return ExpressionOutput
 
-    All LLM calls are isolated in ExpressionEngine and ReflectionEngine via ClaudeClient.
+    LLM use is mediated through ClaudeClient in expression, reflection, and
+    managed-memory proposal generation. Managed-memory behavior influence enters
+    through preview/log/proposal/commit paths so it remains auditable.
     Pass `llm_client` to inject a mock for testing.
     """
 
@@ -147,9 +151,9 @@ class InteractionLoop:
         return self._current_state or self._initial_state
 
     def run_turn(self, raw_input: str) -> ExpressionOutput:
-        """Run the full 11-step pipeline for one user input turn."""
+        """Run one user input through the managed-memory-aware turn pipeline."""
 
-        # Step 1: Parse input → events
+        # Parse input into perception events.
         state = self._current_state or self._initial_state
         events = self._text_parser.parse(raw_input, state, self._short_term)
 
@@ -161,7 +165,7 @@ class InteractionLoop:
             event_type=events[0].event_type if events else None,
         ))
 
-        # Step 2 + 3: Apply events + per-turn decay → new state
+        # Apply events and per-turn decay before memory influence is previewed.
         new_state = state
         for event in events:
             new_state = self._state_engine.apply_event(new_state, event)
@@ -177,7 +181,7 @@ class InteractionLoop:
         )
         new_state = _apply_memory_state_influence(new_state, memory_influence)
 
-        # Step 4: Save state snapshot
+        # Save the state that will drive this turn's policy and expression.
         trigger_types = ",".join(e.event_type.value for e in events)
         snapshot_id = self._state_store.save_snapshot(
             new_state,
@@ -185,7 +189,7 @@ class InteractionLoop:
         )
         self._current_state = new_state
 
-        # Step 5: Store significant events in episodic memory
+        # Store significant events in episodic memory.
         for event in events:
             if event.salience >= self._significant_salience:
                 content = _event_summary(event)
@@ -204,50 +208,17 @@ class InteractionLoop:
                 except Exception as exc:
                     logger.error("Failed to store episodic memory: %s", exc)
 
-        # Step 6: Select policy
-        decision = self._policy_selector.select(new_state, events, self._short_term)
-        if (
-            decision.action == PolicyAction.RESPOND_OPENLY
-            and memory_influence.get("policy_influence", {}).get("suggested_action") == "retrieve_selective_memory"
-        ):
-            decision = PolicyDecision(
-                action=PolicyAction.RETRIEVE_SELECTIVE_MEMORY,
-                rationale=f"managed-memory:{decision.rationale}",
-                params={**decision.params, "managed_memory": True, "retrieve_memory": True},
-            )
-
-        # Step 7: Memory retrieval policies
-        retrieved_memories: list = []
-        should_retrieve = (
-            decision.action in {PolicyAction.RETRIEVE_MEMORY_FIRST, PolicyAction.RETRIEVE_SELECTIVE_MEMORY}
-            or bool(decision.params.get("retrieve_memory"))
+        # Select policy, then apply bounded managed-memory policy influence.
+        decision = self._select_policy_with_managed_memory_influence(
+            new_state, events, memory_influence
         )
-        if should_retrieve:
-            retrieved_memories = self._memory_retriever.retrieve(
-                decision.retrieve_query or raw_input,
-                events=events,
-            )
-        else:
-            retrieved_memories = [
-                _public_memory_to_retrieved(item)
-                for item in memory_influence.get("expression_context", [])
-                if isinstance(item, dict)
-            ]
 
-        if decision.action == PolicyAction.RETRIEVE_MEMORY_FIRST:
-            decision = PolicyDecision(
-                action=PolicyAction.RESPOND_OPENLY,
-                rationale=f"post-retrieval:{decision.rationale}",
-                params=decision.params,
-            )
-            logger.debug("RETRIEVE_MEMORY_FIRST: fetched %d memories", len(retrieved_memories))
-        elif decision.action == PolicyAction.RETRIEVE_SELECTIVE_MEMORY:
-            logger.debug(
-                "RETRIEVE_SELECTIVE_MEMORY: fetched %d memories",
-                len(retrieved_memories),
-            )
+        # Retrieve memory when policy or managed memory asks for it.
+        decision, retrieved_memories = self._retrieve_memories_for_decision(
+            decision, raw_input, events, memory_influence
+        )
 
-        # Step 8: Generate expression
+        # Generate expression.
         output = self._expression_engine.generate(
             policy=decision,
             state=new_state,
@@ -255,14 +226,14 @@ class InteractionLoop:
             retrieved_memories=retrieved_memories,
         )
 
-        # Step 9: Add entity turn to short-term memory
+        # Add entity turn to short-term memory.
         self._short_term.add(ShortTermEntry(
             role="entity",
             content=output.text,
             timestamp=datetime.now(timezone.utc),
         ))
 
-        # Step 10: Log interaction
+        # Log interaction and managed memory influence.
         turn_id = self._log_interaction(
             role="user",
             raw_text=raw_input,
@@ -279,23 +250,9 @@ class InteractionLoop:
             policy_action=decision.action.value,
         )
 
-        try:
-            proposals = self._managed_memory.propose(
-                _recent_messages_for_memory(self._short_term),
-                context={
-                    "turn_id": turn_id,
-                    "source_turn_ids": [turn_id] if turn_id is not None else [],
-                    "events": [event.event_type.value for event in events],
-                    "policy_action": decision.action.value,
-                },
-            )
-            if proposals and self._managed_memory.auto_commit:
-                proposal_ids = [proposal.id for proposal in proposals if proposal.id is not None]
-                self._managed_memory.commit(proposal_ids=proposal_ids)
-        except Exception as exc:
-            logger.error("Managed memory proposal/commit failed: %s", exc)
+        self._propose_and_commit_managed_memory(turn_id, events, decision)
 
-        # Step 11: Maybe trigger reflection
+        # Maybe trigger reflection.
         try:
             summary = self._reflection_engine.maybe_reflect(
                 new_state, self._episodic_store, self._reflective_store
@@ -342,12 +299,91 @@ class InteractionLoop:
 
         # USER_ENTERED: the entity becomes aware of a presence but does not speak.
         # USER_LEFT: same — silent acknowledgement.
-        # LONG_SILENCE_DETECTED: may produce a very brief output in future (v0.2).
+        # LONG_SILENCE_DETECTED may produce a very brief output in a future presence layer.
         return None
 
     # ------------------------------------------------------------------
     # Private helpers
     # ------------------------------------------------------------------
+
+    def _select_policy_with_managed_memory_influence(
+        self,
+        state: EntityState,
+        events: list[PerceptionEvent],
+        memory_influence: dict[str, Any],
+    ) -> PolicyDecision:
+        decision = self._policy_selector.select(state, events, self._short_term)
+        suggested_action = memory_influence.get("policy_influence", {}).get("suggested_action")
+        if (
+            decision.action == PolicyAction.RESPOND_OPENLY
+            and suggested_action == "retrieve_selective_memory"
+        ):
+            return PolicyDecision(
+                action=PolicyAction.RETRIEVE_SELECTIVE_MEMORY,
+                rationale=f"managed-memory:{decision.rationale}",
+                params={**decision.params, "managed_memory": True, "retrieve_memory": True},
+            )
+        return decision
+
+    def _retrieve_memories_for_decision(
+        self,
+        decision: PolicyDecision,
+        raw_input: str,
+        events: list[PerceptionEvent],
+        memory_influence: dict[str, Any],
+    ) -> tuple[PolicyDecision, list[RetrievedMemory]]:
+        should_retrieve = (
+            decision.action in {PolicyAction.RETRIEVE_MEMORY_FIRST, PolicyAction.RETRIEVE_SELECTIVE_MEMORY}
+            or bool(decision.params.get("retrieve_memory"))
+        )
+        if should_retrieve:
+            retrieved_memories = self._memory_retriever.retrieve(
+                decision.retrieve_query or raw_input,
+                events=events,
+            )
+        else:
+            retrieved_memories = [
+                _public_memory_to_retrieved(item)
+                for item in memory_influence.get("expression_context", [])
+                if isinstance(item, dict)
+            ]
+
+        if decision.action == PolicyAction.RETRIEVE_MEMORY_FIRST:
+            decision = PolicyDecision(
+                action=PolicyAction.RESPOND_OPENLY,
+                rationale=f"post-retrieval:{decision.rationale}",
+                params=decision.params,
+            )
+            logger.debug("RETRIEVE_MEMORY_FIRST: fetched %d memories", len(retrieved_memories))
+        elif decision.action == PolicyAction.RETRIEVE_SELECTIVE_MEMORY:
+            logger.debug(
+                "RETRIEVE_SELECTIVE_MEMORY: fetched %d memories",
+                len(retrieved_memories),
+            )
+
+        return decision, retrieved_memories
+
+    def _propose_and_commit_managed_memory(
+        self,
+        turn_id: int | None,
+        events: list[PerceptionEvent],
+        decision: PolicyDecision,
+    ) -> None:
+        try:
+            proposals = self._managed_memory.propose(
+                _recent_messages_for_memory(self._short_term),
+                context={
+                    "turn_id": turn_id,
+                    "source_turn_ids": [turn_id] if turn_id is not None else [],
+                    "events": [event.event_type.value for event in events],
+                    "policy_action": decision.action.value,
+                },
+            )
+            if proposals and self._managed_memory.auto_commit:
+                proposal_ids = [proposal.id for proposal in proposals if proposal.id is not None]
+                self._managed_memory.commit(proposal_ids=proposal_ids)
+        except Exception as exc:
+            logger.error("Managed memory proposal/commit failed: %s", exc)
 
     def _hydrate_short_term_from_log(self) -> None:
         """Restore the recent dialog window for prompt continuity after restart."""

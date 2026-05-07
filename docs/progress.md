@@ -37,10 +37,31 @@
 
 ---
 
+## 2026-05-08：文档时间线同步与 Turn Loop 可读性整理
+
+- [x] 同步 README 与核心文档，移除旧的 “当前 v0.1 / 未来 FastAPI” 叙述：
+  - README 改为当前文本系统 + 本地 FastAPI 开发者 API + Memory Preview + Managed Memory 的真实状态
+  - TECH_STACK 明确 FastAPI / uvicorn 属于 optional `api` group，语音/视觉依赖仍不进入核心 dependencies
+  - APP_FLOW 补齐 managed memory preview、state influence、policy influence、influence log、proposal / auto-commit 的每轮路径
+  - BACKEND_STRUCTURE 与 frame.md 对齐 API 拆分、managed memory 影响边界和后续 voice/visual 范围
+- [x] 整理 `src/conscious_entity/core/loop.py` 可读性：
+  - 更新 class docstring 与 `run_turn()` 注释，不再使用旧的固定步数描述
+  - 将 policy influence、memory retrieval 归一化、managed memory propose / auto-commit 三段抽为私有 helper
+  - 不改变外部接口、API endpoint、SQLite schema、YAML schema、环境变量或 prompt 位置
+- [x] 残留扫描与验证：
+  - `PYTHONPATH=src python3 -m py_compile src/conscious_entity/core/loop.py`
+  - `rg` 检查旧关键词：无命中
+  - `PYTHONPATH=src python3 -m pytest -p no:debugging tests/integration/test_full_loop.py tests/unit/test_managed_memory.py tests/unit/test_memory_retrieval.py`
+  - `40 passed`
+  - `PYTHONPATH=src python3 -m pytest -p no:debugging`
+  - `286 passed`
+
+---
+
 ## 2026-05-07：项目结构审查与 API 层拆分
 
 - [x] 审查项目文档与代码结构，确认当前主要残留是文档时间线/架构边界描述未完全跟上代码：
-  - README 旧写法仍称 LLM 只负责表达/反思，已更新为 managed memory proposal → commit 的可审计影响路径
+  - README 旧写法仍把 LLM 影响范围限定在表达/反思，已更新为 managed memory proposal → commit 的可审计影响路径
   - BACKEND_STRUCTURE 旧写法仍把 FastAPI / auth / visitor_id 当作预留设计，已更新为当前本地开发 API、未认证状态和后续认证要求
 - [x] 拆分原 `src/conscious_entity/interfaces/api.py` 单文件 API：
   - `api.py`：保留 ASGI app 入口与兼容导出
@@ -216,7 +237,7 @@
   - [x] `src/conscious_entity/reflection/compression_rules.py` — 反思触发阈值判断
   - [x] `src/conscious_entity/reflection/reflection_engine.py` — LLM 情节记忆压缩 + 存储
   - [x] `src/conscious_entity/core/event_bus.py` — 同步 EventBus（v0.3 治理面板预留接口）
-  - [x] `src/conscious_entity/core/loop.py` — InteractionLoop（11步管道 + handle_system_event）
+  - [x] `src/conscious_entity/core/loop.py` — InteractionLoop（主循环管道 + handle_system_event）
   - [x] `src/conscious_entity/interfaces/cli.py` — 终端 REPL（`--debug` 显示 state）
   - [x] `tests/unit/test_salience_scorer.py` — 13 个单元测试全绿
   - [x] `tests/integration/test_full_loop.py` — 20 个集成测试全绿（mocked LLM）

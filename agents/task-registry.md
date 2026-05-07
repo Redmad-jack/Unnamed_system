@@ -60,3 +60,12 @@ Status values: `in_progress`, `done`
 | docs/progress.md | Codex | done | 2026-05-07 11:26 CST |
 | agents/task-registry.md | Codex | done | 2026-05-07 11:26 CST |
 | src/conscious_entity/core/loop.py | Codex | done | 2026-05-07 11:26 CST |
+| README.md | Codex | done | 2026-05-08 01:18 CST |
+| docs/TECH_STACK.md | Codex | done | 2026-05-08 01:18 CST |
+| docs/APP_FLOW.md | Codex | done | 2026-05-08 01:18 CST |
+| docs/BACKEND_STRUCTURE.md | Codex | done | 2026-05-08 01:18 CST |
+| docs/frame.md | Codex | done | 2026-05-08 01:18 CST |
+| docs/progress.md | Codex | done | 2026-05-08 01:18 CST |
+| docs/IMPLEMENTATION_PLAN.md | Codex | done | 2026-05-08 01:18 CST |
+| src/conscious_entity/core/loop.py | Codex | done | 2026-05-08 01:18 CST |
+| agents/task-registry.md | Codex | done | 2026-05-08 01:18 CST |

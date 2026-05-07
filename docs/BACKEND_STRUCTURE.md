@@ -1,6 +1,6 @@
 # Backend Structure
 
-*Conscious Entity System — v0.1*
+*Conscious Entity System — current text system + developer API*
 
 ---
 
@@ -49,7 +49,7 @@
 - `REPEATED_QUESTION_DETECTED`, `SHUTDOWN_KEYWORD_DETECTED`
 - `LONG_SILENCE_DETECTED`, `NEGATIVE_FEEDBACK`, `TOPIC_SHIFT`
 
-**Stranger Text Protocol 扩展（v0.2）：**
+**Stranger Text Protocol 扩展（当前文本系统）：**
 
 下一阶段只扩展文本事件，不引入视觉、语音或硬件输入。新增事件用于识别观众对 Stranger 的关系姿态，而不是识别观众身份。
 
@@ -62,7 +62,7 @@
 | `TRACE_REQUEST` | 观众追问“为什么这样回答 / 根据什么判断” | `target`, `matched_phrase` |
 | `CORRECTION_RECEIVED` | 观众纠正 Stranger 的理解、记忆或表达 | `correction_target`, `raw_correction` |
 
-这些事件可以与 `USER_SPOKE` 同轮并存。实现上优先使用规则词表和轻量文本模式，不在 v0.2 引入额外 NLP 依赖。
+这些事件可以与 `USER_SPOKE` 同轮并存。当前实现优先使用规则词表和轻量文本模式，不引入额外 NLP 依赖。
 
 ---
 
@@ -78,7 +78,7 @@
 **PolicyAction 枚举：**
 `RESPOND_OPENLY`, `RESPOND_BRIEFLY`, `ASK_BACK`, `DELAY_RESPONSE`, `REFUSE`, `DIVERT_TOPIC`, `RETRIEVE_MEMORY_FIRST`, `ENTER_SILENCE_MODE`, `SHOW_VISUAL_DISTURBANCE`
 
-**Stranger Text Protocol 动作扩展（v0.2）：**
+**Stranger Text Protocol 动作扩展（当前文本系统）：**
 
 | 动作 | 用途 | 输出约束 |
 |---|---|---|
@@ -103,7 +103,7 @@
 | `spoken_text` | `Optional[str]` | 声音通道文本（可与显示文字不同） |
 | `raw_prompt` | `str` | 调试用：发送给 LLM 的完整 prompt |
 
-**文本协议输出约束（v0.2）：**
+**文本协议输出约束（当前文本系统）：**
 
 - 自我定义拒绝、命名失败、拒绝服务不能输出客服腔或助手腔。
 - 局部可追溯回声只能返回少量触发因子，例如 `repeated naming attempt`、`termination phrase`、`high boundary sensitivity`，不能暴露完整 YAML 规则或 prompt。
@@ -125,7 +125,7 @@ CREATE TABLE sessions (
 );
 ```
 
-**说明：** 一个 session 对应一次连续的装置运行周期。v0.1 全部使用单一 session，v0.2+ 支持多 session 跨天记录。
+**说明：** 一个 session 对应一次连续的装置运行周期。早期文本 MVP 全部使用单一 session；当前系统支持多 session 跨天记录，并通过 `session_type` 区分 test / exhibition 池。
 
 ---
 
@@ -202,7 +202,7 @@ CREATE TABLE episodic_memories (
 );
 ```
 
-**Stranger Text Protocol 记录方式（v0.2）：**
+**Stranger Text Protocol 记录方式（当前文本系统）：**
 
 文本协议 MVP 不新增数据库表。事件姿态、命名尝试、服务索取、追溯请求等信息先写入 `episodic_memories.metadata`：
 
@@ -256,6 +256,7 @@ Managed memory 是 mem0-style 的行为记忆层。原始对话仍完整保留�
 - `commit()` 才能改变行为记忆
 - `preview_influence()` 不产生写入
 - archived / hidden managed memories 不参与行为
+- `core/loop.py` 每轮先 preview influence，再做 policy influence / retrieval，最后写入 influence log 并 proposal / auto-commit
 
 ---
 
@@ -315,9 +316,9 @@ OPERATOR_API_KEY=your_secret_here
 
 | 版本 | 身份策略 |
 |---|---|
-| v0.1 | 全部共用 `session_id="shared"`，无访客区分 |
-| 当前 v0.2 开发路径 | 使用 session 与 `session_type = test / exhibition` 区分测试池和展览池，不保存访客身份 |
-| v0.3 | 如需访客识别，再设计 `visitor_id` 或其它匿名识别方式（待确认：语音声纹、视觉识别或对话引导） |
+| 早期文本 MVP | 全部共用 `session_id="shared"`，无访客区分 |
+| 当前系统 | 使用 session 与 `session_type = test / exhibition` 区分测试池和展览池，不保存访客身份 |
+| 后续展览阶段 | 如需访客识别，再设计 `visitor_id` 或其它匿名识别方式（待确认：语音声纹、视觉识别或对话引导） |
 
 **注：** 不引入账户注册或密码机制。
 
@@ -332,7 +333,7 @@ OPERATOR_API_KEY=your_secret_here
 | YAML 配置格式错误 | 启动时检测，立即退出并输出明确错误信息（字段名 + 行号） |
 | 状态值越界 | `clamp_all()` 强制修正，不抛出异常，记录 warning |
 | 反思 LLM 失败 | 跳过本次反思，不影响对话，记录失败事件 |
-| Embedding 计算失败（v0.2） | 跳过向量存储，使用时序检索作为 fallback |
+| Embedding 计算失败 | 跳过向量存储，使用可解释检索作为 fallback |
 
 ---
 
