@@ -106,7 +106,10 @@ conscious_entity/
 │       │
 │       ├── interfaces/
 │       │   ├── cli.py                # Terminal interface (MVP)
-│       │   ├── web_api.py            # FastAPI endpoints (v0.2)
+│       │   ├── api.py                # FastAPI ASGI app entrypoint
+│       │   ├── api_models.py         # API request models
+│       │   ├── api_runtime.py        # API lifespan + runtime helpers
+│       │   ├── api_routes.py         # FastAPI route handlers
 │       │   └── speech.py             # STT/TTS integration (v0.2)
 │       │
 │       └── core/
@@ -877,7 +880,7 @@ CREATE INDEX IF NOT EXISTS idx_reflective_active
 - `memory/retrieval.py` (cosine search over episodic + reflective tables)
 - Wire `RETRIEVE_MEMORY_FIRST` policy path in `core/loop.py`
 - `interfaces/speech.py` (Whisper STT + TTS)
-- `interfaces/web_api.py` (FastAPI, exposes `/turn`, `/state`, `/memory`)
+- `interfaces/api.py` + API support modules (FastAPI developer API)
 - Time-based decay using a background timer
 - `scripts/inspect_state.py` (live debug overlay)
 - Wire `delay_ms` and `visual_mode` to display layer

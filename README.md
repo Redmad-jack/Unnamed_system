@@ -54,11 +54,11 @@
 
 | 谁来做 | 做什么 |
 |---|---|
-| **LLM（Claude）** | 生成文字回应、将情节记忆压缩为洞察 |
-| **规则引擎（YAML + Python）** | 状态更新、策略选择、宪法约束、感知分类 |
+| **LLM（Claude）** | 生成文字回应、将情节记忆压缩为洞察、提出可审计的 managed memory 候选 |
+| **规则引擎（YAML + Python）** | 状态更新、策略选择、宪法约束、感知分类、控制 managed memory 的可预览影响边界 |
 | **艺术家** | 定义状态变量的含义、规则的逻辑、宪法的边界 |
 
-LLM 只负责表达，不参与任何决策逻辑。这是这个项目最重要的架构边界。
+LLM 不直接改写 YAML、宪法、核心状态权重或策略规则。它可以通过 proposal → commit 的 managed memory 流程参与长期记忆形成；进入行为路径的影响必须可预览、可记录、可回滚。
 
 ### 核心数据流（每个对话回合，共 11 步）
 
@@ -90,6 +90,10 @@ LLM 只负责表达，不参与任何决策逻辑。这是这个项目最重要�
 | `prompts/expression_system.txt` | 发给 Claude 的表达系统 prompt |
 | `prompts/reflection_system.txt` | 发给 Claude 的反思压缩 prompt |
 | `src/conscious_entity/core/loop.py` | 主交互循环，串联所有模块 |
+| `src/conscious_entity/interfaces/api.py` | FastAPI app 入口，保持 `conscious_entity.interfaces.api:app` 稳定 |
+| `src/conscious_entity/interfaces/api_models.py` | API 请求模型 |
+| `src/conscious_entity/interfaces/api_runtime.py` | API lifespan、runtime 配置、数据库辅助函数 |
+| `src/conscious_entity/interfaces/api_routes.py` | API 路由处理函数 |
 | `src/conscious_entity/interfaces/cli.py` | 终端 REPL 界面 |
 | `data/memory.db` | SQLite 运行时数据库（gitignored，首次运行自动创建） |
 

@@ -50,3 +50,13 @@ Status values: `in_progress`, `done`
 | tests/unit/test_api_export.py | Codex | done | 2026-05-07 10:55 |
 | docs/progress.md | Codex | done | 2026-05-07 10:55 |
 | agents/task-registry.md | Codex | done | 2026-05-07 10:55 |
+| src/conscious_entity/interfaces/api.py | Codex | done | 2026-05-07 11:26 CST |
+| src/conscious_entity/interfaces/api_models.py | Codex | done | 2026-05-07 11:26 CST |
+| src/conscious_entity/interfaces/api_runtime.py | Codex | done | 2026-05-07 11:26 CST |
+| src/conscious_entity/interfaces/api_routes.py | Codex | done | 2026-05-07 11:26 CST |
+| README.md | Codex | done | 2026-05-07 11:26 CST |
+| docs/BACKEND_STRUCTURE.md | Codex | done | 2026-05-07 11:26 CST |
+| docs/frame.md | Codex | done | 2026-05-07 11:26 CST |
+| docs/progress.md | Codex | done | 2026-05-07 11:26 CST |
+| agents/task-registry.md | Codex | done | 2026-05-07 11:26 CST |
+| src/conscious_entity/core/loop.py | Codex | done | 2026-05-07 11:26 CST |

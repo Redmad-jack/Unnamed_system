@@ -8,7 +8,7 @@ from unittest.mock import MagicMock
 
 from conscious_entity.core.config_loader import load_all_configs
 from conscious_entity.db.migrations import run_migrations
-from conscious_entity.interfaces import api
+from conscious_entity.interfaces import api, api_routes
 from conscious_entity.interfaces.api import (
     EmbeddingConfigRequest,
     EmbeddingTestRequest,
@@ -141,7 +141,8 @@ def test_session_reset_archives_old_session_and_creates_initial_state(tmp_path, 
         llm_runtime_config=None,
         llm_error=None,
     )))
-    monkeypatch.setattr(api, "_active_llm_client", lambda _request: MagicMock())
+    monkeypatch.setattr(api_routes, "_active_llm_client", lambda _request: MagicMock())
+    monkeypatch.setattr(api_routes, "_active_embedding_client", lambda _request: None)
 
     result = asyncio.run(api.sessions_reset(request))
 
@@ -184,10 +185,10 @@ def test_session_type_update_rebuilds_loop(tmp_path, monkeypatch):
     )))
     rebuilt = {"called": False}
 
-    monkeypatch.setattr(api, "_active_llm_client", lambda _request: MagicMock())
-    monkeypatch.setattr(api, "_active_embedding_client", lambda _request: None)
+    monkeypatch.setattr(api_routes, "_active_llm_client", lambda _request: MagicMock())
+    monkeypatch.setattr(api_routes, "_active_embedding_client", lambda _request: None)
     monkeypatch.setattr(
-        api,
+        api_routes,
         "_rebuild_loop",
         lambda _request, _client, _embedding_client=None: rebuilt.update(called=True),
     )
@@ -214,8 +215,9 @@ def test_runtime_llm_config_update_does_not_write_env(monkeypatch):
         captured["settings"] = settings
         return MagicMock()
 
-    monkeypatch.setattr(api, "_client_from_settings", fake_client)
-    monkeypatch.setattr(api, "_rebuild_loop", lambda _request, _client, _embedding_client=None: None)
+    monkeypatch.setattr(api_routes, "_client_from_settings", fake_client)
+    monkeypatch.setattr(api_routes, "_active_embedding_client", lambda _request: None)
+    monkeypatch.setattr(api_routes, "_rebuild_loop", lambda _request, _client, _embedding_client=None: None)
 
     result = asyncio.run(api.config_llm_update(LLMConfigRequest(
         mode="official",
@@ -246,9 +248,9 @@ def test_runtime_embedding_config_update_does_not_write_env(monkeypatch):
         captured["settings"] = settings
         return MagicMock(enabled=True, model=settings.get("model"))
 
-    monkeypatch.setattr(api, "_embedding_client_from_settings", fake_embedding_client)
-    monkeypatch.setattr(api, "_active_llm_client", lambda _request: MagicMock())
-    monkeypatch.setattr(api, "_rebuild_loop", lambda _request, _client, _embedding_client=None: None)
+    monkeypatch.setattr(api_routes, "_embedding_client_from_settings", fake_embedding_client)
+    monkeypatch.setattr(api_routes, "_active_llm_client", lambda _request: MagicMock())
+    monkeypatch.setattr(api_routes, "_rebuild_loop", lambda _request, _client, _embedding_client=None: None)
 
     result = asyncio.run(api.config_embedding_update(EmbeddingConfigRequest(
         mode="openai_compatible",
@@ -277,7 +279,7 @@ def test_embedding_test_endpoint_returns_dimension(monkeypatch):
             assert text == "hello"
             return [0.1, 0.2, 0.3]
 
-    monkeypatch.setattr(api, "_active_embedding_client", lambda _request: FakeEmbeddingClient())
+    monkeypatch.setattr(api_routes, "_active_embedding_client", lambda _request: FakeEmbeddingClient())
 
     result = asyncio.run(api.config_embedding_test(EmbeddingTestRequest(text="hello"), request))
 
@@ -295,7 +297,7 @@ def test_embedding_test_endpoint_rejects_disabled(monkeypatch):
         enabled = False
         model = None
 
-    monkeypatch.setattr(api, "_active_embedding_client", lambda _request: DisabledEmbeddingClient())
+    monkeypatch.setattr(api_routes, "_active_embedding_client", lambda _request: DisabledEmbeddingClient())
 
     try:
         asyncio.run(api.config_embedding_test(EmbeddingTestRequest(text="hello"), request))

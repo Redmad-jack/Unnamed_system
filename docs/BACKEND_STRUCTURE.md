@@ -270,34 +270,44 @@ CREATE TABLE schema_version (
 
 ---
 
-## 3. API 结构（v0.2 引入 FastAPI）
+## 3. API 结构（FastAPI 开发者界面）
 
-v0.1 不暴露 HTTP API，直接调用 Python 模块。
+当前已实现本地 FastAPI 开发者 API 与单文件 Web 看板。ASGI 入口保持为 `conscious_entity.interfaces.api:app`，内部拆分为：
 
-**v0.2 端点（预留设计）：**
+| 文件 | 职责 |
+|---|---|
+| `src/conscious_entity/interfaces/api.py` | app 创建、router 注册、兼容导出 |
+| `src/conscious_entity/interfaces/api_models.py` | Pydantic 请求模型 |
+| `src/conscious_entity/interfaces/api_runtime.py` | lifespan、runtime 配置、DB helper、loop rebuild |
+| `src/conscious_entity/interfaces/api_routes.py` | HTTP 路由处理 |
+
+**当前主要端点：**
 
 | 方法 | 路径 | 说明 | 认证 |
 |---|---|---|---|
-| `POST` | `/turn` | 提交一轮对话输入，返回 ExpressionOutput | 无（访客端） |
-| `GET` | `/state` | 获取当前 EntityState | API Key（运营者） |
-| `GET` | `/memory` | 获取情节/反思记忆列表 | API Key（运营者） |
-| `GET` | `/session` | 获取 session 信息 | API Key（运营者） |
-| `GET` | `/history` | 获取 interaction_log | API Key（运营者） |
-| `GET` | `/api/v1/conversation/export` | 导出当前 session 对话 JSON | 本地开发面板 |
-| `GET` | `/api/v1/memory/preview?query=...` | 预览指定 query 会召回的记忆材料 | 本地开发面板 |
+| `POST` | `/api/v1/dialog` | 提交一轮对话输入，返回 ExpressionOutput | 本地开发面板，当前无认证 |
+| `GET` | `/api/v1/state` | 获取当前 EntityState | 本地开发面板，当前无认证 |
+| `GET` | `/api/v1/sessions` | 获取 session 列表 | 本地开发面板，当前无认证 |
+| `POST` | `/api/v1/sessions/reset` | 归档当前 session 并创建新 session | 本地开发面板，当前无认证 |
+| `GET` | `/api/v1/memory/preview?query=...` | 预览指定 query 会召回的记忆材料 | 本地开发面板，当前无认证 |
+| `GET` | `/api/v1/managed-memory` | 查看 committed managed memories | 本地开发面板，当前无认证 |
+| `POST` | `/api/v1/managed-memory/commit` | commit pending proposal 或手动 operation | 本地开发面板，当前无认证 |
+| `GET` | `/api/v1/curation/memories` | 查看可整理记忆 | 本地开发面板，当前无认证 |
+| `GET` | `/api/v1/conversation/export` | 导出当前或指定 session 对话 JSON | 本地开发面板，当前无认证 |
 
 ---
 
 ## 4. 认证方式
 
 - **访客端：** 无认证（展览现场无需登录）
-- **运营者面板：** 简单 API Key 认证，通过环境变量配置
+- **当前开发者面板：** 本地开发用途，尚未实现认证；不得直接暴露到公网或未经隔离的局域网
+- **后续运营者面板：** 简单 API Key 认证，通过环境变量配置
 
 ```env
 OPERATOR_API_KEY=your_secret_here
 ```
 
-v0.1 阶段不实现认证，v0.2 引入 FastAPI 时添加。
+在进入展览或局域网部署前，必须补齐认证/访问控制；当前 `OPERATOR_API_KEY` 仍是设计预留。
 
 ---
 
@@ -306,8 +316,8 @@ v0.1 阶段不实现认证，v0.2 引入 FastAPI 时添加。
 | 版本 | 身份策略 |
 |---|---|
 | v0.1 | 全部共用 `session_id="shared"`，无访客区分 |
-| v0.2 | 数据库预留 `visitor_id` 字段（TEXT，可为 NULL） |
-| v0.3 | 实际访客识别（方式待确认：语音声纹、视觉识别或对话引导） |
+| 当前 v0.2 开发路径 | 使用 session 与 `session_type = test / exhibition` 区分测试池和展览池，不保存访客身份 |
+| v0.3 | 如需访客识别，再设计 `visitor_id` 或其它匿名识别方式（待确认：语音声纹、视觉识别或对话引导） |
 
 **注：** 不引入账户注册或密码机制。
 

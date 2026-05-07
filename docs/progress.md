@@ -37,6 +37,24 @@
 
 ---
 
+## 2026-05-07：项目结构审查与 API 层拆分
+
+- [x] 审查项目文档与代码结构，确认当前主要残留是文档时间线/架构边界描述未完全跟上代码：
+  - README 旧写法仍称 LLM 只负责表达/反思，已更新为 managed memory proposal → commit 的可审计影响路径
+  - BACKEND_STRUCTURE 旧写法仍把 FastAPI / auth / visitor_id 当作预留设计，已更新为当前本地开发 API、未认证状态和后续认证要求
+- [x] 拆分原 `src/conscious_entity/interfaces/api.py` 单文件 API：
+  - `api.py`：保留 ASGI app 入口与兼容导出
+  - `api_models.py`：Pydantic 请求模型
+  - `api_runtime.py`：lifespan、runtime 配置、DB helper、loop rebuild
+  - `api_routes.py`：HTTP route handlers
+- [x] 清理 `src/conscious_entity/core/loop.py` 中已被 `MemoryRetriever` 取代、没有调用点的旧 selective-memory helper
+- [x] 测试同步：
+  - 更新 `tests/unit/test_api_export.py` 的 monkeypatch 目标到 `api_routes`
+  - `PYTHONPATH=src python3 -m pytest -p no:debugging tests/unit/test_api_export.py tests/unit/test_managed_memory.py tests/unit/test_memory_retrieval.py tests/integration/test_full_loop.py`
+  - `53 passed`
+
+---
+
 ## 2026-05-07：Memory Curation 四视图开发者界面补齐
 
 - [x] 右侧 Memory Curation 面板补齐四个视图：
@@ -264,7 +282,7 @@
 - [x] `src/conscious_entity/llm/claude_client.py` — `complete()` 集成 stats hook（计时、token 计数、成功/失败）
 
 ### v0.2 起步：FastAPI 开发者 HTTP API + Web 看板
-- [x] `src/conscious_entity/interfaces/api.py` — FastAPI 应用，11 个端点：
+- [x] `src/conscious_entity/interfaces/api.py` — 当时为 FastAPI 单文件应用，11 个端点（2026-05-07 已拆分为 `api.py` / `api_models.py` / `api_runtime.py` / `api_routes.py`）：
   - `GET /health` — 系统健康检查
   - `POST /api/v1/dialog` — 发送对话，获取实体回应
   - `GET /api/v1/state` — 最新 EntityState 快照
@@ -310,7 +328,7 @@
 
 ### 2. 为什么这样改
 
-- 根据 `docs/frame.md` 的架构边界，LLM 只负责表达与压缩，因此接入改动集中在 `ClaudeClient` 这一唯一外部调用点，不改状态机、记忆、策略逻辑。
+- 当时根据 `docs/frame.md` 的架构边界，LLM 接入改动集中在 `ClaudeClient` 这一唯一外部调用点，不改状态机、记忆、策略逻辑；后续 managed memory 已将 LLM 参与范围扩展为可审计 proposal / influence 路径。
 - 根据 `docs/APP_FLOW.md` 的启动与调试脚本路径，CLI 和 `scripts/*.py` 都需要在最早阶段拿到一致的环境变量，因此增加项目级 `.env` 自动加载。
 - 供应商接口需要 `base_url`、鉴权 token 和自定义模型名，所以新增 `ENTITY_LLM_MODEL`，并把配置校验前置到 CLI 启动阶段。
 - 官方 Anthropic 直连模式仍需保留，避免破坏现有 `ANTHROPIC_API_KEY` 使用方式。

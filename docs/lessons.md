@@ -18,10 +18,10 @@
 - 原因：项目的核心价值之一是让"规则"可见、可调整、与代码分离
 - 如何应用：任何行为参数出现在 `.py` 文件中都是 code smell，应提取到 YAML
 
-**L03：LLM 和 rule-based 的边界不能模糊**
-- 规则：LLM 只做表达（ExpressionEngine）和反思（ReflectionEngine），绝不让 LLM 参与状态更新或策略选择
-- 原因：LLM 的不确定性在 rule-based 层产生不可控的行为漂移
-- 如何应用：遇到"让 LLM 决定..."的思路时，停下来问：这应该是规则层的决策
+**L03：LLM 可以参与记忆和状态影响，但必须有结构化记录**
+- 规则：LLM 可以参与记忆抽取、策略影响和状态影响，但所有影响必须有结构化记录、可预览、可回滚
+- 原因：纯规则驱动的记忆系统在展览场景中缺乏灵活性，LLM 抽取能提供更精准的长期记忆
+- 如何应用：任何 LLM 驱动的记忆/状态影响，必须写入对应的 operation/influence log，Memory Preview 能解释影响路径
 
 ---
 
@@ -41,10 +41,15 @@
 
 ## 常见错误
 
-**L06：不要在 v0.1 引入 v0.2 的依赖**
-- 规则：sentence-transformers、FastAPI、Whisper — v0.1 不安装
-- 原因：避免依赖膨胀和"先安装后实现"的错误开发顺序
-- 如何应用：在 `pyproject.toml` 中，v0.2 的依赖注释为 `# v0.2`，暂不安装
+**L06：不要把后续阶段依赖并入核心依赖**
+- 规则：语音、视觉、外部向量库等后续阶段依赖不得进入核心 `dependencies`；开发者 API 这类已实现能力必须放在 optional group
+- 原因：避免依赖膨胀，同时允许已落地的本地开发工具独立安装
+- 如何应用：新增依赖先判断是否属于核心运行路径；非核心能力放入对应 optional dependency group，并在 README 写清安装方式
+
+**L12：API 入口必须保持瘦身**
+- 规则：`interfaces/api.py` 只保留 ASGI app 入口与兼容导出；请求模型、runtime helper、路由处理分文件维护
+- 原因：API 端点增长很快，单文件堆叠会让测试、配置切换、记忆管理和会话管理互相牵连
+- 如何应用：新增 API 能力时先放入 `api_models.py`、`api_runtime.py` 或 `api_routes.py` 中的对应层，不把新 helper 直接塞回 `api.py`
 
 **L07：不要跳过 `clamp_all()`**
 - 规则：每次状态更新调用链末尾必须调用 `clamp_all()`
