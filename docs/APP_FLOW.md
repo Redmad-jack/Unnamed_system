@@ -9,9 +9,11 @@
 系统有两条并行的主路径：
 
 ```
-访客路径：  [输入] → 感知层 → 状态更新 → managed memory preview → 策略/记忆召回 → LLM 表达 → [输出]
+访客路径：  [输入/观察] → 感知层 → 状态更新 → managed memory preview → 策略/记忆召回 → LLM 表达 → [身体呈现]
 运营者路径：[本地开发者面板] ← 实时状态 / 对话历史 / Memory Preview / Managed Memory Curation
 ```
+
+访客路径最终不是传统 user interface。当前 CLI / Web 输入只是开发阶段入口；后续输出应进入声音、视觉、外观、停留、靠近/回避等身体行为。物理移动、循路和避障是更后面的身体层，在非移动的声音/视觉/外观能力稳定前不进入主实现。
 
 ---
 
@@ -19,7 +21,7 @@
 
 ### 2.1 进入（Session 启动）
 
-**触发条件：** 新的 CLI / API runtime 会话启动，或后续 presence detection 触发访客进入
+**触发条件：** 新的 CLI / API runtime 会话启动，或后续身体 / presence detection 触发访客进入
 
 **流程：**
 ```
@@ -36,6 +38,8 @@
 
 **成功状态：** 系统就绪，等待访客输入
 **错误状态：** 数据库连接失败 → fallback 到默认初始状态，记录错误日志
+
+**后续身体阶段：** 进入不一定来自文字输入，也可以来自靠近、停留、被观察、被呼唤或空间位置变化。当前只保留事件入口，不实现移动、循路或避障。
 
 ---
 
@@ -101,7 +105,7 @@ Step 14  触发反思检查
 Step 15  发送 turn_complete 到 EventBus，供调试或后续 instrumentation 使用
 ```
 
-**成功状态：** 返回 ExpressionOutput（text + delay_ms + visual_mode）
+**成功状态：** 返回 ExpressionOutput（text + delay_ms + visual_mode），后续由身体呈现层映射为文字、声音、光、投影、停留或其它非 UI 输出
 **错误状态：**
 - LLM 调用失败 → 使用规则生成 fallback 回应（简短、中性）
 - 数据库写入失败 → 记录日志，但不中断对话流程
@@ -111,7 +115,7 @@ Step 15  发送 turn_complete 到 EventBus，供调试或后续 instrumentation 
 
 ### 2.3 离开（Session 关闭）
 
-**触发条件：** 访客停止输入，或后续 presence detection 触发 `USER_LEFT` 事件
+**触发条件：** 访客停止输入，或后续身体 / presence detection 触发 `USER_LEFT` 事件
 
 **流程：**
 ```
@@ -222,6 +226,9 @@ EventBus.emit("turn_complete")
 
 ## 6. 待确认
 
-- **[ 待确认 ]** 访客端展示界面的具体页面结构（后续视觉层尚未设计）
+- **[ 待确认 ]** Stranger 身体外观、材料、尺度、显示/投影/光等呈现方式
+- **[ 待确认 ]** STT / TTS 的具体实现方案
+- **[ 待确认 ]** 视觉感知与空间感知的输入边界
+- **[ 待确认 ]** 物理移动、循路、避障和底盘方案（后续阶段）
 - **[ 待确认 ]** 运营者面板的具体页面布局和访问方式（本地 localhost？还是局域网访问？）
 - **[ 待确认 ]** presence detection 的具体触发机制（摄像头？距离传感器？）

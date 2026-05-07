@@ -112,7 +112,7 @@ conscious_entity/
 │       │   ├── api_models.py         # API request models
 │       │   ├── api_runtime.py        # API lifespan + runtime helpers
 │       │   ├── api_routes.py         # FastAPI route handlers
-│       │   └── speech.py             # STT/TTS integration (v0.2)
+│       │   └── speech.py             # Future STT/TTS integration
 │       │
 │       └── core/
 │           ├── loop.py               # Main interaction loop — orchestrates pipeline
@@ -882,9 +882,11 @@ CREATE INDEX IF NOT EXISTS idx_reflective_active
 
 **Still deferred:**
 - Clock-based background decay; current decay runs per turn
-- STT/TTS voice channel
-- Visitor-facing visual embodiment layer
+- STT/TTS voice channel as part of Stranger's body
+- Visual / spatial perception and body-facing presentation layer
+- Appearance design for the physical or semi-physical body
 - Presence / spatial sensing
+- Physical movement, path following, obstacle avoidance, and body safety boundaries
 - Deployment authentication for any non-local operator panel
 
 **Acceptance criteria:**
@@ -896,28 +898,37 @@ CREATE INDEX IF NOT EXISTS idx_reflective_active
 
 ---
 
-### Next — Voice + Visual Embodiment
+### Next — Non-Moving Embodiment
 
-**Goal:** Strengthen bodily presence. Make silence, delay, and visual disturbance expressive.
+**Goal:** Strengthen bodily presence without requiring the Stranger to physically move yet. Make voice, vision, appearance, silence, delay, and visual disturbance expressive.
 
 **What to build:**
 - `interfaces/speech.py` (Whisper STT + TTS)
+- Visual / spatial perception input for observation, distance, presence, and relation posture
 - Time-based decay using a background timer
-- Wire `delay_ms` and `visual_mode` to display layer
-- Visitor-facing display surface that reads `ExpressionOutput` and state values without exposing operator-only internals
+- Wire `delay_ms`, `spoken_text`, and `visual_mode` to a body-facing presentation layer
+- Appearance / display / projection / light surface that reads `ExpressionOutput` and state values without exposing operator-only internals
+
+**Deliberately deferred from this phase:**
+- Robot base control
+- Path following
+- Obstacle avoidance
+- Autonomous roaming or patrol behavior
 
 **Acceptance criteria:**
 - Spoken input flows correctly into the perception pipeline
-- Visual state responds to state variables in real time
+- Visual / body state responds to state variables in real time
+- Visitor-facing presentation feels like encountering a body, not operating a user interface
 - Operator-only memory and governance traces remain out of the visitor surface
 
 ---
 
-### Later — Governance Visibility + Training + Termination Ritual
+### Later — Physical Body + Governance Visibility + Termination Ritual
 
 **Goal:** Make ethics, regulation, and power structures visible as part of the artwork.
 
 **What to build:**
+- Physical movement layer: path following, obstacle avoidance, spatial roaming, stopping, turning, and safety limits
 - Governance panel: separate UI showing constitution rules, state values, policy rationale in real time
 - Operator feedback interface: direct trust/resistance adjustment by designated users
 - Shutdown/reset ritual: multi-step deletion protocol that archives, preserves traces, and logs termination as a final episodic memory before closing
@@ -1039,7 +1050,8 @@ Without calling the LLM, verify:
 | Expression layer | LLM (Claude Sonnet) | Open-ended generation, tone nuance |
 | Reflection layer | LLM (Claude Haiku) | Semantic compression, pattern articulation |
 | Semantic memory retrieval | Embedding model | Semantic match beyond literal keywords |
-| STT / TTS (v0.2) | Whisper / system TTS | Interface only, not part of inner structure |
+| STT / TTS | Whisper / system TTS | Voice channel for future non-moving embodiment, not a chat-product feature |
+| Physical body control | Dedicated later body layer | Path following, obstacle avoidance, roaming, and safety should stay outside core turn logic |
 | Event detection | Rule-based | Explicit, transparent, fast |
 | Salience scoring | Rule-based | Artist controls what "matters" |
 | Policy selection | Rule-based | Behavioral choices must be inspectable |
