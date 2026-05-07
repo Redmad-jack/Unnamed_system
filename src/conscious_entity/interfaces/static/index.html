@@ -97,8 +97,10 @@
 
   .panel-body { padding: 12px; flex: 1; overflow: auto; }
 
-  /* --- State panel --- */
-  #state-panel { grid-column: 1; grid-row: 1 / 3; }
+  /* --- State + Vision panels --- */
+  #state-panel { grid-column: 1; grid-row: 1; min-height: 0; }
+  #vision-panel { grid-column: 1; grid-row: 2; min-height: 0; overflow: hidden; }
+  #vision-panel .panel-body { display: flex; flex-direction: column; gap: 8px; min-height: 0; }
 
   .state-var { margin-bottom: 10px; }
   .state-var-name { color: var(--text-dim); font-size: 11px; margin-bottom: 3px; }
@@ -118,6 +120,38 @@
   .state-val { width: 46px; text-align: right; font-size: 12px; }
 
   .state-ts { color: var(--dim); font-size: 10px; margin-top: 6px; }
+
+  .vision-toolbar { display: flex; gap: 6px; flex-wrap: wrap; }
+  .vision-preview {
+    background: #050506;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    aspect-ratio: 16 / 9;
+    overflow: hidden;
+    width: 100%;
+  }
+  #vision-frame {
+    width: 100%;
+    height: 100%;
+    display: block;
+    object-fit: contain;
+  }
+  .vision-status {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 3px 8px;
+    font-size: 10px;
+  }
+  .vision-status span:nth-child(odd) { color: var(--dim); }
+  .vision-events {
+    min-height: 38px;
+    max-height: 58px;
+    overflow: auto;
+    border-top: 1px solid var(--border);
+    padding-top: 6px;
+    font-size: 10px;
+    color: var(--text-dim);
+  }
 
   /* bar colours by variable */
   .bar-arousal { background: #ff6b6b; }
@@ -435,6 +469,24 @@
     </div>
   </div>
 
+  <div class="panel" id="vision-panel">
+    <div class="panel-title">Vision</div>
+    <div class="panel-body">
+      <div class="vision-toolbar">
+        <button class="btn-sm" onclick="startVision()">Start</button>
+        <button class="btn-sm" onclick="stopVision()">Stop</button>
+        <button class="btn-sm" onclick="reconnectVision()">Reconnect</button>
+      </div>
+      <div class="vision-preview">
+        <img id="vision-frame" alt="Vision stream">
+      </div>
+      <div class="vision-status" id="vision-status">
+        <span>Status</span><span>Loading…</span>
+      </div>
+      <div class="vision-events" id="vision-events">No vision events.</div>
+    </div>
+  </div>
+
   <!-- Right top: Dialog -->
   <div class="panel" id="dialog-panel">
     <div class="panel-title">Dialog</div>
@@ -611,6 +663,9 @@ let _sidebarTab = 'runtime';
 let _memoryCurationView = 'raw';
 let _visibleProposalIds = [];
 let _managedMemoryById = {};
+let _visionWs = null;
+let _visionNextMetadata = null;
+let _visionFrameUrl = null;
 const MEMORY_PREVIEW_HIGH_SCORE = 0.35;
 const MEMORY_PREVIEW_RECENT_HIGH_SCORE = 0.75;
 const MEMORY_PREVIEW_HIGH_SIMILARITY = 0.35;
@@ -694,6 +749,135 @@ function renderState(d) {
   html += `<div class="state-ts">${d.recorded_at || ''}<br>
     trigger: ${d.trigger_event_type || '—'} &nbsp; action: ${d.policy_action || '—'}</div>`;
   body.innerHTML = html;
+}
+
+async function pollVisionStatus() {
+  try {
+    const d = await fetchJSON('/api/v1/vision/status');
+    renderVisionStatus(d);
+  } catch (e) {
+    renderVisionError(e.message);
+  }
+}
+
+async function startVision() {
+  try {
+    const r = await fetch('/api/v1/vision/start', { method: 'POST' });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(d.detail || r.statusText);
+    renderVisionStatus(d);
+    connectVisionStream();
+  } catch (e) {
+    renderVisionError(e.message);
+  }
+}
+
+async function stopVision() {
+  try {
+    const r = await fetch('/api/v1/vision/stop', { method: 'POST' });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(d.detail || r.statusText);
+    disconnectVisionStream();
+    renderVisionStatus(d);
+  } catch (e) {
+    renderVisionError(e.message);
+  }
+}
+
+function reconnectVision() {
+  disconnectVisionStream();
+  connectVisionStream();
+}
+
+function connectVisionStream() {
+  if (_visionWs && _visionWs.readyState === WebSocket.OPEN) return;
+  const scheme = window.location.protocol === 'https:' ? 'wss' : 'ws';
+  _visionWs = new WebSocket(`${scheme}://${window.location.host}/api/v1/vision/stream`);
+  _visionWs.binaryType = 'blob';
+  _visionWs.onmessage = event => {
+    if (typeof event.data === 'string') {
+      try {
+        _visionNextMetadata = JSON.parse(event.data);
+        renderVisionMetadata(_visionNextMetadata);
+      } catch {}
+      return;
+    }
+    const img = document.getElementById('vision-frame');
+    if (!img) return;
+    const nextUrl = URL.createObjectURL(event.data);
+    const oldUrl = _visionFrameUrl;
+    _visionFrameUrl = nextUrl;
+    img.onload = () => {
+      if (oldUrl) URL.revokeObjectURL(oldUrl);
+    };
+    img.src = nextUrl;
+  };
+  _visionWs.onclose = () => { _visionWs = null; };
+}
+
+function disconnectVisionStream() {
+  if (_visionWs) {
+    _visionWs.close();
+    _visionWs = null;
+  }
+}
+
+function renderVisionStatus(d) {
+  const status = document.getElementById('vision-status');
+  if (!status) return;
+  const deps = d.dependencies || {};
+  const cfg = d.config || {};
+  const model = d.model_path || (d.model && d.model.path) || 'not set';
+  const latest = d.latest || {};
+  status.innerHTML = `
+    <span>Status</span><span class="${d.running ? 'ok' : (d.enabled ? 'dim' : 'err')}">${d.running ? 'running' : (d.enabled ? 'ready' : 'disabled')}</span>
+    <span>Model</span><span title="${escapeAttr(model)}">${escapeHtml(String(model).split('/').pop() || model)}</span>
+    <span>Deps</span><span>${deps.cv2 && deps.ultralytics ? 'ok' : 'missing'}</span>
+    <span>Camera</span><span>${escapeHtml(cfg.camera_index ?? '—')} · ${escapeHtml(cfg.width ?? '—')}x${escapeHtml(cfg.height ?? '—')}</span>
+    <span>FPS</span><span>${escapeHtml(cfg.fps ?? latest.fps ?? '—')}</span>
+    <span>People</span><span>${escapeHtml((latest.detections || []).length || 0)}</span>
+  `;
+  if (d.error || d.disabled_reason) renderVisionError(d.error || d.disabled_reason, false);
+  renderVisionEvents(d.recent_events || []);
+  if (d.running) connectVisionStream();
+}
+
+function renderVisionMetadata(d) {
+  const status = document.getElementById('vision-status');
+  if (status && d) {
+    const cfg = d.camera || {};
+    status.innerHTML = `
+      <span>Status</span><span class="ok">streaming</span>
+      <span>Frame</span><span>${escapeHtml(d.frame_id ?? '—')}</span>
+      <span>Camera</span><span>${escapeHtml(cfg.index ?? '—')} · ${escapeHtml(cfg.width ?? '—')}x${escapeHtml(cfg.height ?? '—')}</span>
+      <span>FPS</span><span>${escapeHtml(cfg.fps ?? '—')}</span>
+      <span>People</span><span>${escapeHtml((d.detections || []).length)}</span>
+      <span>Updated</span><span>${escapeHtml(String(d.timestamp || '').slice(11, 19))}</span>
+    `;
+  }
+  renderVisionEvents(d.events || []);
+}
+
+function renderVisionEvents(events) {
+  const el = document.getElementById('vision-events');
+  if (!el) return;
+  if (!events.length) {
+    el.textContent = 'No recent vision events.';
+    return;
+  }
+  el.innerHTML = events.slice(0, 5).map(ev => {
+    const type = ev.event_type || ev.type || '';
+    return `<div>${escapeHtml(String(ev.timestamp || '').slice(11, 19))} · ${escapeHtml(type)}${ev.reason ? ' · ' + escapeHtml(ev.reason) : ''}</div>`;
+  }).join('');
+}
+
+function renderVisionError(message, replaceStatus = true) {
+  if (replaceStatus) {
+    const status = document.getElementById('vision-status');
+    if (status) status.innerHTML = `<span>Status</span><span class="err">${escapeHtml(message)}</span>`;
+  }
+  const events = document.getElementById('vision-events');
+  if (events) events.innerHTML = `<span class="err">${escapeHtml(message)}</span>`;
 }
 
 async function pollLLMStats() {
@@ -1663,7 +1847,7 @@ async function reloadConfig() {
     const r = await fetch('/api/v1/config/reload', { method: 'POST' });
     const d = await r.json();
     _configs = null;
-    await Promise.all([pollState(), pollLLMStats(), pollMemory(), pollLLMConfig(), pollEmbeddingConfig(), pollRawArchive(), pollMemoryProposals(), pollManagedMemory(), pollInfluenceTrace(), loadDialogLog(), pollSessions()]);
+    await Promise.all([pollState(), pollVisionStatus(), pollLLMStats(), pollMemory(), pollLLMConfig(), pollEmbeddingConfig(), pollRawArchive(), pollMemoryProposals(), pollManagedMemory(), pollInfluenceTrace(), loadDialogLog(), pollSessions()]);
     alert('Config reloaded. ' + (d.note || ''));
   } catch(e) {
     alert('Reload failed: ' + e.message);
@@ -1672,12 +1856,13 @@ async function reloadConfig() {
 
 // ---- init ----
 async function init() {
-  await Promise.all([pollHealth(), pollState(), pollLLMStats(), pollMemory(), pollLLMConfig(), pollEmbeddingConfig(), pollRawArchive(), pollMemoryProposals(), pollManagedMemory(), pollInfluenceTrace(), loadDialogLog(), pollSessions()]);
+  await Promise.all([pollHealth(), pollState(), pollVisionStatus(), pollLLMStats(), pollMemory(), pollLLMConfig(), pollEmbeddingConfig(), pollRawArchive(), pollMemoryProposals(), pollManagedMemory(), pollInfluenceTrace(), loadDialogLog(), pollSessions()]);
 }
 
 init();
 setInterval(pollHealth, 5000);
 setInterval(pollState, 2000);
+setInterval(pollVisionStatus, 5000);
 setInterval(pollLLMStats, 5000);
 setInterval(pollMemory, 10000);
 setInterval(pollLLMConfig, 15000);

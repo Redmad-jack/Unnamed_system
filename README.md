@@ -36,10 +36,11 @@
 | Phase 7 | Stranger 文本协议（身份拒绝、命名失败、拒绝服务、局部追溯、选择性记忆） | ✅ 完成 |
 | Phase 8 | 记忆召回增强（可解释召回 + 可选 embedding 语义召回 + Memory Preview） | ✅ 完成 |
 | Phase 9 | Managed Memory（proposal → commit、influence preview/log、developer curation） | ✅ 完成 |
+| Phase 10 | 非移动视觉层第一版（Mac 摄像头 + YOLO person detection + presence events + `/visitor` surface） | ✅ 完成 |
 
-**现在可以运行：** 通过命令行或本地 Web 看板与 Stranger 交互，实体有状态记忆、行为规则、LLM 表达、文本关系姿态识别、可解释记忆召回、Memory Preview 和可审计 managed memory 影响路径，一切持久化到 SQLite。
+**现在可以运行：** 通过命令行或本地 Web 看板与 Stranger 交互，实体有状态记忆、行为规则、LLM 表达、文本关系姿态识别、可解释记忆召回、Memory Preview 和可审计 managed memory 影响路径；可选视觉层能用本地 YOLO 模型和 Mac 摄像头产生 presence events，并在开发者面板与 `/visitor` surface 中显示。
 
-**还未做的（后续阶段）：** 语音输入/输出、视觉/空间感知、身体外观设计、访客身份识别、展期终止仪式。物理移动、循路和避障属于更后面的身体阶段，先不进入当前实现。
+**还未做的（后续阶段）：** 语音输入/输出、更完整的空间感知、身体外观设计、访客身份识别、展期终止仪式。物理移动、循路和避障属于更后面的身体阶段，先不进入当前实现。
 
 ---
 
@@ -98,6 +99,7 @@ LLM 不直接改写 YAML、宪法、核心状态权重或策略规则。它可�
 | `src/conscious_entity/interfaces/api_runtime.py` | API lifespan、runtime 配置、数据库辅助函数 |
 | `src/conscious_entity/interfaces/api_routes.py` | API 路由处理函数 |
 | `src/conscious_entity/interfaces/cli.py` | 终端 REPL 界面 |
+| `src/conscious_entity/vision/runtime.py` | 可选视觉 runtime：摄像头采集、YOLO person detection、presence event debounce |
 | `data/memory.db` | SQLite 运行时数据库（gitignored，首次运行自动创建） |
 
 ---
@@ -126,6 +128,12 @@ pip install -e ".[dev]"
 
 ```bash
 pip install -e ".[dev,api]"
+```
+
+如果要启用视觉层，再安装 vision optional group，并配置本地 YOLO 模型路径：
+
+```bash
+pip install -e ".[dev,api,vision]"
 ```
 
 **配置 `.env`：**
@@ -207,6 +215,25 @@ API 文档：
 ```text
 http://127.0.0.1:8000/docs
 ```
+
+访客侧临时身体表面：
+
+```text
+http://127.0.0.1:8000/visitor
+```
+
+视觉层默认关闭。启用前需要安装 `vision` optional group，并设置本地模型路径；代码不会自动下载模型：
+
+```env
+ENTITY_VISION_MODEL_PATH=/absolute/path/to/yolo-model.pt
+ENTITY_VISION_CAMERA_INDEX=0
+ENTITY_VISION_WIDTH=1280
+ENTITY_VISION_HEIGHT=720
+ENTITY_VISION_FPS=10
+ENTITY_VISION_CONFIDENCE=0.45
+```
+
+开发者面板左侧 `Entity State` 下方的 `Vision` 面板可启动/停止摄像头 worker，并通过 WebSocket 接收后端标注后的 JPEG frames。视觉层当前只检测 `person`，并把稳定进入、离开和长时间静默转换为已有 `USER_ENTERED` / `USER_LEFT` / `LONG_SILENCE_DETECTED` 系统事件。
 
 Web 看板顶部的 `Save Dialog` 会把当前 session 的对话导出为 JSON。也可以直接访问：
 
@@ -295,7 +322,7 @@ PYTHONPATH=src python3 -m pytest -p no:debugging
 ```
 当前文本系统  CLI + 本地 FastAPI 开发者 API + Memory Preview + Managed Memory
      ↓
-非移动身体    STT/TTS + 视觉/空间感知 + 外观/声音/显示或投影呈现
+非移动身体    第一版视觉 presence + /visitor surface 已接入；下一步 STT/TTS + 外观/声音/显示或投影呈现
      ↓
 物理身体      循路 + 避障 + 空间巡游 / 停留策略
      ↓

@@ -71,17 +71,19 @@
 |---|---|---|---|
 | `api` | fastapi | 本地开发者 API 与 Web 看板 | 已实现，按需安装 |
 | `api` | uvicorn | FastAPI ASGI 服务器 | 已实现，按需安装 |
+| `vision` | opencv-python | Mac 摄像头采集、JPEG 编码、标注帧绘制 | 已实现，按需安装 |
+| `vision` | ultralytics | 本地 YOLO person detection | 已实现，按需安装 |
 | `dev` | pytest | 测试框架 | 已实现，开发时安装 |
 | `dev` | pytest-mock | Mock LLM 调用 | 已实现，开发时安装 |
 | 后续待定 | Whisper / 系统 TTS / gTTS | STT/TTS 语音通道 | 未引入，待设计确认 |
 
-原则：后续语音、视觉、硬件或前端构建依赖不得并入核心 `dependencies`；只有完成设计确认并声明安装路径后，才加入对应 optional group。
+原则：后续语音、硬件或前端构建依赖不得并入核心 `dependencies`；只有完成设计确认并声明安装路径后，才加入对应 optional group。视觉第一版已进入 `vision` optional group，但默认安装路径仍不包含 OpenCV / ultralytics。
 
 ---
 
 ## 前端技术
 
-当前开发者面板使用 FastAPI 静态页面 + 原生 HTML/CSS/JS，服务于本地调试、Memory Preview 和 managed memory curation。访客端视觉界面尚未定型。
+当前开发者面板使用 FastAPI 静态页面 + 原生 HTML/CSS/JS，服务于本地调试、Memory Preview、managed memory curation 和 Vision worker 监控。访客侧第一版 `/visitor` 也是原生 HTML/CSS/JS，只作为非 dashboard 的临时 body-facing surface，不暴露内部规则、memory 或 prompt。
 
 访客端候选方案（供后续决策参考）：
 
@@ -91,7 +93,7 @@
 | React SPA | 组件化，状态管理清晰 | 需要 Node.js 构建链 | 复杂运营者面板 |
 | FastAPI + Jinja2 SSR | Python 全栈，无独立前端 | 动态交互受限 | MVP 快速落地 |
 
-访客端决策前不引入任何前端构建工具或框架。
+在身体外观、投影、屏幕或光的具体方案确认前，不引入任何前端构建工具或框架。
 
 ---
 
@@ -132,6 +134,14 @@ ENTITY_MEMORY_AUTO_COMMIT=true
 ENTITY_MEMORY_INFERENCE=true
 ENTITY_MEMORY_POLICY_INFLUENCE=true
 ENTITY_MEMORY_STATE_INFLUENCE=true
+
+# Optional vision runtime
+# ENTITY_VISION_MODEL_PATH=/absolute/path/to/yolo-model.pt
+ENTITY_VISION_CAMERA_INDEX=0
+ENTITY_VISION_WIDTH=1280
+ENTITY_VISION_HEIGHT=720
+ENTITY_VISION_FPS=10
+ENTITY_VISION_CONFIDENCE=0.45
 ```
 
 ### 开发环境假设
@@ -148,5 +158,6 @@ ENTITY_MEMORY_STATE_INFLUENCE=true
 - 不允许在 Python 代码中硬编码 API Key
 - 不允许未经确认擅自替换已锁定的依赖版本
 - 不允许为 LLM 调用引入 LangChain 等框架（直接使用 Anthropic SDK）
-- 不允许把后续语音、视觉、硬件或前端构建依赖并入核心 `dependencies`
+- 不允许把后续语音、硬件或前端构建依赖并入核心 `dependencies`
 - FastAPI / uvicorn 必须继续保留在 `api` optional group 中
+- OpenCV / ultralytics 必须继续保留在 `vision` optional group 中，且模型路径必须显式配置，不自动下载模型

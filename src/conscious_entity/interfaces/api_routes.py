@@ -7,7 +7,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any, Optional
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, Response
 
 from conscious_entity.core.config_loader import load_all_configs
@@ -58,6 +58,7 @@ from conscious_entity.llm.stats_tracker import get_tracker
 from conscious_entity.memory.models import MemoryOperationProposal
 from conscious_entity.memory.retrieval import MemoryRetriever
 from conscious_entity.memory.vector import encode_embedding
+from conscious_entity.vision import VisionConfigurationError
 
 
 router = APIRouter()
@@ -68,6 +69,14 @@ async def dashboard():
     html_path = _static_dir() / "index.html"
     if not html_path.exists():
         raise HTTPException(status_code=404, detail="Dashboard not found")
+    return FileResponse(str(html_path), media_type="text/html")
+
+
+@router.get("/visitor", include_in_schema=False)
+async def visitor_surface():
+    html_path = _static_dir() / "visitor.html"
+    if not html_path.exists():
+        raise HTTPException(status_code=404, detail="Visitor surface not found")
     return FileResponse(str(html_path), media_type="text/html")
 
 
@@ -107,6 +116,10 @@ async def dialog(body: DialogRequest, request: Request):
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc))
 
+    manager = getattr(request.app.state, "vision_manager", None)
+    if manager is not None:
+        manager.mark_activity()
+
     return {
         "text": output.text,
         "delay_ms": output.delay_ms,
@@ -114,6 +127,54 @@ async def dialog(body: DialogRequest, request: Request):
         "truncated": output.truncated,
         "stop_reason": output.stop_reason,
     }
+
+
+@router.get("/api/v1/vision/status")
+async def vision_status(request: Request):
+    manager = getattr(request.app.state, "vision_manager", None)
+    if manager is None:
+        return {"enabled": False, "running": False, "error": "Vision runtime not initialised"}
+    return manager.status()
+
+
+@router.post("/api/v1/vision/start")
+async def vision_start(request: Request):
+    manager = getattr(request.app.state, "vision_manager", None)
+    if manager is None:
+        raise HTTPException(status_code=503, detail="Vision runtime not initialised")
+    try:
+        return manager.start()
+    except VisionConfigurationError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@router.post("/api/v1/vision/stop")
+async def vision_stop(request: Request):
+    manager = getattr(request.app.state, "vision_manager", None)
+    if manager is None:
+        raise HTTPException(status_code=503, detail="Vision runtime not initialised")
+    manager.stop()
+    return manager.status()
+
+
+@router.websocket("/api/v1/vision/stream")
+async def vision_stream(websocket: WebSocket):
+    await websocket.accept()
+    manager = getattr(websocket.app.state, "vision_manager", None)
+    if manager is None:
+        await websocket.send_json({"type": "error", "error": "Vision runtime not initialised"})
+        await websocket.close(code=1011)
+        return
+
+    try:
+        while True:
+            metadata, jpeg = manager.stream_snapshot()
+            await websocket.send_json(metadata)
+            if jpeg is not None:
+                await websocket.send_bytes(jpeg)
+            await asyncio.sleep(1 / max(1, manager.config.fps))
+    except WebSocketDisconnect:
+        return
 
 
 @router.get("/api/v1/sessions")

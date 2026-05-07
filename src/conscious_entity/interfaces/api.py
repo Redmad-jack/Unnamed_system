@@ -70,6 +70,11 @@ from conscious_entity.interfaces.api_routes import (
     state_current,
     state_history,
     stats_llm,
+    visitor_surface,
+    vision_start,
+    vision_status,
+    vision_stop,
+    vision_stream,
 )
 from conscious_entity.interfaces.api_runtime import (
     _active_embedding_client,

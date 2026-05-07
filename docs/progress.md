@@ -7,9 +7,9 @@
 ## 当前状态
 
 - 当前进行中：无
-- 当前可运行形态：CLI + 本地 FastAPI 开发者 API + Web 看板；观众侧最终呈现方向是身体，不是传统 UI
-- 当前核心能力：Stranger 文本协议、状态机、短期/情节/反思记忆、可解释/可选 embedding 召回、Memory Preview、managed memory proposal → commit、influence log / curation
-- 当前验证基线：`PYTHONPATH=src python3 -m pytest -p no:debugging`，最近一次结果为 `286 passed`
+- 当前可运行形态：CLI + 本地 FastAPI 开发者 API + Web 看板 + 可选 Vision 面板 + `/visitor` 临时身体表面；观众侧最终呈现方向是身体，不是传统 UI
+- 当前核心能力：Stranger 文本协议、状态机、短期/情节/反思记忆、可解释/可选 embedding 召回、Memory Preview、managed memory proposal → commit、influence log / curation、可选 YOLO person presence detection
+- 当前验证基线：`PYTHONPATH=src python3 -m pytest -p no:debugging`，最近一次结果为 `293 passed`
 - 当前注意事项：`AGENTS.md` 与 `CLAUDE.md` 有用户侧未提交差异；除非明确要求，不应在常规任务中触碰
 
 ---
@@ -18,13 +18,47 @@
 
 - [ ] 使用已轮换的真实供应商凭证做一轮 CLI/API 联调，确认自定义模型名与网关鉴权在目标环境可用
 - [ ] 继续观察真实对话中的记忆连续性：Memory Preview 是否能解释召回来源，managed memory influence 是否可审计且不越界
-- [ ] 规划非移动身体阶段：STT/TTS、视觉 / 空间感知、身体外观、声音和显示/投影/光的呈现映射
+- [ ] 手动联调视觉层：安装 `.[dev,api,vision]`，配置本地 `ENTITY_VISION_MODEL_PATH`，确认 Mac 摄像头授权、实时标注帧、detections 和 presence events
+- [ ] 继续规划非移动身体阶段：STT/TTS、身体外观、声音和显示/投影/光的呈现映射；更完整空间感知仍待设计
 - [ ] 物理移动、循路、避障、底盘控制和安全边界放到更后阶段，等非物理身体通道稳定后再实现
 - [ ] 部署认证、访客身份策略与展期终止仪式仍待设计确认
 
 ---
 
 ## Changelog
+
+### 2026-05-08：访客视觉层与 YOLO Vision 工作区第一版
+
+- [x] 新增可选 `vision` 依赖组：
+  - `opencv-python` 用于 Mac 摄像头采集、JPEG 编码和标注帧
+  - `ultralytics` 用于本地 YOLO person detection
+  - 默认核心安装路径不包含 vision 依赖，未安装或模型路径缺失时 API 返回 disabled reason
+- [x] 新增 `src/conscious_entity/vision/runtime.py`：
+  - 通过 `ENTITY_VISION_MODEL_PATH` 指向本地 YOLO 模型，不自动下载模型
+  - 支持 camera index、width、height、fps、confidence、enter/leave/silence 阈值环境变量
+  - 只检测 `person` class，并将 presence 变化转换为已有 `USER_ENTERED` / `USER_LEFT` / `LONG_SILENCE_DETECTED`
+- [x] FastAPI 接入 vision runtime：
+  - `GET /api/v1/vision/status`
+  - `POST /api/v1/vision/start`
+  - `POST /api/v1/vision/stop`
+  - `WS /api/v1/vision/stream`，按 JSON metadata + binary JPEG frame 推送
+  - vision events 通过 `InteractionLoop.handle_system_event(...)` 进入既有状态规则，不新增 YAML 事件或数据库 schema
+- [x] 开发者面板更新：
+  - 左侧 `Entity State` 下方新增 `Vision` 面板
+  - 支持 Start / Stop / Reconnect、runtime status、模型/依赖状态、camera/FPS、detections、recent events 和实时标注画面
+  - 右侧 sidebar 未新增 Vision tab，继续保留 Runtime / Memory Curation / Session & History
+- [x] 新增 `/visitor` 临时 body-facing surface：
+  - 不展示 dashboard 控件、内部规则、memory、prompt 或调试指标
+  - 只根据最新输出、`visual_mode` 和少量 state 映射文字、扰动、沉默和延迟感
+- [x] 文档与环境模板同步：
+  - `.env.example` 增加 vision 环境变量
+  - README / TECH_STACK / APP_FLOW / BACKEND_STRUCTURE 对齐当前 vision 能力与硬件边界
+- [x] 验证：
+  - `PYTHONPATH=src python3 -m py_compile src/conscious_entity/vision/runtime.py src/conscious_entity/interfaces/api_runtime.py src/conscious_entity/interfaces/api_routes.py src/conscious_entity/interfaces/api.py`
+  - `PYTHONPATH=src python3 -m pytest -p no:debugging tests/unit/test_vision_runtime.py tests/unit/test_api_vision.py tests/unit/test_api_export.py tests/integration/test_full_loop.py`
+  - `50 passed`
+  - `PYTHONPATH=src python3 -m pytest -p no:debugging`
+  - `293 passed`
 
 ### 2026-05-08：明确身体优先呈现方向
 

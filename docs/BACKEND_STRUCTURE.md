@@ -51,7 +51,7 @@
 
 **Stranger Text Protocol 扩展（当前文本系统）：**
 
-下一阶段只扩展文本事件，不引入视觉、语音或硬件输入。新增事件用于识别观众对 Stranger 的关系姿态，而不是识别观众身份。
+文本协议事件用于识别观众对 Stranger 的关系姿态，而不是识别观众身份。视觉第一版不新增事件枚举，只把 presence detection 归一到已有 `USER_ENTERED` / `USER_LEFT` / `LONG_SILENCE_DETECTED`。
 
 | 事件 | 触发意图 | metadata 最小字段 |
 |---|---|---|
@@ -279,8 +279,9 @@ CREATE TABLE schema_version (
 |---|---|
 | `src/conscious_entity/interfaces/api.py` | app 创建、router 注册、兼容导出 |
 | `src/conscious_entity/interfaces/api_models.py` | Pydantic 请求模型 |
-| `src/conscious_entity/interfaces/api_runtime.py` | lifespan、runtime 配置、DB helper、loop rebuild |
+| `src/conscious_entity/interfaces/api_runtime.py` | lifespan、runtime 配置、DB helper、loop rebuild、vision manager 生命周期 |
 | `src/conscious_entity/interfaces/api_routes.py` | HTTP 路由处理 |
+| `src/conscious_entity/vision/runtime.py` | 可选 vision runtime：摄像头采集、YOLO person detection、presence event debounce |
 
 **当前主要端点：**
 
@@ -295,6 +296,17 @@ CREATE TABLE schema_version (
 | `POST` | `/api/v1/managed-memory/commit` | commit pending proposal 或手动 operation | 本地开发面板，当前无认证 |
 | `GET` | `/api/v1/curation/memories` | 查看可整理记忆 | 本地开发面板，当前无认证 |
 | `GET` | `/api/v1/conversation/export` | 导出当前或指定 session 对话 JSON | 本地开发面板，当前无认证 |
+| `GET` | `/api/v1/vision/status` | 查看可选视觉 runtime 状态、依赖、模型路径和最新 detections | 本地开发面板，当前无认证 |
+| `POST` | `/api/v1/vision/start` | 启动 Mac 摄像头和 YOLO worker | 本地开发面板，当前无认证 |
+| `POST` | `/api/v1/vision/stop` | 停止 vision worker 并释放摄像头 | 本地开发面板，当前无认证 |
+| `WS` | `/api/v1/vision/stream` | 推送 JSON metadata + binary JPEG frame | 本地开发面板，当前无认证 |
+| `GET` | `/visitor` | 临时访客侧 body-facing surface，不展示内部调试信息 | 访客端，无认证 |
+
+**Vision 事件边界：**
+- 视觉层只检测 YOLO `person` class，不做访客身份识别。
+- 稳定进入、离开、长时间静默分别转换为已有 `USER_ENTERED`、`USER_LEFT`、`LONG_SILENCE_DETECTED`。
+- 事件通过 `InteractionLoop.handle_system_event(...)` 进入现有状态规则，不新增 `EventType`、YAML 行为规则或 SQLite schema。
+- 摄像头/YOLO 留在上位机；STM32 后续只接收事件、动作、灯光或电机命令，不接收视频流。
 
 ---
 
@@ -343,7 +355,7 @@ OPERATOR_API_KEY=your_secret_here
 - `episodic_memories.reflected` 标志只能从 0 改为 1，不可逆
 - `reflective_summaries.active` 标志：新反思生成时不删除旧记录，仅将旧记录的 active 置为 0
 - 展期全程不重置任何表，仅在展期结束时归档
-- Stranger 文本协议阶段不保存原始音视频，也不新增访客身份画像；所有关系姿态只作为事件 metadata 保存
+- Stranger 当前不保存原始音视频，也不新增访客身份画像；视觉第一版只在内存中保留最新 JPEG frame / detections / recent events，presence 结果只作为已有系统事件进入状态路径
 - 自动调参建议不得直接写回 YAML；必须先作为待确认记录进入运营者流程
 
 ---

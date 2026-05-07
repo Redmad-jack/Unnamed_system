@@ -13,7 +13,7 @@
 运营者路径：[本地开发者面板] ← 实时状态 / 对话历史 / Memory Preview / Managed Memory Curation
 ```
 
-访客路径最终不是传统 user interface。当前 CLI / Web 输入只是开发阶段入口；后续输出应进入声音、视觉、外观、停留、靠近/回避等身体行为。物理移动、循路和避障是更后面的身体层，在非移动的声音/视觉/外观能力稳定前不进入主实现。
+访客路径最终不是传统 user interface。当前 CLI / Web 输入只是开发阶段入口；第一版 `/visitor` 只作为临时 body-facing surface，后续输出应进入声音、视觉、外观、停留、靠近/回避等身体行为。物理移动、循路和避障是更后面的身体层，在非移动的声音/视觉/外观能力稳定前不进入主实现。
 
 ---
 
@@ -21,7 +21,7 @@
 
 ### 2.1 进入（Session 启动）
 
-**触发条件：** 新的 CLI / API runtime 会话启动，或后续身体 / presence detection 触发访客进入
+**触发条件：** 新的 CLI / API runtime 会话启动，或可选 vision runtime 的 presence detection 触发访客进入
 
 **流程：**
 ```
@@ -39,7 +39,9 @@
 **成功状态：** 系统就绪，等待访客输入
 **错误状态：** 数据库连接失败 → fallback 到默认初始状态，记录错误日志
 
-**后续身体阶段：** 进入不一定来自文字输入，也可以来自靠近、停留、被观察、被呼唤或空间位置变化。当前只保留事件入口，不实现移动、循路或避障。
+**当前视觉入口：** 可选 vision runtime 使用 Mac 摄像头 + 本地 YOLO 模型，只检测 `person` class。稳定检测到人会触发 `USER_ENTERED`，人离开超过阈值会触发 `USER_LEFT`，持续存在但长时间没有文字交互会触发 `LONG_SILENCE_DETECTED`。这些事件走 `loop.handle_system_event(...)`，不新增 YAML 事件或数据库表。
+
+**后续身体阶段：** 进入不一定来自文字输入，也可以来自靠近、停留、被观察、被呼唤或空间位置变化。当前不实现移动、循路或避障。
 
 ---
 
@@ -115,7 +117,7 @@ Step 15  发送 turn_complete 到 EventBus，供调试或后续 instrumentation 
 
 ### 2.3 离开（Session 关闭）
 
-**触发条件：** 访客停止输入，或后续身体 / presence detection 触发 `USER_LEFT` 事件
+**触发条件：** 访客停止输入，或 vision / 后续身体 presence detection 触发 `USER_LEFT` 事件
 
 **流程：**
 ```
@@ -144,6 +146,10 @@ python scripts/inspect_state.py
 输出当前 EntityState 所有字段值 + 最近 5 条策略决策
 
 **当前 API 方式：** FastAPI `/api/v1/state` 端点 → 本地开发者 Web 看板（观众不可见）
+
+**Vision 工作区：** 开发者 Web 看板左侧 `Entity State` 下方显示 Vision 面板，可启动/停止摄像头与 YOLO worker，查看 runtime status、模型路径状态、camera index、FPS、detections、最近 vision events，并通过 WebSocket JPEG frames 显示后端标注后的实时画面。
+
+**访客 surface：** `/visitor` 只读取最新 `ExpressionOutput` 与少量 state 映射为文字、扰动、沉默和延迟感，不显示 dashboard 控件、内部规则、memory、prompt 或调试指标。
 
 ---
 
@@ -221,6 +227,8 @@ EventBus.emit("turn_complete")
 | 反思 LLM 调用失败 | 跳过本次反思，不影响对话流程，记录失败事件 |
 | Embedding 计算失败 | 跳过向量写入或语义召回，退回可解释召回 |
 | Managed memory proposal / commit 失败 | 记录错误，不影响本轮 ExpressionOutput |
+| Vision optional deps 未安装或模型路径缺失 | `/api/v1/vision/status` 返回 disabled reason；启动 worker 时返回明确 400，不影响文本系统 |
+| 摄像头无法打开或帧读取失败 | vision worker 记录 runtime error，释放摄像头；主 loop 继续运行 |
 
 ---
 
@@ -228,7 +236,7 @@ EventBus.emit("turn_complete")
 
 - **[ 待确认 ]** Stranger 身体外观、材料、尺度、显示/投影/光等呈现方式
 - **[ 待确认 ]** STT / TTS 的具体实现方案
-- **[ 待确认 ]** 视觉感知与空间感知的输入边界
+- **[ 已完成第一版 ]** 视觉 presence detection 输入边界：Mac 摄像头 + 本地 YOLO；后续空间感知仍待确认
 - **[ 待确认 ]** 物理移动、循路、避障和底盘方案（后续阶段）
 - **[ 待确认 ]** 运营者面板的具体页面布局和访问方式（本地 localhost？还是局域网访问？）
 - **[ 待确认 ]** presence detection 的具体触发机制（摄像头？距离传感器？）

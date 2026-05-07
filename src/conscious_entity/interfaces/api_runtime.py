@@ -4,7 +4,7 @@ import json
 import os
 import sqlite3
 import asyncio
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
@@ -22,6 +22,7 @@ from conscious_entity.memory.managed import build_memory_provider
 from conscious_entity.runtime_env import load_project_env
 from conscious_entity.state.state_core import EntityState
 from conscious_entity.state.state_store import StateStore
+from conscious_entity.vision import VisionConfig, VisionManager
 
 
 def _project_root() -> Path:
@@ -119,10 +120,33 @@ async def lifespan(app: Any):
     app.state.loop_lock = asyncio.Lock()
     app.state.llm_runtime_config = None
     app.state.embedding_runtime_config = None
+    app.state.vision_manager = VisionManager(VisionConfig.from_env())
+    app.state.vision_event_task = asyncio.create_task(_vision_event_dispatcher(app))
 
-    yield
+    try:
+        yield
+    finally:
+        app.state.vision_event_task.cancel()
+        with suppress(asyncio.CancelledError):
+            await app.state.vision_event_task
+        app.state.vision_manager.stop()
+        conn.close()
 
-    conn.close()
+
+async def _vision_event_dispatcher(app: Any) -> None:
+    """Forward vision presence events into the existing loop rule path."""
+    while True:
+        manager = getattr(app.state, "vision_manager", None)
+        if manager is not None:
+            for event_type in manager.pop_pending_events():
+                loop = getattr(app.state, "loop", None)
+                if loop is None:
+                    continue
+                async with app.state.loop_lock:
+                    await asyncio.get_running_loop().run_in_executor(
+                        None, loop.handle_system_event, event_type
+                    )
+        await asyncio.sleep(0.2)
 
 
 def _read_conn(request: Request) -> sqlite3.Connection:

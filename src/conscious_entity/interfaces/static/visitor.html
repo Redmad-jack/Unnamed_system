@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Stranger</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  :root {
+    --presence: 0.5;
+    --tension: 0.2;
+    --attention: 0.5;
+    --opacity: 0.72;
+    --pulse-ms: 4200ms;
+    --bg: #08090a;
+    --fg: #e6e1d8;
+  }
+  html, body { width: 100%; height: 100%; overflow: hidden; background: var(--bg); }
+  body {
+    color: var(--fg);
+    font-family: ui-serif, Georgia, "Times New Roman", serif;
+  }
+  .surface {
+    position: fixed;
+    inset: 0;
+    display: grid;
+    place-items: center;
+    background:
+      radial-gradient(circle at 50% 42%, rgba(230, 225, 216, calc(var(--presence) * 0.18)), transparent 18%),
+      radial-gradient(circle at 50% 50%, rgba(92, 124, 250, calc(var(--attention) * 0.08)), transparent 34%),
+      #08090a;
+  }
+  .body {
+    width: min(42vw, 520px);
+    height: min(62vh, 720px);
+    min-width: 240px;
+    min-height: 360px;
+    position: relative;
+    opacity: calc(0.38 + var(--opacity) * 0.58);
+    filter: blur(calc(var(--tension) * 1.8px));
+    animation: breathe var(--pulse-ms) ease-in-out infinite;
+  }
+  .body::before,
+  .body::after {
+    content: "";
+    position: absolute;
+    left: 50%;
+    transform: translateX(-50%);
+    border: 1px solid rgba(230, 225, 216, 0.34);
+    background: rgba(230, 225, 216, 0.035);
+  }
+  .body::before {
+    top: 0;
+    width: 34%;
+    aspect-ratio: 1;
+    border-radius: 50%;
+    box-shadow: 0 0 80px rgba(230, 225, 216, calc(var(--attention) * 0.16));
+  }
+  .body::after {
+    top: 23%;
+    width: 54%;
+    height: 68%;
+    border-radius: 45% 45% 18% 18%;
+  }
+  .voice {
+    position: fixed;
+    left: 50%;
+    bottom: 9vh;
+    transform: translateX(-50%);
+    width: min(760px, 74vw);
+    min-height: 2.6em;
+    text-align: center;
+    color: rgba(230, 225, 216, 0.84);
+    font-size: clamp(22px, 3vw, 44px);
+    line-height: 1.22;
+    letter-spacing: 0;
+    text-wrap: balance;
+    opacity: calc(0.42 + var(--presence) * 0.48);
+    transition: opacity 900ms ease, filter 900ms ease;
+  }
+  .surface.silent .voice {
+    opacity: 0.18;
+    filter: blur(2px);
+  }
+  .surface.glitch .body {
+    animation-duration: 1800ms;
+  }
+  .surface.glitch .voice {
+    filter: blur(calc(var(--tension) * 1.6px));
+  }
+  .surface.fade .body,
+  .surface.fade .voice {
+    opacity: 0.2;
+  }
+  @keyframes breathe {
+    0%, 100% { transform: scale(0.982); }
+    50% { transform: scale(calc(1.006 + var(--attention) * 0.018)); }
+  }
+</style>
+</head>
+<body>
+<main class="surface silent" id="surface">
+  <div class="body" aria-hidden="true"></div>
+  <div class="voice" id="voice"></div>
+</main>
+<script>
+async function fetchJSON(url) {
+  const r = await fetch(url);
+  if (!r.ok) throw new Error(String(r.status));
+  return r.json();
+}
+
+function clamp01(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return 0;
+  return Math.max(0, Math.min(1, n));
+}
+
+async function pollVisitorSurface() {
+  try {
+    const [state, log] = await Promise.all([
+      fetchJSON('/api/v1/state').catch(() => null),
+      fetchJSON('/api/v1/interaction-log?limit=1').catch(() => []),
+    ]);
+    if (state) renderState(state);
+    const latest = Array.isArray(log) && log.length ? log[0] : null;
+    renderLatestExpression(latest);
+  } catch {}
+}
+
+function renderState(state) {
+  document.documentElement.style.setProperty('--presence', clamp01(state.attention_focus ?? 0.45));
+  document.documentElement.style.setProperty('--tension', clamp01(state.identity_tension ?? state.uncertainty ?? 0.2));
+  document.documentElement.style.setProperty('--attention', clamp01(state.attention_focus ?? 0.5));
+  document.documentElement.style.setProperty('--opacity', clamp01(state.opacity_level ?? 0.72));
+  const fatigue = clamp01(state.fatigue ?? 0.2);
+  document.documentElement.style.setProperty('--pulse-ms', `${Math.round(3400 + fatigue * 2800)}ms`);
+}
+
+function renderLatestExpression(row) {
+  const surface = document.getElementById('surface');
+  const voice = document.getElementById('voice');
+  const text = row && row.expression_output ? String(row.expression_output).trim() : '';
+  const mode = row && row.visual_mode ? String(row.visual_mode) : '';
+  surface.classList.toggle('silent', !text);
+  surface.classList.toggle('glitch', mode.includes('glitch') || mode.includes('fragment'));
+  surface.classList.toggle('fade', mode.includes('fade') || mode.includes('withdraw'));
+  voice.textContent = text;
+}
+
+pollVisitorSurface();
+setInterval(pollVisitorSurface, 1400);
+</script>
+</body>
+</html>
