@@ -386,6 +386,48 @@ def test_managed_memory_commit_preview_archive_restore_api(tmp_path):
     conn.close()
 
 
+def test_managed_memory_proposal_reject_prevents_commit(tmp_path):
+    db_path = tmp_path / "memory.db"
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    run_migrations(conn)
+    conn.execute("INSERT INTO sessions (id, session_type) VALUES (?, ?)", ("current", "test"))
+    cursor = conn.execute(
+        """
+        INSERT INTO memory_operation_proposals (
+            session_id, operation_type, operation_json, reason, source_turn_ids, status
+        ) VALUES (?, 'add', ?, 'manual test', '[1]', 'pending')
+        """,
+        ("current", '{"operation":"add","content":"should not commit"}'),
+    )
+    proposal_id = int(cursor.lastrowid)
+    conn.commit()
+
+    request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(
+        conn=conn,
+        db_path=db_path,
+        session_id="current",
+        prompts_dir=api._prompts_dir(),
+        embedding_runtime_config=None,
+        embedding_error=None,
+    )))
+
+    rejected = asyncio.run(api.managed_memory_proposal_reject(request, proposal_id))
+    assert rejected["status"] == "rejected"
+
+    committed = asyncio.run(api.managed_memory_commit(
+        request,
+        ManagedMemoryCommitRequest(proposal_ids=[proposal_id]),
+    ))
+    assert committed["committed"] == []
+    assert conn.execute("SELECT COUNT(*) AS cnt FROM managed_memories").fetchone()["cnt"] == 0
+    assert conn.execute(
+        "SELECT status FROM memory_operation_proposals WHERE id = ?",
+        (proposal_id,),
+    ).fetchone()["status"] == "rejected"
+    conn.close()
+
+
 def test_curation_can_hide_memory_and_copy_to_exhibition(tmp_path):
     db_path = tmp_path / "memory.db"
     conn = sqlite3.connect(db_path)

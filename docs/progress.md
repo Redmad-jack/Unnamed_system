@@ -37,6 +37,20 @@
 
 ---
 
+## 2026-05-07：Memory Curation 四视图开发者界面补齐
+
+- [x] 右侧 Memory Curation 面板补齐四个视图：
+  - Raw Archive：只读展示当前 session 的原始 `interaction_log`、event types、policy action 与输出
+  - Proposals：展示 pending / committed / rejected proposal，支持单条批准、拒绝、勾选批量 commit、当前可见批量 commit
+  - Managed Memories：按 active / superseded / archived / hidden / all 查看 committed managed memory，支持 explain / edit / archive / restore
+  - Influence：提供无写入的 query/context preview，并展示 influence trace log
+- [x] 新增 proposal reject API：`POST /api/v1/managed-memory/proposals/{proposal_id}/reject`
+- [x] 验证：
+  - `PYTHONPATH=src python3 -m pytest -p no:debugging tests/unit/test_api_export.py tests/unit/test_managed_memory.py`
+  - `18 passed`
+
+---
+
 ## 2026-05-06：Mem0-style 可审计 Managed Memory 第一版
 
 - [x] 新增 managed memory 本地 provider：

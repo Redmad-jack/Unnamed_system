@@ -958,6 +958,31 @@ async def managed_memory_proposals(request: Request, status: str = "pending", li
         conn.close()
 
 
+@app.post("/api/v1/managed-memory/proposals/{proposal_id}/reject")
+async def managed_memory_proposal_reject(request: Request, proposal_id: int):
+    conn = _read_conn(request)
+    try:
+        row = conn.execute(
+            """
+            SELECT id, status FROM memory_operation_proposals
+            WHERE id = ? AND session_id = ?
+            """,
+            (proposal_id, request.app.state.session_id),
+        ).fetchone()
+        if row is None:
+            raise HTTPException(status_code=404, detail="proposal not found")
+        if row["status"] != "pending":
+            return {"proposal_id": proposal_id, "status": row["status"]}
+        conn.execute(
+            "UPDATE memory_operation_proposals SET status = 'rejected' WHERE id = ?",
+            (proposal_id,),
+        )
+        conn.commit()
+        return {"proposal_id": proposal_id, "status": "rejected"}
+    finally:
+        conn.close()
+
+
 @app.post("/api/v1/managed-memory/commit")
 async def managed_memory_commit(request: Request, body: ManagedMemoryCommitRequest):
     provider = _managed_provider(request)

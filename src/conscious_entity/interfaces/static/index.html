@@ -298,6 +298,42 @@
   .curation-meta { color: var(--dim); font-size: 10px; margin-bottom: 4px; }
   .curation-text { color: var(--text); font-size: 11px; white-space: pre-wrap; word-break: break-word; }
   .curation-actions { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 6px; }
+  .memory-view-tabs {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 4px;
+    margin-bottom: 10px;
+  }
+  .memory-view-tab {
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    color: var(--text-dim);
+    padding: 5px 4px;
+    border-radius: 3px;
+    cursor: pointer;
+    font-family: var(--mono);
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+  .memory-view-tab.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .memory-curation-view { display: none; }
+  .memory-curation-view.active { display: block; }
+  .proposal-toolbar { display: flex; gap: 6px; flex-wrap: wrap; margin: 8px 0; }
+  .proposal-check { margin-right: 6px; vertical-align: middle; }
+  .preview-json {
+    width: 100%;
+    min-height: 54px;
+    resize: vertical;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    color: var(--text);
+    font-family: var(--mono);
+    font-size: 11px;
+    padding: 4px 6px;
+    border-radius: 3px;
+    box-sizing: border-box;
+  }
 
   /* --- Tables --- */
   table { width: 100%; border-collapse: collapse; font-size: 12px; }
@@ -415,7 +451,7 @@
     <div class="panel-body">
       <div class="sidebar-tabs">
         <button class="sidebar-tab active" id="tab-runtime" onclick="showSidebarTab('runtime')">Runtime</button>
-        <button class="sidebar-tab" id="tab-embedding" onclick="showSidebarTab('embedding')">Embedding</button>
+        <button class="sidebar-tab" id="tab-embedding" onclick="showSidebarTab('embedding')">Memory Curation</button>
         <button class="sidebar-tab" id="tab-history" onclick="showSidebarTab('history')">Session & History</button>
       </div>
       <div class="sidebar-content">
@@ -435,59 +471,93 @@
         </div>
 
         <div class="sidebar-pane" id="pane-embedding">
-          <div class="runtime-section">
-            <div class="section-title">Vector Dataset</div>
-            <div id="curation-stats-body"><div class="dim">Loading…</div></div>
-            <div class="llm-form">
-              <label>Pool
-                <select id="curation-session-type" onchange="pollCurationMemories()">
-                  <option value="test">test</option>
-                  <option value="exhibition">exhibition</option>
-                </select>
-              </label>
-              <label>Status
-                <select id="curation-status" onchange="pollCurationMemories()">
-                  <option value="active">active</option>
-                  <option value="archived">archived</option>
-                  <option value="hidden">hidden</option>
-                  <option value="all">all</option>
-                </select>
-              </label>
-              <label>Type
-                <select id="curation-memory-type" onchange="pollCurationMemories()">
-                  <option value="episodic">episodic</option>
-                  <option value="reflective">reflective</option>
-                  <option value="all">all</option>
-                </select>
-              </label>
-              <label class="wide">Search <input id="curation-query" placeholder="filter memory text…" onkeydown="if(event.key==='Enter'){event.preventDefault();pollCurationMemories()}"></label>
-              <div class="form-actions">
-                <button class="btn-sm" onclick="pollCurationMemories()">Refresh list</button>
-                <button class="btn-sm" onclick="pollCurationStats()">Refresh stats</button>
-              </div>
-            </div>
+          <div class="memory-view-tabs">
+            <button class="memory-view-tab active" id="memory-view-tab-raw" onclick="showMemoryCurationView('raw')">Raw Archive</button>
+            <button class="memory-view-tab" id="memory-view-tab-proposals" onclick="showMemoryCurationView('proposals')">Proposals</button>
+            <button class="memory-view-tab" id="memory-view-tab-managed" onclick="showMemoryCurationView('managed')">Managed</button>
+            <button class="memory-view-tab" id="memory-view-tab-influence" onclick="showMemoryCurationView('influence')">Influence</button>
           </div>
-          <div id="curation-list" class="curation-list"><div class="dim">Loading…</div></div>
-          <div class="runtime-section">
-            <div class="section-title">Managed Memory</div>
-            <div class="llm-form">
-              <label>Status
-                <select id="managed-status" onchange="pollManagedMemory()">
-                  <option value="active">active</option>
-                  <option value="pending">pending proposals</option>
-                  <option value="archived">archived</option>
-                  <option value="hidden">hidden</option>
-                  <option value="all">all</option>
-                </select>
-              </label>
-              <label class="wide">Search <input id="managed-query" placeholder="managed memory query…" onkeydown="if(event.key==='Enter'){event.preventDefault();pollManagedMemory()}"></label>
-              <div class="form-actions">
-                <button class="btn-sm" onclick="pollManagedMemory()">Refresh managed layer</button>
-                <button class="btn-sm" onclick="pollInfluenceTrace()">Refresh influence</button>
+
+          <div class="memory-curation-view active" id="memory-view-raw">
+            <div class="runtime-section">
+              <div class="section-title">Raw Archive</div>
+              <div class="llm-form">
+                <label>Limit
+                  <select id="raw-archive-limit" onchange="pollRawArchive()">
+                    <option value="30">30</option>
+                    <option value="80" selected>80</option>
+                    <option value="160">160</option>
+                  </select>
+                </label>
+                <div class="form-actions">
+                  <button class="btn-sm" onclick="pollRawArchive()">Refresh archive</button>
+                </div>
               </div>
             </div>
-            <div id="managed-memory-list" class="curation-list"><div class="dim">Loading…</div></div>
-            <div id="memory-influence-list" class="curation-list"><div class="dim">Loading influence trace…</div></div>
+            <div id="raw-archive-list" class="curation-list"><div class="dim">Loading raw archive…</div></div>
+          </div>
+
+          <div class="memory-curation-view" id="memory-view-proposals">
+            <div class="runtime-section">
+              <div class="section-title">Proposals</div>
+              <div class="llm-form">
+                <label>Status
+                  <select id="proposal-status" onchange="pollMemoryProposals()">
+                    <option value="pending">pending</option>
+                    <option value="all">all</option>
+                    <option value="committed">committed</option>
+                    <option value="rejected">rejected</option>
+                  </select>
+                </label>
+                <div class="form-actions">
+                  <button class="btn-sm" onclick="pollMemoryProposals()">Refresh proposals</button>
+                  <button class="btn-sm" onclick="commitSelectedMemoryProposals()">Commit selected</button>
+                  <button class="btn-sm" onclick="commitVisibleMemoryProposals()">Commit visible</button>
+                </div>
+              </div>
+            </div>
+            <div id="memory-proposals-list" class="curation-list"><div class="dim">Loading proposals…</div></div>
+          </div>
+
+          <div class="memory-curation-view" id="memory-view-managed">
+            <div class="runtime-section">
+              <div class="section-title">Managed Memories</div>
+              <div class="llm-form">
+                <label>Status
+                  <select id="managed-status" onchange="pollManagedMemory()">
+                    <option value="active">active</option>
+                    <option value="superseded">superseded</option>
+                    <option value="archived">archived</option>
+                    <option value="hidden">hidden</option>
+                    <option value="all">all</option>
+                  </select>
+                </label>
+                <label class="wide">Search <input id="managed-query" placeholder="managed memory query…" onkeydown="if(event.key==='Enter'){event.preventDefault();pollManagedMemory()}"></label>
+                <div class="form-actions">
+                  <button class="btn-sm" onclick="pollManagedMemory()">Refresh managed layer</button>
+                </div>
+              </div>
+            </div>
+            <div id="managed-memory-list" class="curation-list"><div class="dim">Loading managed memories…</div></div>
+          </div>
+
+          <div class="memory-curation-view" id="memory-view-influence">
+            <div class="runtime-section">
+              <div class="section-title">Memory Preview</div>
+              <div class="llm-form">
+                <label class="wide">Query <input id="influence-preview-query" placeholder="preview query/context without writes…" onkeydown="if(event.key==='Enter'){event.preventDefault();previewManagedInfluence()}"></label>
+                <label class="wide">Context JSON <textarea id="influence-preview-context" class="preview-json" placeholder='{"filters":{"session_type":"test"}}'></textarea></label>
+                <div class="form-actions">
+                  <button class="btn-sm" onclick="previewManagedInfluence()">Preview influence</button>
+                  <button class="btn-sm" onclick="pollInfluenceTrace()">Refresh trace</button>
+                </div>
+              </div>
+              <div id="memory-influence-preview" class="memory-preview-result"></div>
+            </div>
+            <div class="runtime-section">
+              <div class="section-title">Influence Trace</div>
+              <div id="memory-influence-list" class="curation-list"><div class="dim">Loading influence trace…</div></div>
+            </div>
           </div>
         </div>
 
@@ -538,6 +608,9 @@ let _memoryPreviewDraft = '';
 let _memoryPreviewResult = null;
 let _memoryPreviewLoading = false;
 let _sidebarTab = 'runtime';
+let _memoryCurationView = 'raw';
+let _visibleProposalIds = [];
+let _managedMemoryById = {};
 const MEMORY_PREVIEW_HIGH_SCORE = 0.35;
 const MEMORY_PREVIEW_RECENT_HIGH_SCORE = 0.75;
 const MEMORY_PREVIEW_HIGH_SIMILARITY = 0.35;
@@ -558,12 +631,29 @@ function showSidebarTab(tab) {
     if (pane) pane.classList.toggle('active', name === tab);
   }
   if (tab === 'embedding') {
-    pollCurationStats();
-    pollCurationMemories();
+    pollActiveMemoryCurationView();
   }
   if (tab === 'history') {
     pollSessions();
   }
+}
+
+function showMemoryCurationView(view) {
+  _memoryCurationView = view;
+  for (const name of ['raw', 'proposals', 'managed', 'influence']) {
+    const button = document.getElementById('memory-view-tab-' + name);
+    const pane = document.getElementById('memory-view-' + name);
+    if (button) button.classList.toggle('active', name === view);
+    if (pane) pane.classList.toggle('active', name === view);
+  }
+  pollActiveMemoryCurationView();
+}
+
+async function pollActiveMemoryCurationView() {
+  if (_memoryCurationView === 'raw') return pollRawArchive();
+  if (_memoryCurationView === 'proposals') return pollMemoryProposals();
+  if (_memoryCurationView === 'managed') return pollManagedMemory();
+  if (_memoryCurationView === 'influence') return pollInfluenceTrace();
 }
 
 async function pollHealth() {
@@ -751,9 +841,15 @@ function isHighRelevanceMemory(item) {
 function renderMemoryPreviewItem(item) {
   const scope = item.metadata && item.metadata.scope ? ' · ' + item.metadata.scope : '';
   const sessionType = item.metadata && item.metadata.session_type ? ' · ' + item.metadata.session_type : '';
+  const sourceTurns = item.metadata && item.metadata.source_turn_ids && item.metadata.source_turn_ids.length
+    ? ' · turns ' + item.metadata.source_turn_ids.join(',')
+    : '';
+  const explanation = item.metadata && item.metadata.explanation
+    ? ' · ' + Object.entries(item.metadata.explanation).map(([key, value]) => `${key}:${value}`).join(' ')
+    : '';
   return `
     <div class="memory-preview-item">
-      <div class="dim">${escapeHtml(item.memory_type || '')} · ${escapeHtml(item.source || '')}${escapeHtml(scope)}${escapeHtml(sessionType)} · score ${escapeHtml(item.score ?? '')}${item.similarity !== null && item.similarity !== undefined ? ' · sim ' + escapeHtml(item.similarity) : ''}</div>
+      <div class="dim">${escapeHtml(item.memory_type || '')} · ${escapeHtml(item.source || '')}${escapeHtml(scope)}${escapeHtml(sessionType)}${escapeHtml(sourceTurns)} · score ${escapeHtml(item.score ?? '')}${item.similarity !== null && item.similarity !== undefined ? ' · sim ' + escapeHtml(item.similarity) : ''}${escapeHtml(explanation)}</div>
       <div>${renderMessageText(String(item.content || '').slice(0, 220))}</div>
     </div>`;
 }
@@ -948,10 +1044,6 @@ async function refreshMemoryEmbedding(memoryType, memoryId) {
 async function pollManagedMemory() {
   const status = document.getElementById('managed-status')?.value || 'active';
   const query = document.getElementById('managed-query')?.value.trim() || '';
-  if (status === 'pending') {
-    await pollMemoryProposals();
-    return;
-  }
   try {
     const d = await fetchJSON(`/api/v1/managed-memory?status=${encodeURIComponent(status)}&q=${encodeURIComponent(query)}&limit=80`);
     renderManagedMemory(d.rows || []);
@@ -961,11 +1053,47 @@ async function pollManagedMemory() {
   }
 }
 
+async function pollRawArchive() {
+  try {
+    const limit = document.getElementById('raw-archive-limit')?.value || '80';
+    const rows = await fetchJSON(`/api/v1/interaction-log?limit=${encodeURIComponent(limit)}`);
+    renderRawArchive(rows || []);
+  } catch (e) {
+    const el = document.getElementById('raw-archive-list');
+    if (el) el.innerHTML = `<span class="err">Raw archive failed: ${escapeHtml(e.message)}</span>`;
+  }
+}
+
+function renderRawArchive(rows) {
+  const el = document.getElementById('raw-archive-list');
+  if (!el) return;
+  if (!rows.length) {
+    el.innerHTML = '<div class="dim">No raw turns in this session.</div>';
+    return;
+  }
+  el.innerHTML = rows.map(row => {
+    const events = normalizeJsonList(row.event_types);
+    const output = String(row.expression_output || '').trim();
+    return `
+      <div class="curation-item">
+        <div class="curation-meta">
+          turn #${escapeHtml(row.id)} · ${escapeHtml(row.role || '')} · ${escapeHtml(row.turn_at || '')}
+          · policy ${escapeHtml(row.policy_action || '—')} · events ${escapeHtml(events.join(', ') || '—')}
+        </div>
+        ${row.raw_text ? `<div class="curation-text">${renderMessageText(String(row.raw_text || '').slice(0, 420))}</div>` : ''}
+        ${output ? `<div class="curation-text dim">${renderMessageText(output.slice(0, 420))}</div>` : ''}
+      </div>
+    `;
+  }).join('');
+}
+
 async function pollMemoryProposals() {
   try {
-    const d = await fetchJSON('/api/v1/managed-memory/proposals?status=pending&limit=80');
+    const status = document.getElementById('proposal-status')?.value || 'pending';
+    const d = await fetchJSON(`/api/v1/managed-memory/proposals?status=${encodeURIComponent(status)}&limit=120`);
     const rows = d.proposals || [];
-    const el = document.getElementById('managed-memory-list');
+    _visibleProposalIds = rows.filter(p => p.status === 'pending').map(p => Number(p.id)).filter(Boolean);
+    const el = document.getElementById('memory-proposals-list');
     if (!el) return;
     if (!rows.length) {
       el.innerHTML = '<div class="dim">No pending proposals.</div>';
@@ -973,15 +1101,21 @@ async function pollMemoryProposals() {
     }
     el.innerHTML = rows.map(p => `
       <div class="curation-item">
-        <div class="curation-meta">proposal #${escapeHtml(p.id)} · ${escapeHtml(p.operation)} · ${escapeHtml(p.status)} · confidence ${escapeHtml(p.confidence)}</div>
+        <div class="curation-meta">
+          ${p.status === 'pending' ? `<input class="proposal-check" type="checkbox" data-proposal-id="${Number(p.id)}">` : ''}
+          proposal #${escapeHtml(p.id)} · ${escapeHtml(p.operation)} · ${escapeHtml(p.status)}
+          · confidence ${escapeHtml(p.confidence)} · turns ${escapeHtml((p.source_turn_ids || []).join(',') || '—')}
+        </div>
         <div class="curation-text">${renderMessageText(String(p.content || p.reason || '').slice(0, 320))}</div>
+        ${p.reason ? `<div class="curation-text dim">${renderMessageText(String(p.reason).slice(0, 240))}</div>` : ''}
         <div class="curation-actions">
-          <button class="btn-sm" onclick="commitMemoryProposal(${Number(p.id)})">Commit</button>
+          ${p.status === 'pending' ? `<button class="btn-sm" onclick="commitMemoryProposal(${Number(p.id)})">Commit</button>` : ''}
+          ${p.status === 'pending' ? `<button class="btn-sm" onclick="rejectMemoryProposal(${Number(p.id)})">Reject</button>` : ''}
         </div>
       </div>
     `).join('');
   } catch (e) {
-    const el = document.getElementById('managed-memory-list');
+    const el = document.getElementById('memory-proposals-list');
     if (el) el.innerHTML = `<span class="err">Proposals failed: ${escapeHtml(e.message)}</span>`;
   }
 }
@@ -989,10 +1123,12 @@ async function pollMemoryProposals() {
 function renderManagedMemory(rows) {
   const el = document.getElementById('managed-memory-list');
   if (!el) return;
+  _managedMemoryById = {};
   if (!rows.length) {
     el.innerHTML = '<div class="dim">No managed memories match these filters.</div>';
     return;
   }
+  rows.forEach(row => { _managedMemoryById[Number(row.id)] = row; });
   el.innerHTML = rows.map(row => `
     <div class="curation-item">
       <div class="curation-meta">
@@ -1002,6 +1138,7 @@ function renderManagedMemory(rows) {
       <div class="curation-text">${renderMessageText(String(row.content || '').slice(0, 360))}</div>
       <div class="curation-actions">
         <button class="btn-sm" onclick="explainManagedMemory(${Number(row.id)})">Explain</button>
+        <button class="btn-sm" onclick="editManagedMemory(${Number(row.id)})">Edit</button>
         ${row.status === 'active' ? `<button class="btn-sm" onclick="archiveManagedMemory(${Number(row.id)})">Archive</button>` : ''}
         ${row.status === 'archived' || row.status === 'hidden' ? `<button class="btn-sm" onclick="restoreManagedMemory(${Number(row.id)})">Restore</button>` : ''}
       </div>
@@ -1018,9 +1155,48 @@ async function commitMemoryProposal(id) {
     });
     const d = await r.json().catch(() => ({}));
     if (!r.ok) throw new Error(d.detail || r.statusText);
-    await Promise.all([pollManagedMemory(), pollMemory()]);
+    await Promise.all([pollMemoryProposals(), pollManagedMemory(), pollMemory()]);
   } catch (e) {
     alert('Proposal commit failed: ' + e.message);
+  }
+}
+
+async function commitSelectedMemoryProposals() {
+  const ids = [...document.querySelectorAll('.proposal-check:checked')]
+    .map(el => Number(el.dataset.proposalId))
+    .filter(Boolean);
+  if (!ids.length) return;
+  await commitMemoryProposalIds(ids);
+}
+
+async function commitVisibleMemoryProposals() {
+  if (!_visibleProposalIds.length) return;
+  await commitMemoryProposalIds(_visibleProposalIds);
+}
+
+async function commitMemoryProposalIds(ids) {
+  try {
+    const r = await fetch('/api/v1/managed-memory/commit', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ proposal_ids: ids, operations: [] }),
+    });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(d.detail || r.statusText);
+    await Promise.all([pollMemoryProposals(), pollManagedMemory(), pollMemory()]);
+  } catch (e) {
+    alert('Proposal commit failed: ' + e.message);
+  }
+}
+
+async function rejectMemoryProposal(id) {
+  try {
+    const r = await fetch(`/api/v1/managed-memory/proposals/${id}/reject`, { method: 'POST' });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(d.detail || r.statusText);
+    await pollMemoryProposals();
+  } catch (e) {
+    alert('Proposal reject failed: ' + e.message);
   }
 }
 
@@ -1052,6 +1228,24 @@ async function explainManagedMemory(id) {
   }
 }
 
+async function editManagedMemory(id) {
+  const currentContent = _managedMemoryById[Number(id)]?.content || '';
+  const content = prompt('Edit managed memory content:', currentContent);
+  if (content === null) return;
+  try {
+    const r = await fetch(`/api/v1/managed-memory/${id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ patch: { content } }),
+    });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(d.detail || r.statusText);
+    await Promise.all([pollManagedMemory(), pollMemory()]);
+  } catch (e) {
+    alert('Managed memory edit failed: ' + e.message);
+  }
+}
+
 async function pollInfluenceTrace() {
   try {
     const d = await fetchJSON('/api/v1/managed-memory/influence-log?limit=8');
@@ -1072,6 +1266,53 @@ async function pollInfluenceTrace() {
     const el = document.getElementById('memory-influence-list');
     if (el) el.innerHTML = `<span class="err">Influence trace failed: ${escapeHtml(e.message)}</span>`;
   }
+}
+
+async function previewManagedInfluence() {
+  const query = document.getElementById('influence-preview-query')?.value.trim() || '';
+  if (!query) return;
+  const rawContext = document.getElementById('influence-preview-context')?.value.trim() || '';
+  const el = document.getElementById('memory-influence-preview');
+  if (el) el.innerHTML = '<span class="dim">Previewing without writes…</span>';
+  let context = {};
+  if (rawContext) {
+    try {
+      context = JSON.parse(rawContext);
+    } catch (e) {
+      if (el) el.innerHTML = `<span class="err">Invalid context JSON: ${escapeHtml(e.message)}</span>`;
+      return;
+    }
+  }
+  try {
+    const r = await fetch('/api/v1/managed-memory/preview-influence', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ query, context }),
+    });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(d.detail || r.statusText);
+    renderManagedInfluencePreview(d);
+  } catch (e) {
+    if (el) el.innerHTML = `<span class="err">Influence preview failed: ${escapeHtml(e.message)}</span>`;
+  }
+}
+
+function renderManagedInfluencePreview(d) {
+  const el = document.getElementById('memory-influence-preview');
+  if (!el) return;
+  const results = d.results || [];
+  const policy = d.policy_influence || {};
+  const state = d.state_influence || {};
+  let html = `<div class="memory-preview-summary">
+    writes ${escapeHtml(String(d.explanation && d.explanation.writes === true))}
+    · results ${escapeHtml(results.length)}
+    · policy ${escapeHtml(policy.suggested_action || 'none')}
+    · state ${escapeHtml(JSON.stringify(state.deltas || {}))}
+  </div>`;
+  html += results.length
+    ? results.slice(0, 8).map(renderMemoryPreviewItem).join('')
+    : '<div class="dim">No committed managed memories would influence this query.</div>';
+  el.innerHTML = html;
 }
 
 // ---- dialog ----
@@ -1128,6 +1369,17 @@ function renderMessageText(s) {
   return escapeHtml(s)
     .replace(/\*\*([^*\n][\s\S]*?[^*\n])\*\*/g, '<strong>$1</strong>')
     .replace(/\*\*/g, '');
+}
+
+function normalizeJsonList(value) {
+  if (Array.isArray(value)) return value.map(String);
+  if (!value) return [];
+  try {
+    const parsed = JSON.parse(value);
+    return Array.isArray(parsed) ? parsed.map(String) : [];
+  } catch {
+    return [String(value)];
+  }
 }
 
 async function saveConversation(sessionId) {
@@ -1411,7 +1663,7 @@ async function reloadConfig() {
     const r = await fetch('/api/v1/config/reload', { method: 'POST' });
     const d = await r.json();
     _configs = null;
-    await Promise.all([pollState(), pollLLMStats(), pollMemory(), pollLLMConfig(), pollEmbeddingConfig(), pollCurationStats(), pollCurationMemories(), pollManagedMemory(), pollInfluenceTrace(), loadDialogLog(), pollSessions()]);
+    await Promise.all([pollState(), pollLLMStats(), pollMemory(), pollLLMConfig(), pollEmbeddingConfig(), pollRawArchive(), pollMemoryProposals(), pollManagedMemory(), pollInfluenceTrace(), loadDialogLog(), pollSessions()]);
     alert('Config reloaded. ' + (d.note || ''));
   } catch(e) {
     alert('Reload failed: ' + e.message);
@@ -1420,7 +1672,7 @@ async function reloadConfig() {
 
 // ---- init ----
 async function init() {
-  await Promise.all([pollHealth(), pollState(), pollLLMStats(), pollMemory(), pollLLMConfig(), pollEmbeddingConfig(), pollCurationStats(), pollCurationMemories(), pollManagedMemory(), pollInfluenceTrace(), loadDialogLog(), pollSessions()]);
+  await Promise.all([pollHealth(), pollState(), pollLLMStats(), pollMemory(), pollLLMConfig(), pollEmbeddingConfig(), pollRawArchive(), pollMemoryProposals(), pollManagedMemory(), pollInfluenceTrace(), loadDialogLog(), pollSessions()]);
 }
 
 init();
@@ -1430,9 +1682,7 @@ setInterval(pollLLMStats, 5000);
 setInterval(pollMemory, 10000);
 setInterval(pollLLMConfig, 15000);
 setInterval(pollEmbeddingConfig, 15000);
-setInterval(() => { if (_sidebarTab === 'embedding') pollCurationStats(); }, 15000);
-setInterval(() => { if (_sidebarTab === 'embedding') pollManagedMemory(); }, 15000);
-setInterval(() => { if (_sidebarTab === 'embedding') pollInfluenceTrace(); }, 15000);
+setInterval(() => { if (_sidebarTab === 'embedding') pollActiveMemoryCurationView(); }, 15000);
 setInterval(pollSessions, 15000);
 </script>
 </body>

@@ -45,3 +45,8 @@ Status values: `in_progress`, `done`
 
 | File | Agent | Status | Started |
 |------|-------|--------|---------|
+| src/conscious_entity/interfaces/static/index.html | Codex | done | 2026-05-07 10:55 |
+| src/conscious_entity/interfaces/api.py | Codex | done | 2026-05-07 10:55 |
+| tests/unit/test_api_export.py | Codex | done | 2026-05-07 10:55 |
+| docs/progress.md | Codex | done | 2026-05-07 10:55 |
+| agents/task-registry.md | Codex | done | 2026-05-07 10:55 |
