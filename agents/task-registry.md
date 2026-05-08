@@ -95,3 +95,6 @@ Status values: `in_progress`, `done`
 | docs/BACKEND_STRUCTURE.md | Codex | done | 2026-05-08 03:57 CST |
 | docs/progress.md | Codex | done | 2026-05-08 03:57 CST |
 | agents/task-registry.md | Codex | done | 2026-05-08 03:57 CST |
+| src/conscious_entity/interfaces/static/index.html | Codex | done | 2026-05-08 11:37 CST |
+| docs/progress.md | Codex | done | 2026-05-08 11:37 CST |
+| agents/task-registry.md | Codex | done | 2026-05-08 11:37 CST |

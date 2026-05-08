@@ -27,6 +27,17 @@
 
 ## Changelog
 
+### 2026-05-08：Vision 面板显示增强
+
+- [x] 放大开发者面板左侧 Vision 工作区：
+  - 左侧栏从 `320px` 增加到 `440px`
+  - 底部 Vision 行从 `300px` 增加到 `430px`
+  - 摄像头标注画面随面板放大，便于查看 person bbox
+- [x] 新增实时识别状态显示：
+  - 每帧显示 person 数量
+  - 显示 detection label、confidence 百分比和 bbox 坐标范围
+  - 通过现有 WebSocket metadata 刷新，不新增 API
+
 ### 2026-05-08：访客视觉层与 YOLO Vision 工作区第一版
 
 - [x] 新增可选 `vision` 依赖组：

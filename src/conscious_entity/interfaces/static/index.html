@@ -69,8 +69,8 @@
 
   .grid {
     display: grid;
-    grid-template-columns: 320px minmax(0, 1fr) 400px;
-    grid-template-rows: minmax(0, 1fr) 300px;
+    grid-template-columns: 440px minmax(0, 1fr) 400px;
+    grid-template-rows: minmax(0, 1fr) 430px;
     gap: 1px;
     background: var(--border);
     height: calc(100vh - 41px);
@@ -143,6 +143,30 @@
     font-size: 10px;
   }
   .vision-status span:nth-child(odd) { color: var(--dim); }
+  .vision-detections {
+    display: grid;
+    gap: 4px;
+    border-top: 1px solid var(--border);
+    padding-top: 6px;
+    font-size: 10px;
+  }
+  .vision-detection-row {
+    display: grid;
+    grid-template-columns: 54px 1fr;
+    gap: 8px;
+    align-items: center;
+  }
+  .vision-confidence {
+    height: 5px;
+    background: var(--surface2);
+    border-radius: 3px;
+    overflow: hidden;
+  }
+  .vision-confidence-fill {
+    height: 100%;
+    background: var(--green);
+  }
+  .vision-bbox { color: var(--dim); }
   .vision-events {
     min-height: 38px;
     max-height: 58px;
@@ -482,6 +506,9 @@
       </div>
       <div class="vision-status" id="vision-status">
         <span>Status</span><span>Loading…</span>
+      </div>
+      <div class="vision-detections" id="vision-detections">
+        <div class="dim">No detections yet.</div>
       </div>
       <div class="vision-events" id="vision-events">No vision events.</div>
     </div>
@@ -837,6 +864,7 @@ function renderVisionStatus(d) {
     <span>FPS</span><span>${escapeHtml(cfg.fps ?? latest.fps ?? '—')}</span>
     <span>People</span><span>${escapeHtml((latest.detections || []).length || 0)}</span>
   `;
+  renderVisionDetections(latest.detections || []);
   if (d.error || d.disabled_reason) renderVisionError(d.error || d.disabled_reason, false);
   renderVisionEvents(d.recent_events || []);
   if (d.running) connectVisionStream();
@@ -855,7 +883,35 @@ function renderVisionMetadata(d) {
       <span>Updated</span><span>${escapeHtml(String(d.timestamp || '').slice(11, 19))}</span>
     `;
   }
+  renderVisionDetections(d.detections || []);
   renderVisionEvents(d.events || []);
+}
+
+function renderVisionDetections(detections) {
+  const el = document.getElementById('vision-detections');
+  if (!el) return;
+  if (!detections.length) {
+    el.innerHTML = '<div class="dim">Recognition: no person detected.</div>';
+    return;
+  }
+  el.innerHTML = detections.slice(0, 4).map((det, index) => {
+    const confidence = Number(det.confidence || 0);
+    const pct = Math.max(0, Math.min(100, Math.round(confidence * 100)));
+    const bbox = det.bbox || {};
+    const bboxText = `x ${bbox.x1 ?? '—'}-${bbox.x2 ?? '—'} · y ${bbox.y1 ?? '—'}-${bbox.y2 ?? '—'}`;
+    return `
+      <div class="vision-detection-row">
+        <div>${escapeHtml(det.label || 'person')} ${index + 1}</div>
+        <div>
+          <div style="display:flex;justify-content:space-between;gap:8px">
+            <span class="ok">${pct}%</span>
+            <span class="vision-bbox">${escapeHtml(bboxText)}</span>
+          </div>
+          <div class="vision-confidence"><div class="vision-confidence-fill" style="width:${pct}%"></div></div>
+        </div>
+      </div>
+    `;
+  }).join('');
 }
 
 function renderVisionEvents(events) {
@@ -878,6 +934,7 @@ function renderVisionError(message, replaceStatus = true) {
   }
   const events = document.getElementById('vision-events');
   if (events) events.innerHTML = `<span class="err">${escapeHtml(message)}</span>`;
+  renderVisionDetections([]);
 }
 
 async function pollLLMStats() {
