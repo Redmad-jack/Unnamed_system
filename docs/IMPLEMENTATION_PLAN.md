@@ -309,7 +309,7 @@ PYTHONPATH=src python -m pytest -p no:debugging \
 
 - 访客端 Web 界面
 - 运营者监控 Web 面板
-- 语音输入/输出（STT/TTS）
+- 语音输入/输出（STT/TTS）第一版已由 Audio Adapter 完成；本地 Whisper/Piper 仍未做
 - 外部向量库依赖（当前先用 SQLite embedding 字段）
 - 访客身份识别
 - 时钟驱动的状态衰减（v0.1 用 per-turn 衰减代替）
@@ -319,7 +319,7 @@ PYTHONPATH=src python -m pytest -p no:debugging \
 ## Stranger Text Protocol 阶段暂不做
 
 - 摄像头 / 视觉识别 / 空间距离语法
-- 语音输入 / TTS / Whisper
+- 语音输入 / TTS / Whisper（历史边界；当前只完成火山 Audio Adapter，不做本地 Whisper）
 - 热敏打印、灯光、传感器、实体硬件
 - Presidio / Fairlearn 隐私与偏差审计工具链
 - vLLM / llama.cpp / 本地大模型部署

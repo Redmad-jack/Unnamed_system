@@ -92,6 +92,24 @@
   .surface.fade .voice {
     opacity: 0.2;
   }
+  .sound-toggle {
+    position: fixed;
+    right: 22px;
+    top: 18px;
+    z-index: 2;
+    background: rgba(230, 225, 216, 0.06);
+    border: 1px solid rgba(230, 225, 216, 0.22);
+    color: rgba(230, 225, 216, 0.68);
+    cursor: pointer;
+    font: 12px ui-monospace, SFMono-Regular, Menlo, monospace;
+    letter-spacing: 0.08em;
+    padding: 7px 10px;
+    text-transform: uppercase;
+  }
+  .sound-toggle.enabled {
+    color: rgba(230, 225, 216, 0.92);
+    border-color: rgba(230, 225, 216, 0.52);
+  }
   @keyframes breathe {
     0%, 100% { transform: scale(0.982); }
     50% { transform: scale(calc(1.006 + var(--attention) * 0.018)); }
@@ -100,8 +118,10 @@
 </head>
 <body>
 <main class="surface silent" id="surface">
+  <button class="sound-toggle" id="soundToggle" type="button">enable sound</button>
   <div class="body" aria-hidden="true"></div>
   <div class="voice" id="voice"></div>
+  <audio id="voiceAudio"></audio>
 </main>
 <script>
 async function fetchJSON(url) {
@@ -118,13 +138,15 @@ function clamp01(value) {
 
 async function pollVisitorSurface() {
   try {
-    const [state, log] = await Promise.all([
+    const [state, log, audio] = await Promise.all([
       fetchJSON('/api/v1/state').catch(() => null),
       fetchJSON('/api/v1/interaction-log?limit=1').catch(() => []),
+      fetchJSON('/api/v1/audio/status').catch(() => null),
     ]);
     if (state) renderState(state);
     const latest = Array.isArray(log) && log.length ? log[0] : null;
     renderLatestExpression(latest);
+    maybePlayLatestAudio(audio);
   } catch {}
 }
 
@@ -146,6 +168,27 @@ function renderLatestExpression(row) {
   surface.classList.toggle('glitch', mode.includes('glitch') || mode.includes('fragment'));
   surface.classList.toggle('fade', mode.includes('fade') || mode.includes('withdraw'));
   voice.textContent = text;
+}
+
+let soundEnabled = false;
+let lastPlayedStreamId = '';
+const soundToggle = document.getElementById('soundToggle');
+const voiceAudio = document.getElementById('voiceAudio');
+
+soundToggle.addEventListener('click', async () => {
+  soundEnabled = true;
+  soundToggle.classList.add('enabled');
+  soundToggle.textContent = 'sound enabled';
+  try { await voiceAudio.play(); voiceAudio.pause(); } catch {}
+});
+
+async function maybePlayLatestAudio(audioStatus) {
+  if (!soundEnabled || !audioStatus || !audioStatus.tts) return;
+  const streamId = audioStatus.tts.last_stream_id;
+  if (!streamId || streamId === lastPlayedStreamId) return;
+  lastPlayedStreamId = streamId;
+  voiceAudio.src = `/api/v1/audio/tts/stream/${encodeURIComponent(streamId)}?t=${Date.now()}`;
+  try { await voiceAudio.play(); } catch {}
 }
 
 pollVisitorSurface();

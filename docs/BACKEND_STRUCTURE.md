@@ -279,9 +279,11 @@ CREATE TABLE schema_version (
 |---|---|
 | `src/conscious_entity/interfaces/api.py` | app 创建、router 注册、兼容导出 |
 | `src/conscious_entity/interfaces/api_models.py` | Pydantic 请求模型 |
-| `src/conscious_entity/interfaces/api_runtime.py` | lifespan、runtime 配置、DB helper、loop rebuild、vision manager 生命周期 |
+| `src/conscious_entity/interfaces/api_runtime.py` | lifespan、runtime 配置、DB helper、loop rebuild、vision/audio manager 生命周期 |
 | `src/conscious_entity/interfaces/api_routes.py` | HTTP 路由处理 |
+| `src/conscious_entity/interfaces/api_audio.py` | 可选 audio adapter 路由：STT stream、audio dialog、TTS stream |
 | `src/conscious_entity/vision/runtime.py` | 可选 vision runtime：摄像头采集、YOLO person detection、presence event debounce |
+| `src/conscious_entity/audio/` | 可选 audio runtime：火山 STT/TTS 配置、stream id、协议封装 |
 
 **当前主要端点：**
 
@@ -300,6 +302,11 @@ CREATE TABLE schema_version (
 | `POST` | `/api/v1/vision/start` | 启动 Mac 摄像头和 YOLO worker | 本地开发面板，当前无认证 |
 | `POST` | `/api/v1/vision/stop` | 停止 vision worker 并释放摄像头 | 本地开发面板，当前无认证 |
 | `WS` | `/api/v1/vision/stream` | 推送 JSON metadata + binary JPEG frame | 本地开发面板，当前无认证 |
+| `GET` | `/api/v1/audio/status` | 查看可选语音 runtime 状态、disabled reason、STT/TTS 配置与最近 transcript/error | 本地开发面板，当前无认证 |
+| `WS` | `/api/v1/audio/stt/stream` | 接收 PCM chunks，代理火山 STT，返回 partial/final transcript metadata | 本地开发面板 / 后续身体节点，当前无认证 |
+| `POST` | `/api/v1/audio/dialog` | 将 STT final transcript 送入现有 `run_turn()`，并为合法输出创建 TTS stream id | 本地开发面板 / 后续身体节点，当前无认证 |
+| `GET` | `/api/v1/audio/tts/stream/{stream_id}` | 通过 HTTP streaming 播放合法 `ExpressionOutput` 派生的 TTS 音频 | 本地开发面板 / 访客 surface，当前无认证 |
+| `WS` | `/api/v1/audio/tts/stream` | 通过 WebSocket 播放 stream id；raw text 仅 debug flag 开启时可用 | 后续身体节点 / debug，当前无认证 |
 | `GET` | `/visitor` | 临时访客侧 body-facing surface，不展示内部调试信息 | 访客端，无认证 |
 
 **Vision 事件边界：**
@@ -307,6 +314,14 @@ CREATE TABLE schema_version (
 - 稳定进入、离开、长时间静默分别转换为已有 `USER_ENTERED`、`USER_LEFT`、`LONG_SILENCE_DETECTED`。
 - 事件通过 `InteractionLoop.handle_system_event(...)` 进入现有状态规则，不新增 `EventType`、YAML 行为规则或 SQLite schema。
 - 摄像头/YOLO 留在上位机；STM32 后续只接收事件、动作、灯光或电机命令，不接收视频流。
+
+**Audio 安全边界：**
+- Audio layer 只做输入/输出适配，不决定人格、不改状态规则、不写记忆规则。
+- STT partial transcript 只显示，不进入 `run_turn()`、memory 或 state；只有 final transcript 可调用 `/api/v1/audio/dialog`。
+- `/api/v1/audio/dialog` 与 `/api/v1/dialog` 共用同一个 turn lock，避免并发修改状态、记忆和短期上下文。
+- TTS 只能使用最终已过滤的 `ExpressionOutput` 派生文本并生成短期 `tts_stream_id`；visitor/body 不允许直接提交任意 raw text 让 Stranger 说话。
+- debug raw TTS 只有 `ENTITY_AUDIO_ALLOW_DEBUG_RAW_TTS=1` 时可用，并且不视为 Stranger speech。
+- 原始音频不写入 SQLite；audio runtime 只在内存中保留最近 transcript、stream id、logid 和 sanitized error。
 
 ---
 
@@ -355,7 +370,7 @@ OPERATOR_API_KEY=your_secret_here
 - `episodic_memories.reflected` 标志只能从 0 改为 1，不可逆
 - `reflective_summaries.active` 标志：新反思生成时不删除旧记录，仅将旧记录的 active 置为 0
 - 展期全程不重置任何表，仅在展期结束时归档
-- Stranger 当前不保存原始音视频，也不新增访客身份画像；视觉第一版只在内存中保留最新 JPEG frame / detections / recent events，presence 结果只作为已有系统事件进入状态路径
+- Stranger 当前不保存原始音视频，也不新增访客身份画像；视觉第一版只在内存中保留最新 JPEG frame / detections / recent events，presence 结果只作为已有系统事件进入状态路径；语音第一版只在内存中保留最近 transcript、TTS stream id 和 sanitized error
 - 自动调参建议不得直接写回 YAML；必须先作为待确认记录进入运营者流程
 
 ---

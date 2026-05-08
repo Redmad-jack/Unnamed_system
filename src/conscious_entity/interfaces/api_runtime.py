@@ -15,6 +15,7 @@ from conscious_entity.core.config_loader import load_all_configs
 from conscious_entity.core.loop import InteractionLoop
 from conscious_entity.db.connection import get_connection
 from conscious_entity.db.migrations import run_migrations
+from conscious_entity.audio import AudioConfig, AudioManager
 from conscious_entity.interfaces.api_models import EmbeddingConfigRequest, LLMConfigRequest
 from conscious_entity.llm.claude_client import ClaudeClient, ClaudeConfigurationError
 from conscious_entity.llm.embedding_client import EmbeddingClient, EmbeddingConfigurationError
@@ -122,6 +123,7 @@ async def lifespan(app: Any):
     app.state.embedding_runtime_config = None
     app.state.vision_manager = VisionManager(VisionConfig.from_env())
     app.state.vision_event_task = asyncio.create_task(_vision_event_dispatcher(app))
+    app.state.audio_manager = AudioManager(AudioConfig.from_env())
 
     try:
         yield
@@ -131,6 +133,21 @@ async def lifespan(app: Any):
             await app.state.vision_event_task
         app.state.vision_manager.stop()
         conn.close()
+
+
+async def _run_dialog_turn(request: Request, text: str):
+    loop = request.app.state.loop
+    if loop is None:
+        raise HTTPException(status_code=503, detail="Loop not initialised")
+
+    async with request.app.state.loop_lock:
+        output = await asyncio.get_running_loop().run_in_executor(None, loop.run_turn, text)
+
+    manager = getattr(request.app.state, "vision_manager", None)
+    if manager is not None:
+        manager.mark_activity()
+
+    return output
 
 
 async def _vision_event_dispatcher(app: Any) -> None:

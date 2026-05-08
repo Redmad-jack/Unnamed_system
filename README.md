@@ -37,10 +37,11 @@
 | Phase 8 | 记忆召回增强（可解释召回 + 可选 embedding 语义召回 + Memory Preview） | ✅ 完成 |
 | Phase 9 | Managed Memory（proposal → commit、influence preview/log、developer curation） | ✅ 完成 |
 | Phase 10 | 非移动视觉层第一版（Mac 摄像头 + YOLO person detection + presence events + `/visitor` surface） | ✅ 完成 |
+| Phase 11 | Audio Adapter Layer（火山 STT/TTS、stream id 安全边界、开发者 Audio workspace） | ✅ 完成 |
 
-**现在可以运行：** 通过命令行或本地 Web 看板与 Stranger 交互，实体有状态记忆、行为规则、LLM 表达、文本关系姿态识别、可解释记忆召回、Memory Preview 和可审计 managed memory 影响路径；可选视觉层能用本地 YOLO 模型和 Mac 摄像头产生 presence events，并在开发者面板与 `/visitor` surface 中显示。
+**现在可以运行：** 通过命令行或本地 Web 看板与 Stranger 交互，实体有状态记忆、行为规则、LLM 表达、文本关系姿态识别、可解释记忆召回、Memory Preview 和可审计 managed memory 影响路径；可选视觉层能用本地 YOLO 模型和 Mac 摄像头产生 presence events；可选语音层能用火山 STT/TTS 把浏览器麦克风输入转成文本回合，并只朗读合法 `ExpressionOutput` 派生的 stream id。
 
-**还未做的（后续阶段）：** 语音输入/输出、更完整的空间感知、身体外观设计、访客身份识别、展期终止仪式。物理移动、循路和避障属于更后面的身体阶段，先不进入当前实现。
+**还未做的（后续阶段）：** 更完整的空间感知、身体外观设计、访客身份识别、展期终止仪式。物理移动、循路和避障属于更后面的身体阶段，先不进入当前实现。
 
 ---
 
@@ -98,8 +99,10 @@ LLM 不直接改写 YAML、宪法、核心状态权重或策略规则。它可�
 | `src/conscious_entity/interfaces/api_models.py` | API 请求模型 |
 | `src/conscious_entity/interfaces/api_runtime.py` | API lifespan、runtime 配置、数据库辅助函数 |
 | `src/conscious_entity/interfaces/api_routes.py` | API 路由处理函数 |
+| `src/conscious_entity/interfaces/api_audio.py` | 可选 Audio Adapter API：STT stream、audio dialog、TTS stream |
 | `src/conscious_entity/interfaces/cli.py` | 终端 REPL 界面 |
 | `src/conscious_entity/vision/runtime.py` | 可选视觉 runtime：摄像头采集、YOLO person detection、presence event debounce |
+| `src/conscious_entity/audio/` | 可选语音 runtime：火山 STT/TTS 配置、stream id、协议封装 |
 | `data/memory.db` | SQLite 运行时数据库（gitignored，首次运行自动创建） |
 
 ---
@@ -134,6 +137,12 @@ pip install -e ".[dev,api]"
 
 ```bash
 pip install -e ".[dev,api,vision]"
+```
+
+如果要启用语音层，再安装 audio optional group，并配置火山 STT/TTS 凭证与音色：
+
+```bash
+pip install -e ".[dev,api,audio]"
 ```
 
 **配置 `.env`：**
@@ -235,6 +244,19 @@ ENTITY_VISION_CONFIDENCE=0.45
 
 开发者面板左侧 `Entity State` 下方的 `Vision` 面板可启动/停止摄像头 worker，并通过 WebSocket 接收后端标注后的 JPEG frames。视觉层当前只检测 `person`，并把稳定进入、离开和长时间静默转换为已有 `USER_ENTERED` / `USER_LEFT` / `LONG_SILENCE_DETECTED` 系统事件。
 
+语音层默认关闭。启用后，开发者面板 `Runtime` 区域的 `Audio Adapter` 可以启动浏览器麦克风、查看 STT partial/final transcript、将 final transcript 送入现有 turn loop，并播放火山 TTS 生成的实体声音。TTS 不接受 visitor/body 直接提交的任意文本；它只能播放由合法 `ExpressionOutput` 创建的 `tts_stream_id`。调试 raw text TTS 必须显式设置 `ENTITY_AUDIO_ALLOW_DEBUG_RAW_TTS=1`，且不视为 Stranger speech。
+
+```env
+ENTITY_AUDIO_PROVIDER=volcengine
+ENTITY_AUDIO_ENABLED=1
+ENTITY_VOLCENGINE_AUTH_MODE=api_key
+ENTITY_VOLCENGINE_API_KEY=your_volcengine_api_key_here
+ENTITY_VOLCENGINE_STT_RESOURCE_ID=volc.seedasr.sauc.concurrent
+ENTITY_VOLCENGINE_TTS_RESOURCE_ID=seed-tts-2.0
+ENTITY_VOLCENGINE_TTS_VOICE_TYPE=your_volcengine_voice_type_here
+ENTITY_AUDIO_OUTPUT_FORMAT=mp3
+```
+
 Web 看板顶部的 `Save Dialog` 会把当前 session 的对话导出为 JSON。也可以直接访问：
 
 ```text
@@ -322,7 +344,7 @@ PYTHONPATH=src python3 -m pytest -p no:debugging
 ```
 当前文本系统  CLI + 本地 FastAPI 开发者 API + Memory Preview + Managed Memory
      ↓
-非移动身体    第一版视觉 presence + /visitor surface 已接入；下一步 STT/TTS + 外观/声音/显示或投影呈现
+非移动身体    第一版视觉 presence + /visitor surface + 火山 STT/TTS Audio Adapter 已接入；下一步做真实现场联调、外观/声音/显示或投影呈现
      ↓
 物理身体      循路 + 避障 + 空间巡游 / 停留策略
      ↓

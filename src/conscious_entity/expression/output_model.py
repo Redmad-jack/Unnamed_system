@@ -9,7 +9,7 @@ class ExpressionOutput:
     text: str
     delay_ms: int
     visual_mode: str        # "normal" | "fragmented" | "disturbed" | "silent"
-    spoken_text: Optional[str]  # v0.2 voice channel; always None in v0.1
+    spoken_text: Optional[str]  # Optional voice-channel text; falls back to text when None.
     raw_prompt: str         # full prompt serialized for debugging / governance panel
     truncated: bool = False
     stop_reason: Optional[str] = None

@@ -7,9 +7,9 @@
 ## 当前状态
 
 - 当前进行中：无
-- 当前可运行形态：CLI + 本地 FastAPI 开发者 API + Web 看板 + 可选 Vision 面板 + `/visitor` 临时身体表面；观众侧最终呈现方向是身体，不是传统 UI
-- 当前核心能力：Stranger 文本协议、状态机、短期/情节/反思记忆、可解释/可选 embedding 召回、Memory Preview、managed memory proposal → commit、influence log / curation、可选 YOLO person presence detection
-- 当前验证基线：`PYTHONPATH=src python3 -m pytest -p no:debugging`，最近一次结果为 `293 passed`
+- 当前可运行形态：CLI + 本地 FastAPI 开发者 API + Web 看板 + 可选 Vision 面板 + 可选 Audio Adapter + `/visitor` 临时身体表面；观众侧最终呈现方向是身体，不是传统 UI
+- 当前核心能力：Stranger 文本协议、状态机、短期/情节/反思记忆、可解释/可选 embedding 召回、Memory Preview、managed memory proposal → commit、influence log / curation、可选 YOLO person presence detection、可选火山 STT/TTS 语音适配层
+- 当前验证基线：`PYTHONPATH=src python3 -m pytest -p no:debugging`，最近一次结果为 `319 passed`
 - 当前注意事项：`AGENTS.md` 与 `CLAUDE.md` 有用户侧未提交差异；除非明确要求，不应在常规任务中触碰
 
 ---
@@ -19,13 +19,50 @@
 - [ ] 使用已轮换的真实供应商凭证做一轮 CLI/API 联调，确认自定义模型名与网关鉴权在目标环境可用
 - [ ] 继续观察真实对话中的记忆连续性：Memory Preview 是否能解释召回来源，managed memory influence 是否可审计且不越界
 - [ ] 手动联调视觉层：安装 `.[dev,api,vision]`，配置本地 `ENTITY_VISION_MODEL_PATH`，确认 Mac 摄像头授权、实时标注帧、detections 和 presence events
-- [ ] 继续规划非移动身体阶段：STT/TTS、身体外观、声音和显示/投影/光的呈现映射；更完整空间感知仍待设计
+- [ ] 使用真实火山凭证做一轮 Audio Adapter 联调：确认浏览器麦克风权限、STT partial/final、`/audio/dialog`、TTS HTTP streaming、`/visitor` enable sound
+- [ ] 继续规划非移动身体阶段：身体外观、声音风格、显示/投影/光的呈现映射；更完整空间感知仍待设计
 - [ ] 物理移动、循路、避障、底盘控制和安全边界放到更后阶段，等非物理身体通道稳定后再实现
 - [ ] 部署认证、访客身份策略与展期终止仪式仍待设计确认
 
 ---
 
 ## Changelog
+
+### 2026-05-09：火山 STT/TTS Audio Adapter 第一版
+
+- [x] 新增可选 `audio` 依赖组：
+  - `websockets` 用于后端代理火山 STT/TTS WebSocket
+  - 默认核心安装路径不包含 audio 依赖，未安装或凭证/音色缺失时 `/api/v1/audio/status` 返回 disabled reason
+- [x] 新增 `src/conscious_entity/audio/`：
+  - `AudioConfig` 读取 `ENTITY_AUDIO_*` 与 `ENTITY_VOLCENGINE_*`
+  - `AudioManager` 维护 STT sessions、TTS stream ids、TTL、最近 transcript/logid/error
+  - `SpeechTextAdapter` 从合法 `ExpressionOutput` 提取可朗读文本，清理 markdown/debug marker 并分段
+  - `VolcengineSTTClient` / `VolcengineTTSClient` 与 protocol helper 封装火山连接、headers、payload、响应解析和错误映射
+- [x] FastAPI 接入 Audio Adapter：
+  - `GET /api/v1/audio/status`
+  - `WS /api/v1/audio/stt/stream`
+  - `POST /api/v1/audio/dialog`
+  - `GET /api/v1/audio/tts/stream/{stream_id}`
+  - `WS /api/v1/audio/tts/stream`
+  - `/api/v1/dialog` 与 `/api/v1/audio/dialog` 共用同一个 turn helper / lock，不新增 YAML 行为规则或 SQLite schema
+- [x] 明确声音安全边界：
+  - STT partial transcript 只显示，不进入 state / memory / run_turn
+  - TTS 只朗读最终已过滤的 `ExpressionOutput` 派生文本
+  - visitor/body 只能播放 `tts_stream_id`，不能提交任意 raw text 让 Stranger 发声
+  - debug raw TTS 需要 `ENTITY_AUDIO_ALLOW_DEBUG_RAW_TTS=1`，且不视为 Stranger speech
+- [x] 开发者与访客表面更新：
+  - Runtime 区新增 Audio Adapter 工作区，支持 Mic Start/Stop、partial/final transcript、Send Final、Speak Latest、status/error
+  - `/visitor` 新增 enable sound，播放后端已创建的最新 `tts_stream_id`，不展示调试信息
+- [x] 文档与环境模板同步：
+  - `.env.example` 增加 audio 环境变量
+  - README / TECH_STACK / APP_FLOW / BACKEND_STRUCTURE / PRD / frame / FRONTEND_GUIDELINES / IMPLEMENTATION_PLAN 对齐当前语音能力与安全边界
+- [x] 验证：
+  - `node --check src/conscious_entity/interfaces/static/dashboard.js`
+  - `PYTHONPATH=src python3 -m py_compile src/conscious_entity/audio/*.py src/conscious_entity/interfaces/api_audio.py src/conscious_entity/interfaces/api_runtime.py src/conscious_entity/interfaces/api_routes.py src/conscious_entity/interfaces/api.py`
+  - `PYTHONPATH=src python3 -m pytest -p no:debugging tests/unit/test_audio_config.py tests/unit/test_speech_text.py tests/unit/test_audio_manager.py tests/unit/test_volcengine_audio.py tests/unit/test_api_audio.py tests/unit/test_api_export.py tests/integration/test_full_loop.py`
+  - `69 passed`
+  - `PYTHONPATH=src python3 -m pytest -p no:debugging`
+  - `319 passed`
 
 ### 2026-05-08：开发者面板迁移为 React 可拖拽布局
 

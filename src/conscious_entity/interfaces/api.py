@@ -16,7 +16,17 @@ from __future__ import annotations
 from fastapi import FastAPI, HTTPException
 from fastapi.staticfiles import StaticFiles
 
+from conscious_entity.interfaces.api_audio import (
+    audio_dialog,
+    audio_router,
+    audio_status,
+    audio_stt_stream,
+    audio_tts_http_stream,
+    audio_tts_ws_stream,
+)
 from conscious_entity.interfaces.api_models import (
+    AudioDebugTTSRequest,
+    AudioDialogRequest,
     DialogRequest,
     EmbeddingConfigRequest,
     EmbeddingTestRequest,
@@ -123,4 +133,5 @@ app = FastAPI(
     lifespan=lifespan,
 )
 app.include_router(router)
+app.include_router(audio_router)
 app.mount("/static", StaticFiles(directory=str(_static_dir())), name="static")

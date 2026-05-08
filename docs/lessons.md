@@ -51,6 +51,11 @@
 - 原因：API 端点增长很快，单文件堆叠会让测试、配置切换、记忆管理和会话管理互相牵连
 - 如何应用：新增 API 能力时先放入 `api_models.py`、`api_runtime.py` 或 `api_routes.py` 中的对应层，不把新 helper 直接塞回 `api.py`
 
+**L13：TTS 不能成为绕过宪法的输出后门**
+- 规则：访客侧和身体节点只能播放由合法 `ExpressionOutput` 创建的 `tts_stream_id`；raw text TTS 只能作为显式 debug preview，不能视为 Stranger speech
+- 原因：如果外部节点能直接提交任意文本给 TTS，实体声音就会绕过 Perception、Policy、Expression 和 Constitution
+- 如何应用：新增语音、身体或远程播放入口时，先确认它消费的是 stream id 或已过滤输出，而不是未治理文本
+
 **L07：不要跳过 `clamp_all()`**
 - 规则：每次状态更新调用链末尾必须调用 `clamp_all()`
 - 原因：连续事件的累积增量可能使状态值越出 `[0.0, 1.0]`

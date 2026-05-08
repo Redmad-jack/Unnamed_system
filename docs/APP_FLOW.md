@@ -13,7 +13,7 @@
 运营者路径：[本地开发者面板] ← 实时状态 / 对话历史 / Memory Preview / Managed Memory Curation
 ```
 
-访客路径最终不是传统 user interface。当前 CLI / Web 输入只是开发阶段入口；第一版 `/visitor` 只作为临时 body-facing surface，后续输出应进入声音、视觉、外观、停留、靠近/回避等身体行为。物理移动、循路和避障是更后面的身体层，在非移动的声音/视觉/外观能力稳定前不进入主实现。
+访客路径最终不是传统 user interface。当前 CLI / Web 输入只是开发阶段入口；第一版 `/visitor` 只作为临时 body-facing surface。当前可选 audio adapter 已能把浏览器麦克风 final transcript 送入现有 turn loop，并把合法 `ExpressionOutput` 转成火山 TTS stream id 播放。物理移动、循路和避障是更后面的身体层，在非移动的声音/视觉/外观能力稳定前不进入主实现。
 
 ---
 
@@ -108,6 +108,9 @@ Step 15  发送 turn_complete 到 EventBus，供调试或后续 instrumentation 
 ```
 
 **成功状态：** 返回 ExpressionOutput（text + delay_ms + visual_mode），后续由身体呈现层映射为文字、声音、光、投影、停留或其它非 UI 输出
+
+**当前语音入口：** 可选 audio runtime 使用火山 STT/TTS。浏览器或未来身体节点只把 16k / 16bit / mono PCM chunk 发到 `/api/v1/audio/stt/stream`；只有 `transcript.final` 可以通过 `/api/v1/audio/dialog` 进入现有 `run_turn()`。TTS 只朗读最终已过滤的 `ExpressionOutput` 派生文本，并通过 `tts_stream_id` 播放，不允许 visitor/body 直接指定任意 TTS 文本。
+
 **错误状态：**
 - LLM 调用失败 → 使用规则生成 fallback 回应（简短、中性）
 - 数据库写入失败 → 记录日志，但不中断对话流程
@@ -149,7 +152,9 @@ python scripts/inspect_state.py
 
 **Vision 工作区：** 开发者 Web 看板左侧 `Entity State` 下方显示 Vision 面板，可启动/停止摄像头与 YOLO worker，查看 runtime status、模型路径状态、camera index、FPS、detections、最近 vision events，并通过 WebSocket JPEG frames 显示后端标注后的实时画面。
 
-**访客 surface：** `/visitor` 只读取最新 `ExpressionOutput` 与少量 state 映射为文字、扰动、沉默和延迟感，不显示 dashboard 控件、内部规则、memory、prompt 或调试指标。
+**Audio 工作区：** 开发者 Web 看板 `Runtime` 区域显示 Audio Adapter，可启动/停止浏览器麦克风，查看 provider、disabled reason、STT partial/final transcript、TTS stream id 和错误，并将 final transcript 送入现有对话回合。
+
+**访客 surface：** `/visitor` 只读取最新 `ExpressionOutput` 与少量 state 映射为文字、扰动、沉默和延迟感；如已启用声音，也只播放后端已创建的 `tts_stream_id`，不显示 dashboard 控件、内部规则、memory、prompt 或调试指标。
 
 ---
 
@@ -229,13 +234,15 @@ EventBus.emit("turn_complete")
 | Managed memory proposal / commit 失败 | 记录错误，不影响本轮 ExpressionOutput |
 | Vision optional deps 未安装或模型路径缺失 | `/api/v1/vision/status` 返回 disabled reason；启动 worker 时返回明确 400，不影响文本系统 |
 | 摄像头无法打开或帧读取失败 | vision worker 记录 runtime error，释放摄像头；主 loop 继续运行 |
+| Audio optional deps / 火山凭证 / 音色缺失 | `/api/v1/audio/status` 返回 disabled reason；文本系统继续运行 |
+| STT / TTS 流式连接失败 | 记录 sanitized error 与 logid，不保存原始音频，不影响现有文本 dialog |
 
 ---
 
 ## 6. 待确认
 
 - **[ 待确认 ]** Stranger 身体外观、材料、尺度、显示/投影/光等呈现方式
-- **[ 待确认 ]** STT / TTS 的具体实现方案
+- **[ 已完成第一版 ]** STT / TTS Audio Adapter：火山 STT/TTS，可降级 disabled，不改变核心 turn loop
 - **[ 已完成第一版 ]** 视觉 presence detection 输入边界：Mac 摄像头 + 本地 YOLO；后续空间感知仍待确认
 - **[ 待确认 ]** 物理移动、循路、避障和底盘方案（后续阶段）
 - **[ 待确认 ]** 运营者面板的具体页面布局和访问方式（本地 localhost？还是局域网访问？）

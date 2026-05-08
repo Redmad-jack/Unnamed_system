@@ -103,13 +103,14 @@ Stranger 后续会获得身体，并在美术馆中移动、停留、观察和�
 ```
 ExpressionOutput
   ├── text          → 文字通道（v0.1 实现）
-  ├── spoken_text   → 声音通道（后续 STT/TTS 阶段）
-  └── visual_mode   → 身体 / 视觉状态通道（后续呈现阶段）
+  ├── spoken_text   → 声音通道（当前由 Audio Adapter 朗读合法输出）
+  └── visual_mode   → 身体 / 视觉状态通道（当前 `/visitor` 与视觉面板已接入第一版）
 ```
 
 **设计约束：**
 - 新增通道不得修改 ExpressionEngine 的核心逻辑
 - 每个通道有自己的渲染器，通道之间不互相依赖
+- 访客侧声音只能播放后端从合法 `ExpressionOutput` 创建的 `tts_stream_id`，不得直接提交 raw text 让实体发声
 - `visual_mode` 的取值集合必须在 ExpressionOutput 文档中明确列出，视觉层通过 switch/mapping 处理，不用 if-else 硬编码
 - 物理移动不直接写入 ExpressionEngine；应由后续 body controller 将状态、策略和输出映射为停留、靠近、回避、转向、巡游等动作
 

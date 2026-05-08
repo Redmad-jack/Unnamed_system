@@ -387,6 +387,40 @@ tr:hover td { background: var(--surface2); }
 }
 .wide { grid-column: 1 / -1; }
 
+.audio-section { display: grid; gap: 8px; }
+.audio-kv { border-top: 1px solid var(--border); padding-top: 6px; }
+.audio-label {
+  color: var(--dim);
+  display: grid;
+  font-size: 10px;
+  gap: 4px;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+.audio-label textarea {
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  color: var(--text);
+  font-size: 11px;
+  min-height: 54px;
+  padding: 6px;
+  resize: vertical;
+}
+.audio-transcript {
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  color: var(--text-dim);
+  min-height: 32px;
+  padding: 6px;
+  text-transform: none;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.audio-transcript.partial { color: var(--yellow); }
+.hidden-audio { display: none; }
+
 .config-overlay {
   align-items: center;
   background: rgba(0,0,0,0.75);

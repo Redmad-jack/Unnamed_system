@@ -9,6 +9,15 @@ class DialogRequest(BaseModel):
     text: str
 
 
+class AudioDialogRequest(BaseModel):
+    transcript: str
+    audio_session_id: Optional[str] = None
+
+
+class AudioDebugTTSRequest(BaseModel):
+    text: str
+
+
 class LLMConfigRequest(BaseModel):
     mode: str
     model: Optional[str] = None

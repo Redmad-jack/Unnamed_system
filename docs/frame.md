@@ -28,7 +28,7 @@ Perception → State Core → Memory → Policy → Expression
 | Embeddings | Optional OpenAI-compatible HTTP endpoint | Semantic retrieval without adding local ML dependencies; disabled by default |
 | Database | SQLite (WAL mode) | Single-machine installation, no network required |
 | API layer | FastAPI in optional `api` dependency group | Local developer API and Web dashboard, not part of core dependencies |
-| STT/TTS (future) | Whisper / system TTS | Optional voice embodiment, not currently declared |
+| STT/TTS | 火山引擎 / Volcengine via optional `audio` dependency group | Voice adapter layer; final transcripts enter the normal turn loop and TTS only speaks legal ExpressionOutput-derived stream ids |
 | Config format | YAML | Artist-editable without touching Python |
 | Testing | pytest | Standard, fixture-based |
 
@@ -112,7 +112,9 @@ conscious_entity/
 │       │   ├── api_models.py         # API request models
 │       │   ├── api_runtime.py        # API lifespan + runtime helpers
 │       │   ├── api_routes.py         # FastAPI route handlers
-│       │   └── speech.py             # Future STT/TTS integration
+│       │   └── api_audio.py          # Audio Adapter API routes
+│       │
+│       ├── audio/                    # Optional Volcengine STT/TTS adapter
 │       │
 │       └── core/
 │           ├── loop.py               # Main interaction loop — orchestrates pipeline
@@ -882,10 +884,9 @@ CREATE INDEX IF NOT EXISTS idx_reflective_active
 
 **Still deferred:**
 - Clock-based background decay; current decay runs per turn
-- STT/TTS voice channel as part of Stranger's body
-- Visual / spatial perception and body-facing presentation layer
+- Full local STT/TTS models, voice identity, or acoustic identity analysis
+- Full spatial perception and final body-facing presentation layer
 - Appearance design for the physical or semi-physical body
-- Presence / spatial sensing
 - Physical movement, path following, obstacle avoidance, and body safety boundaries
 - Deployment authentication for any non-local operator panel
 
@@ -903,8 +904,8 @@ CREATE INDEX IF NOT EXISTS idx_reflective_active
 **Goal:** Strengthen bodily presence without requiring the Stranger to physically move yet. Make voice, vision, appearance, silence, delay, and visual disturbance expressive.
 
 **What to build:**
-- `interfaces/speech.py` (Whisper STT + TTS)
-- Visual / spatial perception input for observation, distance, presence, and relation posture
+- Continue validating `audio/` Volcengine STT/TTS adapter with real credentials and exhibition-like latency
+- Extend visual / spatial perception from presence detection toward distance, lingering, and relation posture
 - Time-based decay using a background timer
 - Wire `delay_ms`, `spoken_text`, and `visual_mode` to a body-facing presentation layer
 - Appearance / display / projection / light surface that reads `ExpressionOutput` and state values without exposing operator-only internals
@@ -1050,7 +1051,7 @@ Without calling the LLM, verify:
 | Expression layer | LLM (Claude Sonnet) | Open-ended generation, tone nuance |
 | Reflection layer | LLM (Claude Haiku) | Semantic compression, pattern articulation |
 | Semantic memory retrieval | Embedding model | Semantic match beyond literal keywords |
-| STT / TTS | Whisper / system TTS | Voice channel for future non-moving embodiment, not a chat-product feature |
+| STT / TTS | Volcengine Audio Adapter | Voice channel for non-moving embodiment; audio layer adapts input/output but does not decide content |
 | Physical body control | Dedicated later body layer | Path following, obstacle avoidance, roaming, and safety should stay outside core turn logic |
 | Event detection | Rule-based | Explicit, transparent, fast |
 | Salience scoring | Rule-based | Artist controls what "matters" |

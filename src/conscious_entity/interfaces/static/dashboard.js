@@ -641,6 +641,7 @@
     return h(React.Fragment, null,
       h(ConfigSection, { title: "LLM Provider", data: llm, fields: ["mode", "source", "ENTITY_LLM_MODEL", "ANTHROPIC_BASE_URL", "ENTITY_LLM_MESSAGES_ENDPOINT", "error"] }),
       h(ConfigSection, { title: "Embedding Provider", data: embedding, fields: ["mode", "source", "ENTITY_EMBEDDING_MODEL", "ENTITY_EMBEDDING_BASE_URL", "ENTITY_EMBEDDING_ENDPOINT", "error"] }),
+      h(AudioPane),
       h("div", { className: "section" },
         h("div", { className: "section-title" }, "Diagnostics"),
         stats ? h("table", null, h("tbody", null,
@@ -651,6 +652,190 @@
           h("tr", null, h("td", null, "Tokens"), h("td", null, `${stats.total_prompt_tokens} / ${stats.total_completion_tokens}`)),
         )) : h("div", { className: "dim" }, "Loading diagnostics…"),
       ),
+    );
+  }
+
+  function AudioPane() {
+    const [status, setStatus] = useState(null);
+    const [partial, setPartial] = useState("");
+    const [finalText, setFinalText] = useState("");
+    const [latestDialog, setLatestDialog] = useState(null);
+    const [error, setError] = useState("");
+    const [recording, setRecording] = useState(false);
+    const socketRef = useRef(null);
+    const mediaRef = useRef(null);
+    const audioContextRef = useRef(null);
+    const sourceRef = useRef(null);
+    const processorRef = useRef(null);
+    const muteRef = useRef(null);
+    const playerRef = useRef(null);
+
+    const loadStatus = useCallback(async () => {
+      try {
+        setStatus(await fetchJSON("/api/v1/audio/status"));
+      } catch (err) {
+        setError(err.message);
+      }
+    }, []);
+
+    useEffect(() => { loadStatus(); }, [loadStatus]);
+    useInterval(loadStatus, 5000);
+
+    const stopMic = useCallback(() => {
+      const socket = socketRef.current;
+      if (socket && socket.readyState === WebSocket.OPEN) {
+        socket.send(JSON.stringify({ type: "stop" }));
+      }
+      if (socket) socket.close();
+      socketRef.current = null;
+      if (processorRef.current) processorRef.current.disconnect();
+      if (sourceRef.current) sourceRef.current.disconnect();
+      if (muteRef.current) muteRef.current.disconnect();
+      if (mediaRef.current) mediaRef.current.getTracks().forEach((track) => track.stop());
+      if (audioContextRef.current) audioContextRef.current.close().catch(() => {});
+      processorRef.current = null;
+      sourceRef.current = null;
+      muteRef.current = null;
+      mediaRef.current = null;
+      audioContextRef.current = null;
+      setRecording(false);
+    }, []);
+
+    useEffect(() => stopMic, [stopMic]);
+
+    const startMic = useCallback(async () => {
+      if (recording) return;
+      try {
+        setError("");
+        const stream = await navigator.mediaDevices.getUserMedia({
+          audio: { echoCancellation: true, noiseSuppression: true, channelCount: 1 },
+        });
+        const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+        const context = new AudioContextClass();
+        await context.resume();
+        const targetRate = Number(status && status.stt && status.stt.sample_rate) || 16000;
+        const chunkMs = Number(status && status.stt && status.stt.chunk_ms) || 200;
+        const socket = new WebSocket(`${window.location.protocol === "https:" ? "wss" : "ws"}://${window.location.host}/api/v1/audio/stt/stream`);
+        socket.binaryType = "arraybuffer";
+        socket.onopen = () => {
+          socket.send(JSON.stringify({
+            type: "start",
+            format: "pcm_s16le",
+            sample_rate: targetRate,
+            channels: 1,
+            chunk_ms: chunkMs,
+          }));
+        };
+        socket.onmessage = (event) => {
+          if (typeof event.data !== "string") return;
+          let data = null;
+          try { data = JSON.parse(event.data); } catch { return; }
+          if (data.type === "transcript.partial") setPartial(data.text || "");
+          if (data.type === "transcript.final") {
+            setFinalText(data.text || "");
+            setPartial("");
+          }
+          if (data.type === "error" || data.type === "warning") {
+            setError(`${data.code || data.type}${data.message ? `: ${data.message}` : ""}`);
+          }
+        };
+        socket.onerror = () => setError("Audio STT stream connection failed.");
+        socket.onclose = () => setRecording(false);
+
+        const source = context.createMediaStreamSource(stream);
+        const processor = context.createScriptProcessor(4096, 1, 1);
+        const mute = context.createGain();
+        mute.gain.value = 0;
+        processor.onaudioprocess = (event) => {
+          if (!socketRef.current || socketRef.current.readyState !== WebSocket.OPEN) return;
+          const input = event.inputBuffer.getChannelData(0);
+          const pcm = downsampleToInt16(input, context.sampleRate, targetRate);
+          if (pcm.byteLength > 0) socketRef.current.send(pcm);
+        };
+        source.connect(processor);
+        processor.connect(mute);
+        mute.connect(context.destination);
+
+        socketRef.current = socket;
+        mediaRef.current = stream;
+        audioContextRef.current = context;
+        sourceRef.current = source;
+        processorRef.current = processor;
+        muteRef.current = mute;
+        setRecording(true);
+      } catch (err) {
+        stopMic();
+        setError(err.message || String(err));
+      }
+    }, [recording, status, stopMic]);
+
+    const playStream = useCallback(async (streamId) => {
+      if (!streamId || !playerRef.current) return;
+      playerRef.current.src = `/api/v1/audio/tts/stream/${encodeURIComponent(streamId)}?t=${Date.now()}`;
+      try {
+        await playerRef.current.play();
+      } catch (err) {
+        setError(err.message || String(err));
+      }
+    }, []);
+
+    const sendFinal = useCallback(async () => {
+      const transcript = finalText.trim();
+      if (!transcript) return;
+      try {
+        const result = await fetchJSON("/api/v1/audio/dialog", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ transcript }),
+        });
+        setLatestDialog(result);
+        window.dispatchEvent(new CustomEvent("entity:turn-complete"));
+        loadStatus();
+        if (result.tts_stream_id) playStream(result.tts_stream_id);
+      } catch (err) {
+        setError(err.message);
+      }
+    }, [finalText, loadStatus, playStream]);
+
+    const speakLatest = useCallback(() => {
+      const streamId = latestDialog && latestDialog.tts_stream_id
+        ? latestDialog.tts_stream_id
+        : status && status.tts && status.tts.last_stream_id;
+      playStream(streamId);
+    }, [latestDialog, playStream, status]);
+
+    const enabled = status && status.enabled;
+    return h("div", { className: "section audio-section" },
+      h("div", { className: "section-title" }, "Audio Adapter"),
+      h("div", { className: "toolbar" },
+        h("button", { className: "btn-sm", onClick: startMic, disabled: recording }, recording ? "Mic On" : "Mic Start"),
+        h("button", { className: "btn-sm", onClick: stopMic, disabled: !recording }, "Mic Stop"),
+        h("button", { className: "btn-sm", onClick: sendFinal }, "Send Final"),
+        h("button", { className: "btn-sm", onClick: speakLatest }, "Speak Latest"),
+        h("button", { className: "btn-sm", onClick: loadStatus }, "Reconnect"),
+      ),
+      h("div", { className: "kv-grid audio-kv" },
+        h("span", null, "Provider"), h("span", null, status ? status.provider : "—"),
+        h("span", null, "Status"), h("span", { className: enabled ? "ok" : "err" }, status ? (enabled ? "enabled" : status.reason) : "loading"),
+        h("span", null, "STT"), h("span", null, status && status.stt ? `${status.stt.sample_rate || "—"}Hz · ${status.stt.chunk_ms || "—"}ms · ${status.stt.active_sessions || 0} active` : "—"),
+        h("span", null, "TTS"), h("span", null, status && status.tts ? `${status.tts.output_format || "—"} · ${status.tts.voice_type || "voice not set"}` : "—"),
+      ),
+      h("label", { className: "audio-label" }, "Partial",
+        h("div", { className: "audio-transcript partial" }, partial || "—"),
+      ),
+      h("label", { className: "audio-label" }, "Final transcript",
+        h("textarea", {
+          value: finalText,
+          onChange: (event) => setFinalText(event.target.value),
+          placeholder: "Final transcript from STT…",
+        }),
+      ),
+      latestDialog ? h("div", { className: "item" },
+        h("div", { className: "item-meta" }, `tts: ${latestDialog.tts_stream_id || latestDialog.audio_disabled_reason || "silent"}`),
+        h("div", { className: "item-text" }, latestDialog.output_text || "..."),
+      ) : null,
+      error ? h("div", { className: "err" }, error) : null,
+      h("audio", { ref: playerRef, className: "hidden-audio" }),
     );
   }
 
@@ -800,6 +985,23 @@
           )),
         ) : h("div", { className: "dim" }, "Select a session…")),
     );
+  }
+
+  function downsampleToInt16(input, sourceRate, targetRate) {
+    if (!input || input.length === 0) return new ArrayBuffer(0);
+    const ratio = sourceRate / targetRate;
+    const outputLength = Math.max(1, Math.floor(input.length / ratio));
+    const buffer = new ArrayBuffer(outputLength * 2);
+    const view = new DataView(buffer);
+    for (let i = 0; i < outputLength; i += 1) {
+      const start = Math.floor(i * ratio);
+      const end = Math.min(input.length, Math.floor((i + 1) * ratio));
+      let sum = 0;
+      for (let j = start; j < end; j += 1) sum += input[j];
+      const sample = clamp(sum / Math.max(1, end - start), -1, 1);
+      view.setInt16(i * 2, sample < 0 ? sample * 0x8000 : sample * 0x7fff, true);
+    }
+    return buffer;
   }
 
   function ConfigModal({ onClose }) {
