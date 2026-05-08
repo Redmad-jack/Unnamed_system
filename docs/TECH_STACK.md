@@ -83,17 +83,20 @@
 
 ## 前端技术
 
-当前开发者面板使用 FastAPI 静态页面 + 原生 HTML/CSS/JS，服务于本地调试、Memory Preview、managed memory curation 和 Vision worker 监控。访客侧第一版 `/visitor` 也是原生 HTML/CSS/JS，只作为非 dashboard 的临时 body-facing surface，不暴露内部规则、memory 或 prompt。
+当前开发者面板使用 FastAPI 静态页面 + React/ReactDOM 本地 vendor 文件，服务于本地调试、Memory Preview、managed memory curation 和 Vision worker 监控。React 只用于开发者面板的组件化与可拖拽布局，不引入独立前端 dev server 或运行时 CDN。
+
+访客侧第一版 `/visitor` 仍是原生 HTML/CSS/JS，只作为非 dashboard 的临时 body-facing surface，不暴露内部规则、memory 或 prompt。
 
 访客端候选方案（供后续决策参考）：
 
 | 方案 | 优点 | 缺点 | 适合场景 |
 |---|---|---|---|
 | 原生 HTML/CSS/JS | 零依赖，完全可控 | 开发效率低 | 极简展览界面 |
-| React SPA | 组件化，状态管理清晰 | 需要 Node.js 构建链 | 复杂运营者面板 |
+| React 静态面板 | 组件化，状态管理清晰；可直接由 FastAPI 提供静态文件 | 若继续扩大，可能需要构建链 | 当前开发者 / 运营者面板 |
+| React SPA + 构建链 | 适合复杂组件、类型检查和模块拆分 | 需要 Node.js 构建链 | 更复杂运营者面板 |
 | FastAPI + Jinja2 SSR | Python 全栈，无独立前端 | 动态交互受限 | MVP 快速落地 |
 
-在身体外观、投影、屏幕或光的具体方案确认前，不引入任何前端构建工具或框架。
+在身体外观、投影、屏幕或光的具体方案确认前，不为访客侧呈现引入前端构建工具或框架。开发者面板可使用本地静态 React，但不得让观众侧 `/visitor` 收缩成普通 dashboard。
 
 ---
 

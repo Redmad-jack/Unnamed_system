@@ -14,6 +14,7 @@ The implementation is split into:
 from __future__ import annotations
 
 from fastapi import FastAPI, HTTPException
+from fastapi.staticfiles import StaticFiles
 
 from conscious_entity.interfaces.api_models import (
     DialogRequest,
@@ -122,3 +123,4 @@ app = FastAPI(
     lifespan=lifespan,
 )
 app.include_router(router)
+app.mount("/static", StaticFiles(directory=str(_static_dir())), name="static")

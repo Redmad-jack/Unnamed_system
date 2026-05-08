@@ -27,6 +27,23 @@
 
 ## Changelog
 
+### 2026-05-08：开发者面板迁移为 React 可拖拽布局
+
+- [x] 将开发者面板从单文件内联 HTML/CSS/JS 改为静态 React 面板：
+  - `index.html` 只保留挂载点和本地静态资源引用
+  - `dashboard.css` 承载布局与组件样式
+  - `dashboard.js` 承载 React 组件和 API polling / WebSocket 逻辑
+  - React / ReactDOM 作为本地 vendor 静态文件提供，不使用 CDN，不要求运行前端 dev server
+- [x] 新增可拖拽布局：
+  - 左栏、右栏、底部行均可拖动调整大小
+  - 尺寸写入 `localStorage`，刷新后保留
+  - Vision 画面随面板尺寸放大
+- [x] 保留主要开发者工作流：
+  - Entity State、Vision、Dialog、Memory System
+  - Runtime / Memory Curation / Session & History 三个右侧工作区
+  - Save Dialog、Reset Memory、session type 切换和 YAML Config 查看
+- [x] FastAPI 增加 `/static` 静态资源挂载，仅用于提供 dashboard CSS/JS/vendor 文件，不改变数据 API、SQLite schema 或 YAML 行为规则
+
 ### 2026-05-08：Vision 面板显示增强
 
 - [x] 放大开发者面板左侧 Vision 工作区：

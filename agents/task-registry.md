@@ -98,3 +98,12 @@ Status values: `in_progress`, `done`
 | src/conscious_entity/interfaces/static/index.html | Codex | done | 2026-05-08 11:37 CST |
 | docs/progress.md | Codex | done | 2026-05-08 11:37 CST |
 | agents/task-registry.md | Codex | done | 2026-05-08 11:37 CST |
+| src/conscious_entity/interfaces/static/index.html | Codex | done | 2026-05-08 11:51 CST |
+| src/conscious_entity/interfaces/static/dashboard.css | Codex | done | 2026-05-08 11:51 CST |
+| src/conscious_entity/interfaces/static/dashboard.js | Codex | done | 2026-05-08 11:51 CST |
+| src/conscious_entity/interfaces/static/vendor/react.production.min.js | Codex | done | 2026-05-08 11:51 CST |
+| src/conscious_entity/interfaces/static/vendor/react-dom.production.min.js | Codex | done | 2026-05-08 11:51 CST |
+| src/conscious_entity/interfaces/api.py | Codex | done | 2026-05-08 11:51 CST |
+| docs/TECH_STACK.md | Codex | done | 2026-05-08 11:51 CST |
+| docs/progress.md | Codex | done | 2026-05-08 11:51 CST |
+| agents/task-registry.md | Codex | done | 2026-05-08 11:51 CST |
