@@ -13,6 +13,7 @@ from have_some_ai.models import (
     Participant,
     ParticipantStatus,
     QueueStatus,
+    VoiceAnswerInterpretation,
 )
 
 
@@ -87,20 +88,27 @@ class MealRepository:
         for draw in draws:
             question = draw.question
             options = [
-                {"id": opt.id, "text": opt.text, "scores": opt.scores}
+                {
+                    "id": opt.id,
+                    "text": opt.text,
+                    "text_zh": opt.text_zh,
+                    "scores": opt.scores,
+                }
                 for opt in question.options
             ]
             self._conn.execute(
                 """
                 INSERT OR IGNORE INTO meal_question_draws (
-                    participant_id, module_id, question_id, question_text, options_json
-                ) VALUES (?, ?, ?, ?, ?)
+                    participant_id, module_id, question_id, question_text,
+                    question_text_zh, options_json
+                ) VALUES (?, ?, ?, ?, ?, ?)
                 """,
                 (
                     participant_id,
                     draw.module_id,
                     question.id,
                     question.text,
+                    question.text_zh,
                     _json(options),
                 ),
             )
@@ -116,6 +124,84 @@ class MealRepository:
             (participant_id,),
         ).fetchall()
         return [_row_to_dict(row) | {"options": _loads(row["options_json"])} for row in rows]
+
+    def store_voice_interpretation(
+        self,
+        interpretation: VoiceAnswerInterpretation,
+    ) -> VoiceAnswerInterpretation:
+        try:
+            cursor = self._conn.execute(
+                """
+                INSERT INTO meal_voice_answer_interpretations (
+                    participant_id, question_id, attempt_id, transcript, detected_language,
+                    stt_confidence, stt_metadata_json, inferred_option_id,
+                    llm_confidence, reason_zh, reason_en, raw_llm_json, status
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    interpretation.participant_id,
+                    interpretation.question_id,
+                    interpretation.attempt_id,
+                    interpretation.transcript,
+                    interpretation.detected_language,
+                    interpretation.stt_confidence,
+                    _json(interpretation.stt_metadata),
+                    interpretation.inferred_option_id,
+                    interpretation.llm_confidence,
+                    interpretation.reason_zh,
+                    interpretation.reason_en,
+                    _json(interpretation.raw_llm_json),
+                    interpretation.status,
+                ),
+            )
+        except sqlite3.IntegrityError:
+            if interpretation.attempt_id:
+                existing = self.get_voice_interpretation_by_attempt(
+                    interpretation.participant_id,
+                    interpretation.question_id,
+                    interpretation.attempt_id,
+                )
+                if existing is not None:
+                    return existing
+            raise
+        self._conn.commit()
+        return self.get_voice_interpretation(int(cursor.lastrowid))
+
+    def get_voice_interpretation(self, interpretation_id: int) -> VoiceAnswerInterpretation:
+        row = self._conn.execute(
+            "SELECT * FROM meal_voice_answer_interpretations WHERE id = ?",
+            (interpretation_id,),
+        ).fetchone()
+        if row is None:
+            raise KeyError(f"Voice interpretation not found: {interpretation_id}")
+        return _voice_interpretation_from_row(row)
+
+    def get_voice_interpretations(self, participant_id: str) -> list[VoiceAnswerInterpretation]:
+        rows = self._conn.execute(
+            """
+            SELECT * FROM meal_voice_answer_interpretations
+            WHERE participant_id = ?
+            ORDER BY id ASC
+            """,
+            (participant_id,),
+        ).fetchall()
+        return [_voice_interpretation_from_row(row) for row in rows]
+
+    def get_voice_interpretation_by_attempt(
+        self,
+        participant_id: str,
+        question_id: str,
+        attempt_id: str,
+    ) -> VoiceAnswerInterpretation | None:
+        row = self._conn.execute(
+            """
+            SELECT * FROM meal_voice_answer_interpretations
+            WHERE participant_id = ? AND question_id = ? AND attempt_id = ?
+            ORDER BY id DESC LIMIT 1
+            """,
+            (participant_id, question_id, attempt_id),
+        ).fetchone()
+        return _voice_interpretation_from_row(row) if row is not None else None
 
     def store_answers(self, participant_id: str, answers: list[Answer]) -> None:
         for answer in answers:
@@ -311,6 +397,7 @@ class MealRepository:
             "meal_question_draws",
             "meal_answers",
             "meal_observation_events",
+            "meal_voice_answer_interpretations",
             "meal_assignments",
             "meal_staff_queue",
         ]
@@ -357,6 +444,30 @@ def _participant_from_row(row: sqlite3.Row) -> Participant:
         updated_at=row["updated_at"],
         notes=row["notes"],
         safety_flags=_loads(row["safety_flags"]),
+    )
+
+
+def _voice_interpretation_from_row(row: sqlite3.Row) -> VoiceAnswerInterpretation:
+    return VoiceAnswerInterpretation(
+        interpretation_id=row["id"],
+        participant_id=row["participant_id"],
+        question_id=row["question_id"],
+        attempt_id=row["attempt_id"] if "attempt_id" in row.keys() else None,
+        transcript=row["transcript"],
+        detected_language=row["detected_language"],
+        stt_confidence=(
+            float(row["stt_confidence"]) if row["stt_confidence"] is not None else None
+        ),
+        stt_metadata=_loads(row["stt_metadata_json"]),
+        inferred_option_id=row["inferred_option_id"],
+        llm_confidence=(
+            float(row["llm_confidence"]) if row["llm_confidence"] is not None else None
+        ),
+        reason_zh=row["reason_zh"],
+        reason_en=row["reason_en"],
+        raw_llm_json=_loads(row["raw_llm_json"]),
+        status=row["status"],
+        created_at=row["created_at"],
     )
 
 

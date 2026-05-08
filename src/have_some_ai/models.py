@@ -27,6 +27,7 @@ class QueueStatus(str, Enum):
 class Option:
     id: str
     text: str
+    text_zh: str | None
     scores: dict[str, float]
 
 
@@ -36,6 +37,7 @@ class Question:
     module_id: str
     module_label: str
     text: str
+    text_zh: str | None
     options: list[Option]
 
 
@@ -64,6 +66,25 @@ class Answer:
     question_id: str
     option_id: str
     answered_at: str | None = None
+
+
+@dataclass(frozen=True)
+class VoiceAnswerInterpretation:
+    participant_id: str
+    question_id: str
+    transcript: str
+    detected_language: str | None
+    stt_confidence: float | None
+    stt_metadata: dict[str, Any] = field(default_factory=dict)
+    attempt_id: str | None = None
+    inferred_option_id: str | None = None
+    llm_confidence: float | None = None
+    reason_zh: str | None = None
+    reason_en: str | None = None
+    raw_llm_json: dict[str, Any] = field(default_factory=dict)
+    status: str = "failed"
+    interpretation_id: int | None = None
+    created_at: str | None = None
 
 
 @dataclass(frozen=True)

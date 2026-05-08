@@ -12,6 +12,11 @@ class QuestionBank:
     def __init__(self, config: dict[str, Any], rng: random.Random | None = None) -> None:
         self._rng = rng or random.SystemRandom()
         self._modules = config.get("modules", [])
+        self._food_gate_openers = [
+            str(item).strip()
+            for item in config.get("food_gate_openers", [])
+            if str(item).strip()
+        ]
         self._questions_by_id = self._index_questions(self._modules)
 
     def draw_questions(self) -> list[Question]:
@@ -38,6 +43,24 @@ class QuestionBank:
     def iter_questions(self) -> Iterable[Question]:
         return self._questions_by_id.values()
 
+    def food_gate_prompt(self, public_code: str) -> str:
+        opener = self._food_gate_opener(public_code)
+        return f"{opener}想来点吃的吗？"
+
+    def _food_gate_opener(self, public_code: str) -> str:
+        if not self._food_gate_openers:
+            return ""
+        number_text = "".join(ch for ch in public_code if ch.isdigit())
+        try:
+            participant_number = int(number_text)
+        except ValueError:
+            participant_number = 1
+        index = max(0, participant_number - 1) % len(self._food_gate_openers)
+        opener = self._food_gate_openers[index]
+        if opener.endswith(("。", "？", "！", ".", "?", "!")):
+            return f"{opener}"
+        return f"{opener}。"
+
     @staticmethod
     def _index_questions(modules: list[dict[str, Any]]) -> dict[str, Question]:
         questions: dict[str, Question] = {}
@@ -57,6 +80,7 @@ class QuestionBank:
             Option(
                 id=str(opt["id"]),
                 text=str(opt["text"]),
+                text_zh=str(opt["text_zh"]) if opt.get("text_zh") else None,
                 scores={str(k): float(v) for k, v in (opt.get("scores") or {}).items()},
             )
             for opt in data.get("options", [])
@@ -66,5 +90,6 @@ class QuestionBank:
             module_id=module_id,
             module_label=module_label,
             text=str(data["text"]),
+            text_zh=str(data["text_zh"]) if data.get("text_zh") else None,
             options=options,
         )

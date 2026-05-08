@@ -1,240 +1,189 @@
 # Progress
 
-*Conscious Entity System*
+**⚠️ Work 1 (The "Stranger" / Conscious Entity) 已停止维护。本项目现阶段只关注 Work 2 (Have Some "Ai")。**
+
+Exhibition System: Have Some "Ai"
 
 ---
 
-## 已完成
+## 每次会话开始前按顺序读
+
+1. `AGENTS.md`
+2. 本文件（`docs/progress.md`）
+3. 当前任务涉及的模块文件
+
+---
+
+## Work 1: The "Stranger" (Conscious Entity) — 已停止维护
+
+以下为历史记录，不再更新。
+
+### 已完成
 
 - [x] `data/initial_conscious_entity_framework.md` — 原始提案（v0.1）
-- [x] `docs/frame.md` — 完整架构技术文档（目录结构、模块接口、YAML schema、SQLite 建表、开发路线图、测试策略）
-- [x] 需求调研（interrogation 阶段）— 明确用户、场景、记忆持久性、访客身份策略、运营者需求
-- [x] 项目文档环境建设：
-  - [x] `docs/PRD.md`
-  - [x] `docs/APP_FLOW.md`
-  - [x] `docs/TECH_STACK.md`
-  - [x] `docs/FRONTEND_GUIDELINES.md`
-  - [x] `docs/BACKEND_STRUCTURE.md`
-  - [x] `docs/IMPLEMENTATION_PLAN.md`
-  - [x] `CLAUDE.md`
-  - [x] `docs/progress.md`
-  - [x] `docs/lessons.md`
-- [x] **Phase 0：环境搭建** — `pyproject.toml`、目录结构、5 个 YAML 配置文件、`prompts/`、`config_loader.py`、`db/migrations.py`、`tests/conftest.py`
-- [x] **Phase 1：状态机核心**
-  - [x] `src/conscious_entity/perception/event_types.py` — EventType + PerceptionEvent
-  - [x] `src/conscious_entity/db/connection.py` — SQLite 连接管理（WAL + foreign keys）
-  - [x] `scripts/init_db.py` — 数据库初始化脚本
-  - [x] `src/conscious_entity/state/state_core.py` — EntityState dataclass
-  - [x] `src/conscious_entity/state/state_engine.py` — 事件驱动状态更新 + 时间衰减
-  - [x] `src/conscious_entity/state/state_store.py` — SQLite 快照持久化
-  - [x] `tests/unit/test_state_engine.py` — 31 个单元测试全绿
+- [x] `docs/frame.md` — 完整架构技术文档
+- [x] 需求调研 — 明确用户、场景、记忆持久性、访客身份策略、运营者需求
+- [x] 项目文档环境建设（PRD、APP_FLOW、TECH_STACK、BACKEND_STRUCTURE、IMPLEMENTATION_PLAN、CLAUDE.md）
 
----
+#### Phase 0：环境搭建
 
-## 进行中
+- [x] `pyproject.toml`、目录结构、5 个 YAML 配置文件、`prompts/`
+- [x] `src/conscious_entity/core/config_loader.py`、`db/migrations.py`、`tests/conftest.py`
 
-- 无
+#### Phase 1：状态机核心
 
-- [x] **Phase 2：记忆系统**
-  - [x] `src/conscious_entity/memory/models.py` — ShortTermEntry, EpisodicMemory, ReflectiveSummary
-  - [x] `src/conscious_entity/memory/short_term.py` — ShortTermMemory（deque + count_repetitions）
-  - [x] `src/conscious_entity/memory/episodic_store.py` — store / get_recent / get_unreflected / mark_reflected
-  - [x] `src/conscious_entity/memory/reflective_store.py` — store / get_all / mark_superseded
-  - [x] `tests/unit/test_short_term_memory.py` — 11 个单元测试全绿
-  - [x] `tests/integration/test_episodic_store.py` — 11 个集成测试全绿（含 ReflectiveStore）
+- [x] `src/conscious_entity/perception/event_types.py` — EventType + PerceptionEvent
+- [x] `src/conscious_entity/db/connection.py` — SQLite 连接管理（WAL + foreign keys）
+- [x] `scripts/init_db.py` — 数据库初始化脚本
+- [x] `src/conscious_entity/state/state_core.py` — EntityState dataclass
+- [x] `src/conscious_entity/state/state_engine.py` — 事件驱动状态更新 + 时间衰减
+- [x] `src/conscious_entity/state/state_store.py` — SQLite 快照持久化
+- [x] `tests/unit/test_state_engine.py` — 31 个单元测试全绿
 
----
+#### Phase 2：记忆系统
 
-- [x] **Phase 3：策略与治理**
-  - [x] `src/conscious_entity/policy/policy_types.py` — PolicyAction enum + PolicyDecision dataclass + action_level 排序
-  - [x] `src/conscious_entity/policy/constitution.py` — action veto (check) + text post-filter (apply_expression_constraints) + forbidden_claim_detected
-  - [x] `src/conscious_entity/policy/policy_selector.py` — 逐条匹配 policy_rules.yaml，Constitution 依赖注入，rationale 追踪
-  - [x] `tests/unit/test_constitution.py` — 23 个单元测试全绿
-  - [x] `tests/unit/test_policy_selector.py` — 22 个单元测试全绿
+- [x] `src/conscious_entity/memory/models.py` — ShortTermEntry, EpisodicMemory, ReflectiveSummary
+- [x] `src/conscious_entity/memory/short_term.py` — ShortTermMemory（deque + count_repetitions）
+- [x] `src/conscious_entity/memory/episodic_store.py` — store / get_recent / get_unreflected / mark_reflected
+- [x] `src/conscious_entity/memory/reflective_store.py` — store / get_all / mark_superseded
+- [x] `tests/unit/test_short_term_memory.py` — 11 个单元测试全绿
+- [x] `tests/integration/test_episodic_store.py` — 11 个集成测试全绿（含 ReflectiveStore）
 
----
+#### Phase 3：策略与治理
 
-- [x] **Phase 4：LLM 层 + Expression 层**
-  - [x] `src/conscious_entity/expression/output_model.py` — ExpressionOutput dataclass
-  - [x] `src/conscious_entity/expression/style_mapper.py` — StyleHints + StyleMapper（读 expression_mappings.yaml）
-  - [x] `src/conscious_entity/llm/claude_client.py` — Anthropic SDK 唯一接入点（model 可配置）
-  - [x] `src/conscious_entity/expression/context_builder.py` — prompt 组装（template 填充 + messages 构建）
-  - [x] `src/conscious_entity/expression/expression_engine.py` — 主编排器（silent 短路 + LLM fallback + constitution 后处理）
-  - [x] `tests/unit/test_style_mapper.py` — 26 个单元测试全绿
-  - [x] `tests/unit/test_context_builder.py` — 21 个 prompt contract 测试全绿
+- [x] `src/conscious_entity/policy/policy_types.py` — PolicyAction enum + PolicyDecision dataclass
+- [x] `src/conscious_entity/policy/constitution.py` — action veto + text post-filter + forbidden_claim_detected
+- [x] `src/conscious_entity/policy/policy_selector.py` — 逐条匹配 policy_rules.yaml，Constitution 依赖注入
+- [x] `tests/unit/test_constitution.py` — 23 个单元测试全绿
+- [x] `tests/unit/test_policy_selector.py` — 22 个单元测试全绿
 
----
+#### Phase 4：LLM 层 + Expression 层
 
-- [x] **Phase 5：感知层 + 反思层 + 主循环 + CLI**
-  - [x] `src/conscious_entity/perception/keyword_detector.py` — 关键词检测（word boundary regex，CJK 兼容）
-  - [x] `src/conscious_entity/perception/salience_scorer.py` — 规则驱动显著度评分（含 sensitivity/repetition boost）
-  - [x] `src/conscious_entity/perception/text_parser.py` — 文本 → PerceptionEvent 列表
-  - [x] `src/conscious_entity/reflection/compression_rules.py` — 反思触发阈值判断
-  - [x] `src/conscious_entity/reflection/reflection_engine.py` — LLM 情节记忆压缩 + 存储
-  - [x] `src/conscious_entity/core/event_bus.py` — 同步 EventBus（v0.3 治理面板预留接口）
-  - [x] `src/conscious_entity/core/loop.py` — InteractionLoop（11步管道 + handle_system_event）
-  - [x] `src/conscious_entity/interfaces/cli.py` — 终端 REPL（`--debug` 显示 state）
-  - [x] `tests/unit/test_salience_scorer.py` — 13 个单元测试全绿
-  - [x] `tests/integration/test_full_loop.py` — 20 个集成测试全绿（mocked LLM）
-  - [x] CLI 冒烟测试通过（真实 API 响应正常）
+- [x] `src/conscious_entity/expression/output_model.py` — ExpressionOutput dataclass
+- [x] `src/conscious_entity/expression/style_mapper.py` — StyleHints + StyleMapper
+- [x] `src/conscious_entity/llm/claude_client.py` — Anthropic SDK 唯一接入点
+- [x] `src/conscious_entity/expression/context_builder.py` — prompt 组装
+- [x] `src/conscious_entity/expression/expression_engine.py` — 主编排器
+- [x] `tests/unit/test_style_mapper.py` — 26 个单元测试全绿
+- [x] `tests/unit/test_context_builder.py` — 21 个 prompt contract 测试全绿
 
-- [x] **2026-04-09：供应商 Anthropic 兼容 API 接入**
-  - [x] `src/conscious_entity/llm/claude_client.py` — 扩展为同时支持官方 `ANTHROPIC_API_KEY` 与供应商 `ANTHROPIC_AUTH_TOKEN + ANTHROPIC_BASE_URL + ENTITY_LLM_MODEL`
-  - [x] `src/conscious_entity/runtime_env.py` — 新增项目级 `.env` 自动加载，默认不覆盖 shell 环境变量
-  - [x] `src/conscious_entity/interfaces/cli.py` — 启动前加载 `.env` 并显式校验 LLM 配置，避免首轮对话才失败
-  - [x] `scripts/init_db.py`
-  - [x] `scripts/inspect_state.py`
-  - [x] `scripts/replay_session.py`
-  - [x] `scripts/export_memories.py`
-    - 统一在入口最早阶段加载 `.env`，与 APP_FLOW 中 v0.1 调试脚本路径保持一致
-  - [x] `.env.example`
-  - [x] `README.md`
-  - [x] `docs/TECH_STACK.md`
-  - [x] `docs/IMPLEMENTATION_PLAN.md`
-    - 文档已更新为“官方 Anthropic / 供应商兼容接口”双模式说明
-  - [x] `tests/unit/test_claude_client.py`
-  - [x] `tests/unit/test_runtime_env.py`
-  - [x] `tests/unit/test_cli.py`
-    - 新增 9 个测试，覆盖配置解析、`.env` 加载与 CLI 启动时报错
+#### Phase 5：感知层 + 反思层 + 主循环 + CLI
 
-- [x] **2026-04-09：非标准供应商 messages endpoint 兼容**
-  - [x] `src/conscious_entity/llm/claude_client.py`
-    - 新增 `ENTITY_LLM_MESSAGES_ENDPOINT` 支持
-    - 保留标准 Anthropic SDK 模式，同时支持直接 POST 到完整消息接口
-    - 增加非标准响应解析兜底：Anthropic `content[].text`、`output_text`、`choices[0].message.content`、纯文本 body
-  - [x] `.env.example`
-  - [x] `README.md`
-  - [x] `tests/unit/test_claude_client.py`
-    - 新增自定义 endpoint 模式测试，覆盖 Bearer / X-Api-Key 认证和响应解析分支
+- [x] `src/conscious_entity/perception/keyword_detector.py` — 关键词检测（word boundary regex，CJK 兼容）
+- [x] `src/conscious_entity/perception/salience_scorer.py` — 规则驱动显著度评分
+- [x] `src/conscious_entity/perception/text_parser.py` — 文本 → PerceptionEvent 列表
+- [x] `src/conscious_entity/reflection/compression_rules.py` — 反思触发阈值判断
+- [x] `src/conscious_entity/reflection/reflection_engine.py` — LLM 情节记忆压缩 + 存储
+- [x] `src/conscious_entity/core/event_bus.py` — 同步 EventBus
+- [x] `src/conscious_entity/core/loop.py` — InteractionLoop（11步管道）
+- [x] `src/conscious_entity/interfaces/cli.py` — 终端 REPL（`--debug` 显示 state）
+- [x] `tests/unit/test_salience_scorer.py` — 13 个单元测试全绿
+- [x] `tests/integration/test_full_loop.py` — 20 个集成测试全绿（mocked LLM）
+- [x] CLI 冒烟测试通过（真实 API 响应正常）
 
-- [x] **2026-04-09：系统代理绕过支持**
-  - [x] `src/conscious_entity/llm/claude_client.py`
-    - 新增 `ENTITY_LLM_DISABLE_SYSTEM_PROXY`，允许 Anthropic SDK 和自定义 endpoint 模式显式忽略系统代理
-  - [x] `tests/unit/test_claude_client.py`
-    - 覆盖 `trust_env=False` 的构造行为
-  - [x] `.env.example`
-  - [x] `README.md`
-  - [x] `.gitignore`
-    - 忽略 SQLite 运行时生成的 `memory.db-wal` / `memory.db-shm`
+#### Phase 6：Debug 工具 + 开发者 API（2026-04-10）
 
----
-
-## 下一步
-
-- [ ] 使用已轮换的真实供应商凭证做一轮 CLI 联调，确认自定义模型名与网关鉴权在目标环境可用
-
----
-
-## 2026-04-10：开发者界面（Phase 6 增强 + v0.2 API 起步）
-
-### Phase 6：终端 Debug 工具增强
 - [x] `scripts/inspect_state.py` — rich 美化（Panel + 进度条 + 策略决策表格）
-- [x] `scripts/monitor.py` — 实时 TUI 看板（rich.live，2s 轮询 SQLite，状态/对话/决策/记忆四栏）
-- [x] `scripts/test_llm.py` — LLM 连通性测试（配置展示 + 延迟测量 + 成功/失败状态）
-- [x] `pyproject.toml` — 添加 `rich>=13.0` 到主依赖；新增 `[api]` optional group（fastapi + uvicorn）
+- [x] `scripts/monitor.py` — 实时 TUI 看板（rich.live，2s 轮询，四栏布局）
+- [x] `scripts/test_llm.py` — LLM 连通性测试（配置展示 + 延迟测量）
+- [x] `src/conscious_entity/llm/stats_tracker.py` — LLM 调用统计单例
+- [x] `src/conscious_entity/interfaces/api.py` — FastAPI 开发者 API（11 个端点）
+- [x] `src/conscious_entity/interfaces/static/index.html` — Web 看板（状态仪表盘 + 对话区 + 记忆面板）
+- [x] `scripts/start_api.py` — uvicorn 启动脚本（默认端口 8000）
 
-### LLM 统计追踪
-- [x] `src/conscious_entity/llm/stats_tracker.py` — `LLMCallRecord` dataclass + `LLMStatsTracker` 单例（内存，最多 1000 条）
-- [x] `src/conscious_entity/llm/claude_client.py` — `complete()` 集成 stats hook（计时、token 计数、成功/失败）
+#### 供应商兼容接口（2026-04-09）
 
-### v0.2 起步：FastAPI 开发者 HTTP API + Web 看板
-- [x] `src/conscious_entity/interfaces/api.py` — FastAPI 应用，11 个端点：
-  - `GET /health` — 系统健康检查
-  - `POST /api/v1/dialog` — 发送对话，获取实体回应
-  - `GET /api/v1/state` — 最新 EntityState 快照
-  - `GET /api/v1/state/history` — 历史状态快照
-  - `GET /api/v1/memory/episodic` — 情节记忆列表
-  - `GET /api/v1/memory/reflective` — 活跃反思摘要
-  - `GET /api/v1/interaction-log` — 对话记录
-  - `GET /api/v1/config` — 全部 YAML 配置
-  - `GET /api/v1/config/llm` — LLM 配置（敏感信息脱敏）
-  - `POST /api/v1/config/reload` — 热重载 YAML 配置（重置短期记忆）
-  - `GET /api/v1/stats/llm` — LLM 调用统计
-  - `GET /` — Web 看板
-- [x] `src/conscious_entity/interfaces/static/index.html` — 单文件 Web 看板（原生 JS，2s 轮询）
-  - EntityState 实时仪表盘（10 变量彩色进度条）
-  - 对话区（输入框 + 实时回显，Enter 发送）
-  - LLM 统计卡片
-  - 记忆系统面板
-  - YAML 配置查看器（模态弹窗）
-  - LLM 配置显示
-- [x] `scripts/start_api.py` — uvicorn 启动脚本（支持 --host/--port/--reload）
+- [x] 官方 `ANTHROPIC_API_KEY` 与供应商 `ANTHROPIC_AUTH_TOKEN + ANTHROPIC_BASE_URL + ENTITY_LLM_MODEL` 双模式
+- [x] `ENTITY_LLM_MESSAGES_ENDPOINT` — 非标准消息接口直连支持
+- [x] `ENTITY_LLM_DISABLE_SYSTEM_PROXY` — 系统代理绕过
+- [x] `src/conscious_entity/runtime_env.py` — 项目级 `.env` 自动加载
+- [x] `.env.example`、`.gitignore` 更新
+- [x] 相关测试：`test_claude_client.py`、`test_runtime_env.py`、`test_cli.py`
+
+### 下一步
+
+- 已停止，不再跟进
 
 ---
 
-## 本次 API 接入说明（2026-04-09）
+## Work 2: Have Some "Ai"（当前主项目）
 
-### 1. 修改了哪些文件
+### 已完成（Work 2）
 
-- `src/conscious_entity/llm/claude_client.py`
-- `src/conscious_entity/runtime_env.py`
-- `src/conscious_entity/interfaces/cli.py`
-- `src/conscious_entity/core/config_loader.py`
-- `scripts/init_db.py`
-- `scripts/inspect_state.py`
-- `scripts/replay_session.py`
-- `scripts/export_memories.py`
-- `.env.example`
-- `README.md`
-- `docs/TECH_STACK.md`
-- `docs/IMPLEMENTATION_PLAN.md`
-- `tests/unit/test_claude_client.py`
-- `tests/unit/test_runtime_env.py`
-- `tests/unit/test_cli.py`
+#### v0.1 最小闭环
 
-### 2. 为什么这样改
+- [x] `src/have_some_ai/models.py` — Participant, Question, Answer, ObservationEvent, AllocationResult
+- [x] `src/have_some_ai/config.py` — 加载题库和评分配置
+- [x] `src/have_some_ai/db.py` — 专属 SQLite 表建立
+- [x] `src/have_some_ai/questionnaire.py` — 正式题随机抽题
+- [x] `src/have_some_ai/scoring.py` — 两道正式题 + 四种食物映射
+- [x] `src/have_some_ai/repository.py` — 数据库读写
+- [x] `src/have_some_ai/service.py` — 观众流程应用服务
+- [x] `src/have_some_ai/hardware.py` — 未来硬件边界占位
+- [x] `src/have_some_ai/interfaces/api.py` — FastAPI app（15 个 schema 端点）
+- [x] `src/have_some_ai/interfaces/static/index.html` — 最小 Web 界面
+- [x] `scripts/start_have_some_ai.py` — uvicorn 启动脚本（默认端口 8010）
+- [x] `config/have_some_ai/questions.yaml` — Food Gate 开头、正式题库、隐藏选项和分数
+- [x] `config/have_some_ai/scoring.yaml` — 食物映射、观察事件权重备注
+- [x] `tests/unit/test_have_some_ai_scoring.py` — 评分逻辑单元测试
+- [x] `tests/unit/test_have_some_ai_service.py` — 服务层单元测试
 
-- 根据 `docs/frame.md` 的架构边界，LLM 只负责表达与压缩，因此接入改动集中在 `ClaudeClient` 这一唯一外部调用点，不改状态机、记忆、策略逻辑。
-- 根据 `docs/APP_FLOW.md` 的启动与调试脚本路径，CLI 和 `scripts/*.py` 都需要在最早阶段拿到一致的环境变量，因此增加项目级 `.env` 自动加载。
-- 供应商接口需要 `base_url`、鉴权 token 和自定义模型名，所以新增 `ENTITY_LLM_MODEL`，并把配置校验前置到 CLI 启动阶段。
-- 官方 Anthropic 直连模式仍需保留，避免破坏现有 `ANTHROPIC_API_KEY` 使用方式。
-- README / TECH_STACK / IMPLEMENTATION_PLAN 同步更新，避免文档继续误导为“只能用官方 API Key”。
+闭环流程：新建观众 → 生成编号（A001…）→ Food Gate → 想吃才抽两道正式题 → A/B 判题 → 四种食物映射 → 写入工作人员队列 → 更新发餐状态 → 数据导出
 
-### 3. 如何手动测试
+#### v0.2 语音层原型
 
-- 在项目根目录创建 `.env`，二选一配置：
-  - 官方模式：`ANTHROPIC_API_KEY=...`
-  - 供应商模式：`ANTHROPIC_AUTH_TOKEN=...`、`ANTHROPIC_BASE_URL=...`、`ENTITY_LLM_MODEL=...`
-- 初始化数据库：
-  - `python scripts/init_db.py`
-- 启动 CLI：
-  - `python -m conscious_entity.interfaces.cli --debug`
-- 在 CLI 中输入一轮消息，确认返回真实文本而不是 fallback 文本 `Something is here. I am attending.` 这一类兜底回应。
-- 验证调试脚本也能读取同一套 `.env`：
-  - `python scripts/inspect_state.py`
-  - `python scripts/replay_session.py`
-  - `python scripts/export_memories.py --output data/export.json`
-- 已通过的自动化验证：
-  - `PYTHONPATH=src python -m pytest -p no:debugging tests/unit/test_claude_client.py tests/unit/test_runtime_env.py tests/unit/test_cli.py`
-  - `PYTHONPATH=src python -m pytest -p no:debugging tests/integration/test_full_loop.py`
+- [x] 推理时代 / OpenAI-compatible 语音网关配置：`HAVE_SOME_AI_VOICE_API_KEY + HAVE_SOME_AI_VOICE_BASE_URL`
+- [x] Provider 配置：`HAVE_SOME_AI_VOICE_PROVIDER + HAVE_SOME_AI_STT_MODE`
+- [x] AIHubMix 文件上传式 STT：`/audio/transcriptions`，默认模型 `whisper-large-v3`
+- [x] STT language 配置：`HAVE_SOME_AI_STT_LANGUAGE` 有值时传入，留空时自动判断
+- [x] TTS 默认模型：`gpt-4o-mini-tts`
+- [x] API：TTS 读题、语音答案提交与解释结果存储
+- [x] 前端语音启动顺序修正：先请求麦克风权限，再请求 STT session，并显示明确失败状态
+- [x] API：文件上传式 `voice-audio`，带 `attempt_id` 幂等和真实 `mime_type`
+- [x] 前端：AIHubMix file-STT 模式下使用 MediaRecorder + VAD 静音检测 + 2s 题目播放后录音延迟
+- [x] 播放流程：首题中英问候、第二题 next-question 过渡、TTS 只读题干、答案 accepted 后播放 thank you
+- [x] Claude A/B 映射支持 unclear / needs_retry，低置信度不保存正式答案，malformed JSON 会 repair 或降级重试
+- [x] 本地 `.venv` 已重建到 python.org Framework Python 3.13.5，普通 pytest 不再因 Anaconda debugging 插件段错误中断
+- [x] 统一店主对话状态机后端 transcript 版：`ConversationOrchestrator` + `/conversation-turn`，模板回复，不接豆包、不改前端、不处理音频
+- [x] 店主自然回复服务：`ShopkeeperReplyService` 只生成 `reply_text`，不决定 stage / 题目 / A-B / assignment / next_action
+- [x] `/conversation-turn` awaiting 阶段接入正式回答流程：复用 `submit_voice_answer()` 生成 A/B/unclear，accepted 写正式答案，unclear 留在当前题，两道正式题完成后才 `assign_food()`
+- [x] 统一语音入口：新增 `/conversation-audio`，流程为 file STT → `ConversationOrchestrator` → `reply_text` → TTS，前端主语音按钮改走统一状态机；旧 `voice-audio` / `voice-answers` 保留兼容
+- [x] 豆包 realtime v1：`voice_realtime.py` 恢复为可用适配器，本地 `/conversation-realtime` WebSocket 桥接豆包听说，浏览器只发 PCM16 16k base64；正常链路依赖豆包 server VAD，手动停止时 `audio.end` 映射为豆包 EndASR `400`
+- [x] 豆包 v1 边界：豆包只负责实时 transcript 与 PCM 24k TTS，正式 A/B 判题仍走 `ConversationOrchestrator.conversation_turn()` → `submit_voice_answer()` → Claude rubric interpreter → `ScoringEngine`
+- [x] 豆包官方协议对齐：上传音频使用 `TaskRequest=200`，后端文本合成使用 `ChatTTSText=500`，StartSession 使用 `dialog.extra.model=1.2.1.1`、server VAD/default 麦克风模式、输入 PCM16 16k、输出 `pcm_s16le` 24k
+- [x] 修复店主不出声：`/conversation-turn` 支持 `include_audio` 返回 TTS，前端新建观众后的 Food Gate 和手动 transcript fallback 会播放 `reply_text`
+- [x] 废码清理：关闭本地 8010 服务，移除旧 OpenAI Realtime STT session 入口、前端 WebRTC 死代码、豆包 direct A/B 提交实验路径
+- [x] 店主对话重构：新增 Food Gate 与 `A_NO_FOOD` / `B_WANT_FOOD` chat mode；`NO_FOOD` 只闲聊不分配，`WANT_FOOD` 进入两道正式题；移除原第 3 道正式判断题，结果改为 `soup` / `salad` / `aimiao_soup` / `aimiao_salad`
+- [x] 豆包模式全接管店主发声：`provider=doubao` 时 `/conversation-turn` / `/conversation-audio` 不再生成 OpenAI-compatible TTS 音频，新建观众 Food Gate、手动 transcript 与 Start Voice 回复都通过本地 `/conversation-realtime` 触发豆包 PCM TTS
+- [x] 修复网页听不到豆包声音：后端 realtime drain 会等待首个音频事件，不再被短 idle timeout 截断；前端在用户点击入口提前解锁 Web Audio 播放上下文
+- [x] 豆包真实握手诊断：新增 `scripts/diagnose_doubao_realtime.py`，确认 `X-Api-App-Key` 必须使用固定值 `PlgvMymc7f3tQnJ6`；修复本机 `.env`、示例文档与代码默认值后，真实 `StartSession=150` 成功
+- [x] 豆包 TTS-only 发声修复：开场/独立播报改用 `SayHello=300`，真实返回 `TTSResponse=352` PCM 音频；正式回答后的本地回复等待 provider `ASREnded=459` 后再发送 `ChatTTSText=500`
+- [x] 豆包电话式打断 v1：前端保持麦克风 PCM 流上传；后端在 `audio.append` 过程中持续小步读取 provider 事件；收到 `ASRInfo=450` 或本地检测到用户说话时停止 WebAudio 队列，并通过本地 WebSocket 转发 `ClientInterrupt=515`
+- [x] 豆包电话式打断审查：关闭本地 8010 服务；补充本地插话误判保护，避免本地 RMS 误触发后长期丢弃后续音频；同步 README / TECH_STACK / HAVE_SOME_AI_STRUCTURE / lessons 的实时语音状态
+- [x] 豆包长通话修正：新建观众开场改为直接启动 `/conversation-realtime` 长连接；active capture 时不再按单轮 conversation/audio 自动 close；播放中上传静音帧抑制 TTS 回声，本地 RMS 不再直接打断播放；验证：Have Some "Ai" 单测子集 `81 passed`，前端脚本语法通过
+- [x] 豆包自主回复收口：后端 realtime 只转发本地 `SayHello` / `ChatTTSText` 授权后的 TTS 音频，忽略 provider 自主 `chat.delta` 与未授权 PCM；最终店主话术直接引用系统 assignment 的四种合法食物之一，避免豆包临场发明菜单或不知道分配结果；验证：Have Some "Ai" 单测 `86 passed`
 
-### 4. 是否有潜在风险
+### 进行中（Work 2）
 
-- 还没有使用真实供应商接口做联网联调；目前验证的是配置解析、启动行为和 mocked integration，真实网关仍需一轮手工确认。
-- 供应商若不完全兼容 Anthropic SDK 的 `auth_token` / `base_url` 语义，可能会在真实请求阶段报认证或路由错误。
-- 自定义模型名 `ENTITY_LLM_MODEL` 如果填写错误，CLI 能启动，但首次真实调用时仍会失败并走 fallback。
-- 用户之前暴露过一把 API key；即使本次未写入代码，也应先轮换再测试。
-- 即使启用了 `ENTITY_LLM_MESSAGES_ENDPOINT`，如果供应商连请求体字段名也不是 Anthropic Messages 格式，仍然需要进一步做协议映射。
+- 语音层真实端到端联调：AIHubMix file-STT 已保留；豆包 realtime 已通过真实握手、TTS-only 桥接与 interrupt 通道冒烟测试；最新前端已改为长连接通话、回声抑制和未授权豆包自主音频抑制，仍需在浏览器用真实麦克风确认 ASR 文本、打断手感与完整答题流程
+- 本地 8010 服务当前已按用户要求关闭；如需重新测试，运行 `./.venv/bin/python scripts/start_have_some_ai.py --port 8010`
+
+### 下一步（Work 2）
+
+- [ ] 细化 `questions.yaml` 与 `scoring.yaml`，确定最终分配机制
+- [ ] 语音层：继续浏览器端到端联调，确认 unified conversation-audio 与 doubao conversation-realtime 的 Food Gate、正式答题、unclear/打岔重试、两题完成后分配食物
+- [ ] 语音层：打磨低置信度重新录音机制
+- [ ] 观众端 / 工作人员端拆分为两个独立页面
+- [ ] 安全 / 忌口覆盖逻辑（必须优先于艺术算法）
+
+---
 
 ## 已知问题 / 待确认事项
 
 | 项目 | 状态 | 影响 |
-|---|---|---|
-| 访客身份识别方式 | 待确认（v0.3） | 影响 BACKEND_STRUCTURE 中 visitor_id 字段设计 |
-| 视觉风格 / 设计语言 | 待确认 | 影响 FRONTEND_GUIDELINES + 展览界面开发 |
-| 前端技术选型 | 待确认 | 影响 v0.2 开发路径 |
+| --- | --- | --- |
+| Have Some "Ai" 语音 STT/TTS 选型 | AIHubMix 走 file STT：`whisper-large-v3` + OpenAI-compatible TTS；豆包走后端 WebSocket realtime dialogue，输入 PCM16 16k，输出 PCM16 24k，正式判题仍交给 Claude；前端 active capture 时保持长连接，播放中用静音帧降低回声自触发；后端只播放本地授权 TTS，抑制 provider 自主回复音频 | 豆包握手/TTS/interrupt 已通过冒烟；待真实浏览器麦克风完整验收 |
+| Have Some "Ai" 最终题库与评分 | 待细化 | 影响 questions.yaml / scoring.yaml |
+| 访客身份识别方式 | 待确认（v0.3） | 影响 visitor_id 字段设计 |
+| 视觉风格 / 设计语言 | 待确认 | 影响展览界面开发 |
 | 展期终止仪式设计 | 待确认 | 影响 v0.3 功能范围 |
-| 运营者面板访问方式 | 待确认 | 影响 FastAPI 部署配置 |
-| TTS 具体选型 | 待确认 | 影响 v0.2 语音输出实现 |
-| 供应商 Anthropic 兼容接口联调 | 待完成 | 影响真实 CLI 输出是否能走供应商网关而不是 fallback |
-
----
-
-## 当前重点
-
-完成 v0.1 核心逻辑（Phase 0 → Phase 6），优先顺序：
-
-```
-Phase 0（环境）→ Phase 1（状态机）→ Phase 2（记忆）
-→ Phase 3（策略）→ Phase 4（LLM）→ Phase 5（主循环）→ Phase 6（Debug 工具）
-```

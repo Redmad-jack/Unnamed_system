@@ -1,27 +1,25 @@
 axes:
-  ai_trace:
-    label: "Ai trace"
-    sprout_threshold: 2.0
-  relational:
-    label: "Soup / salad tendency"
-    soup_threshold: 0.0
+  soup_salad:
+    label: "Soup / salad"
+  normal_aimiao:
+    label: "Normal / Ai Miao"
 
 foods:
   soup:
     label: "Soup"
-    ai_sprout: false
+    aimiao: false
     form: "soup"
   salad:
     label: "Salad"
-    ai_sprout: false
+    aimiao: false
     form: "salad"
-  ai_sprout_soup:
-    label: "Ai sprout soup"
-    ai_sprout: true
+  aimiao_soup:
+    label: "Ai Miao soup"
+    aimiao: true
     form: "soup"
-  ai_sprout_salad:
-    label: "Ai sprout salad"
-    ai_sprout: true
+  aimiao_salad:
+    label: "Ai Miao salad"
+    aimiao: true
     form: "salad"
 
 observation_weights:
@@ -46,4 +44,4 @@ observation_weights:
 
 safety:
   enabled: true
-  notes: "Safety flags are recorded first. Food overrides should be applied by staff before serving."
+  notes: "Safety flags are recorded first. Food overrides should be applied by staff before serving. Observation weights are retained for export only in the current two-question assignment flow."

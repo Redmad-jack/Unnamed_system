@@ -31,6 +31,7 @@ CREATE TABLE IF NOT EXISTS meal_question_draws (
     module_id      TEXT NOT NULL,
     question_id    TEXT NOT NULL,
     question_text  TEXT NOT NULL,
+    question_text_zh TEXT,
     options_json   TEXT NOT NULL,
     drawn_at       TEXT NOT NULL DEFAULT (datetime('now')),
     UNIQUE(participant_id, module_id)
@@ -64,6 +65,27 @@ CREATE TABLE IF NOT EXISTS meal_observation_events (
 CREATE INDEX IF NOT EXISTS idx_meal_observations_participant
     ON meal_observation_events(participant_id, observed_at);
 
+CREATE TABLE IF NOT EXISTS meal_voice_answer_interpretations (
+    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+    participant_id      TEXT NOT NULL REFERENCES meal_participants(id) ON DELETE CASCADE,
+    question_id         TEXT NOT NULL,
+    attempt_id          TEXT,
+    transcript          TEXT NOT NULL,
+    detected_language   TEXT,
+    stt_confidence      REAL,
+    stt_metadata_json   TEXT NOT NULL DEFAULT '{}',
+    inferred_option_id  TEXT,
+    llm_confidence      REAL,
+    reason_zh           TEXT,
+    reason_en           TEXT,
+    raw_llm_json        TEXT NOT NULL DEFAULT '{}',
+    status              TEXT NOT NULL,
+    created_at          TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_meal_voice_answers_participant
+    ON meal_voice_answer_interpretations(participant_id, question_id, created_at);
+
 CREATE TABLE IF NOT EXISTS meal_assignments (
     id                  INTEGER PRIMARY KEY AUTOINCREMENT,
     participant_id      TEXT NOT NULL UNIQUE REFERENCES meal_participants(id) ON DELETE CASCADE,
@@ -95,9 +117,33 @@ CREATE INDEX IF NOT EXISTS idx_meal_staff_queue_status
     ON meal_staff_queue(status, created_at);
 
 INSERT OR IGNORE INTO meal_schema_version(version) VALUES (1);
+INSERT OR IGNORE INTO meal_schema_version(version) VALUES (2);
 """
 
 
 def run_migrations(conn: sqlite3.Connection) -> None:
     conn.executescript(SCHEMA_SQL)
+    _add_column_if_missing(conn, "meal_question_draws", "question_text_zh", "TEXT")
+    _add_column_if_missing(conn, "meal_voice_answer_interpretations", "attempt_id", "TEXT")
+    conn.execute(
+        """
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_meal_voice_answers_attempt
+            ON meal_voice_answer_interpretations(participant_id, question_id, attempt_id)
+            WHERE attempt_id IS NOT NULL
+        """
+    )
     conn.commit()
+
+
+def _add_column_if_missing(
+    conn: sqlite3.Connection,
+    table: str,
+    column: str,
+    declaration: str,
+) -> None:
+    columns = {
+        row[1]
+        for row in conn.execute(f"PRAGMA table_info({table})").fetchall()
+    }
+    if column not in columns:
+        conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {declaration}")

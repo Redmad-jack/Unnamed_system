@@ -1,152 +1,143 @@
 modules:
-  - id: ai_trace
-    label: "Ai / Not Ai"
-    draw_count: 1
-    questions:
-      - id: m1_thank_ai
-        text: "Have you ever said \"thank you\" to AI -- and actually meant it?"
-        options:
-          - id: A
-            text: "Yes"
-            scores:
-              ai_trace: 2.0
-              relational: 0.0
-          - id: B
-            text: "No, or I think it is unnecessary"
-            scores:
-              ai_trace: 0.0
-              relational: 0.0
-
-      - id: m1_apologized_ai
-        text: "Have you ever apologized to our AI?"
-        options:
-          - id: A
-            text: "Yes"
-            scores:
-              ai_trace: 2.0
-              relational: 0.2
-          - id: B
-            text: "Not yet"
-            scores:
-              ai_trace: 0.4
-              relational: 0.0
-
-      - id: m1_uncertain_origin
-        text: "Has there ever been a moment when you suddenly became unsure whether an idea was yours, or whether AI gave it to you?"
-        options:
-          - id: A
-            text: "Yes"
-            scores:
-              ai_trace: 2.0
-              relational: 0.0
-          - id: B
-            text: "No, I can tell the difference"
-            scores:
-              ai_trace: 0.0
-              relational: -0.2
-
-      - id: m1_repeated_ai_opinion
-        text: "Have you ever repeated something AI said as if it were your own opinion when talking to someone else?"
-        options:
-          - id: A
-            text: "Yes, and it felt great"
-            scores:
-              ai_trace: 2.2
-              relational: 0.2
-          - id: B
-            text: "No. Are you sure?"
-            scores:
-              ai_trace: 0.6
-              relational: 0.0
-
   - id: soup_salad
     label: "Soup / Salad"
     draw_count: 1
     questions:
       - id: m2_door
         text: "When you sleep, do you usually leave your bedroom door open or closed?"
+        text_zh: "你睡觉时通常会把卧室门开着还是关着？"
         options:
           - id: A
             text: "Open, or it does not matter"
+            text_zh: "开着，或者无所谓"
             scores:
-              ai_trace: 0.0
-              relational: 2.0
+              soup_axis: 1.0
           - id: B
             text: "Closed"
+            text_zh: "关着"
             scores:
-              ai_trace: 0.0
-              relational: -2.0
+              soup_axis: -1.0
 
       - id: m2_loneliness
         text: "Which kind of loneliness is harder for you to bear?"
+        text_zh: "哪一种孤独对你来说更难忍受？"
         options:
           - id: A
             text: "Being surrounded by people, but no one truly understands you"
+            text_zh: "身边有很多人，但没有人真正理解你"
             scores:
-              ai_trace: 0.0
-              relational: 1.6
+              soup_axis: 1.0
           - id: B
             text: "Being completely understood by someone, but having no one physically beside you"
+            text_zh: "被某个人完全理解，但身边没有任何人"
             scores:
-              ai_trace: 0.0
-              relational: -1.6
+              soup_axis: -1.0
 
       - id: m2_confides
         text: "When someone confides their troubles to you, after they finish talking--"
+        text_zh: "当有人向你倾诉烦恼，说完之后——"
         options:
           - id: A
             text: "You become even sadder than they are"
+            text_zh: "你变得比对方还难过"
             scores:
-              ai_trace: 0.0
-              relational: 2.0
+              soup_axis: 1.0
           - id: B
             text: "You help them analyze the situation, then continue with your own life"
+            text_zh: "你帮他们分析情况，然后继续自己的生活"
             scores:
-              ai_trace: 0.0
-              relational: -2.0
+              soup_axis: -1.0
 
       - id: m2_strong_opinions
         text: "After talking with someone who has very strong opinions, when you return home--"
+        text_zh: "和一个观点很强烈的人聊完之后，回到家时——"
         options:
           - id: A
             text: "You realize you seem to think the same way now"
+            text_zh: "你发现自己好像也开始那样想了"
             scores:
-              ai_trace: 0.0
-              relational: 2.0
+              soup_axis: 1.0
           - id: B
             text: "You still feel a little angry when you think about it"
+            text_zh: "你再想起来还是有点生气"
             scores:
-              ai_trace: 0.0
-              relational: -1.6
+              soup_axis: -1.0
 
-  - id: objection_feedback
-    label: "Objection / Feedback"
+  - id: normal_aimiao
+    label: "Normal / Ai Miao"
     draw_count: 1
     questions:
-      - id: m3_objection
-        text: "Do you have any objection to the food assigned to you this time?"
+      - id: m1_thank_ai
+        text: "Have you ever said \"thank you\" to AI -- and actually meant it?"
+        text_zh: "你有没有对 AI 说过“谢谢”，而且是真心的？"
         options:
           - id: A
-            text: "No"
+            text: "Yes"
+            text_zh: "是"
             scores:
-              ai_trace: 0.8
-              relational: 0.2
+              aimiao_axis: 1.0
           - id: B
-            text: "Yes, but it will not help"
+            text: "No, or I think it is unnecessary"
+            text_zh: "没有，或者我觉得没必要"
             scores:
-              ai_trace: 1.2
-              relational: -0.2
+              aimiao_axis: 0.0
 
-      - id: m3_project_good
-        text: "Do you think this project is good?"
+      - id: m1_apologized_ai
+        text: "Have you ever apologized to our AI?"
+        text_zh: "你有没有向我们的 AI 道过歉？"
         options:
           - id: A
-            text: "Good"
+            text: "Yes"
+            text_zh: "有"
             scores:
-              ai_trace: 0.8
-              relational: 0.0
+              aimiao_axis: 1.0
           - id: B
-            text: "Very good"
+            text: "Not yet"
+            text_zh: "还没有"
             scores:
-              ai_trace: 1.2
-              relational: 0.0
+              aimiao_axis: 0.0
+
+      - id: m1_uncertain_origin
+        text: "Has there ever been a moment when you suddenly became unsure whether an idea was yours, or whether AI gave it to you?"
+        text_zh: "有没有某个瞬间，你突然不确定一个想法到底是你自己的，还是 AI 给你的？"
+        options:
+          - id: A
+            text: "Yes"
+            text_zh: "有"
+            scores:
+              aimiao_axis: 1.0
+          - id: B
+            text: "No, I can tell the difference"
+            text_zh: "没有，我分得清"
+            scores:
+              aimiao_axis: 0.0
+
+      - id: m1_repeated_ai_opinion
+        text: "Have you ever repeated something AI said as if it were your own opinion when talking to someone else?"
+        text_zh: "你有没有在和别人说话时，把 AI 说过的话当成自己的观点复述出来？"
+        options:
+          - id: A
+            text: "Yes, and it felt great"
+            text_zh: "有，而且感觉很好"
+            scores:
+              aimiao_axis: 1.0
+          - id: B
+            text: "No. Are you sure?"
+            text_zh: "没有。你确定吗？"
+            scores:
+              aimiao_axis: 0.0
+
+food_gate_openers:
+  - "你今天衣服挺漂亮啊。"
+  - "你看起来像是刚从一个很认真或很奇怪的地方走出来。"
+  - "你来的时间刚好，锅还没完全醒。"
+  - "你今天的表情有点像知道答案的人。"
+  - "我刚才在想，今天会不会遇到一个好说话的人。"
+  - "你站在这里的时候，这家店突然像真的开门了。"
+  - "你身上有一点赶路的味道。"
+  - "你看起来不像饿，但也不像完全不饿。"
+  - "我喜欢你刚才进来的方式，挺果断。"
+  - "你今天像是会认真听问题的人。"
+  - "你别紧张，我这儿不按菜单来。"
+  - "你来都来了，我也不能只让你看着。"
+  - "你今天运气还行，厨房还肯说话。"
