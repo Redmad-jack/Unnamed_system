@@ -16,6 +16,7 @@ from pydantic import BaseModel, Field
 
 from conscious_entity.db.connection import get_connection
 from conscious_entity.runtime_env import load_project_env, project_root
+from have_some_ai import __version__ as HAVE_SOME_AI_VERSION
 from have_some_ai.chat import ShopkeeperReplyService
 from have_some_ai.config import default_config_dir, load_have_some_ai_config
 from have_some_ai.conversation import ConversationOrchestrator
@@ -163,7 +164,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title='Have Some "Ai"',
-    version="0.1.0",
+    version=HAVE_SOME_AI_VERSION,
     lifespan=lifespan,
 )
 

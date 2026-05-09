@@ -355,6 +355,7 @@ let currentQuestions = [];
 let activeQuestionIndex = 0;
 let voiceAnswers = {};
 let conversationState = null;
+let responseLanguage = null;
 let voiceConfig = null;
 let voiceRunActive = false;
 let mediaStream = null;
@@ -459,6 +460,7 @@ async function newParticipant() {
   activeQuestionIndex = 0;
   voiceAnswers = {};
   conversationState = null;
+  responseLanguage = null;
   renderParticipant();
   document.getElementById('assignmentBand').classList.add('hidden');
   document.getElementById('questionsBody').innerHTML = '<span class="muted">Waiting.</span>';
@@ -515,33 +517,66 @@ async function startConversationEntry() {
 
 function renderQuestions() {
   const body = document.getElementById('questionsBody');
+  if (conversationState?.stage === 'language_gate') {
+    body.innerHTML = `
+      <div class="question active">
+        <div class="module">language / 语言</div>
+        <div class="q-text">Hi! 你好！</div>
+        <div class="q-text">Would you like to continue in English or 中文</div>
+        <div class="choices">
+          <button class="choice" onclick="submitLanguageChoice('English')">
+            <div class="choice-text"><div>English</div></div>
+          </button>
+          <button class="choice" onclick="submitLanguageChoice('中文')">
+            <div class="choice-text"><div>中文</div></div>
+          </button>
+        </div>
+      </div>
+    `;
+    document.getElementById('questionProgress').textContent = 'language';
+    return;
+  }
+  if (!currentQuestions.length) {
+    body.innerHTML = '<span class="muted">Waiting.</span>';
+    document.getElementById('questionProgress').textContent = '0/0';
+    return;
+  }
+  const language = selectedResponseLanguage();
   body.innerHTML = currentQuestions.map((q, index) => {
     const answer = voiceAnswers[q.question_id];
     const isActive = index === activeQuestionIndex;
     const choices = visibleChoices(q);
+    const questionText = language === 'en'
+      ? `<div class="q-text">${escapeHtml(q.question_text)}</div>`
+      : `
+        <div class="q-text">${escapeHtml(q.question_text)}</div>
+        <div class="q-text zh">${escapeHtml(q.question_text_zh || '')}</div>
+      `;
+    const resultText = answer ? answerResultHtml(answer, language) : '<span class="muted">Waiting for spoken answer / 等待语音回答</span>';
     return `
       <div class="question ${isActive ? 'active' : ''}">
         <div class="module">${escapeHtml(q.module_id)} ${isActive ? '· listening / 正在听' : ''}</div>
-        <div class="q-text">${escapeHtml(q.question_text)}</div>
-        <div class="q-text zh">${escapeHtml(q.question_text_zh || '')}</div>
+        ${questionText}
         <div class="choices">
-          ${choices.map(choice => `
+          ${choices.map(choice => {
+            const choiceText = language === 'en'
+              ? `<div>${escapeHtml(choice.text)}</div>`
+              : `
+                <div>${escapeHtml(choice.text)}</div>
+                <div class="choice-zh">${escapeHtml(choice.text_zh)}</div>
+              `;
+            return `
             <div class="choice">
               <div class="choice-letter">${escapeHtml(choice.id)}</div>
               <div class="choice-text">
-                <div>${escapeHtml(choice.text)}</div>
-                <div class="choice-zh">${escapeHtml(choice.text_zh)}</div>
+                ${choiceText}
               </div>
             </div>
-          `).join('')}
+          `}).join('')}
         </div>
         <div class="transcript">${escapeHtml(answer?.transcript || (isActive ? pendingTranscript || '...' : ''))}</div>
         <div class="result">
-          ${answer ? `
-            <span>status=${escapeHtml(answer.status)} · option=${escapeHtml(answer.option_id || '')} · confidence=${escapeHtml(answer.confidence ?? '')}</span>
-            <span>${escapeHtml(answer.reason_en || '')}</span>
-            <span>${escapeHtml(answer.needs_retry ? '没太听清，请再说一遍。' : (answer.reason_zh || ''))}</span>
-          ` : '<span class="muted">Waiting for spoken answer / 等待语音回答</span>'}
+          ${resultText}
         </div>
       </div>
     `;
@@ -556,8 +591,29 @@ function visibleChoices(q) {
   return [
     { id: 'A', text: optionA.text || '', text_zh: optionA.text_zh || '' },
     { id: 'B', text: optionB.text || '', text_zh: optionB.text_zh || '' },
-    { id: 'C', text: 'Other. Say anything.', text_zh: '其他。可以随便说。' },
   ];
+}
+
+function selectedResponseLanguage() {
+  return responseLanguage || conversationState?.response_language || 'zh';
+}
+
+function answerResultHtml(answer, language) {
+  const status = `status=${escapeHtml(answer.status)} · option=${escapeHtml(answer.option_id || '')} · confidence=${escapeHtml(answer.confidence ?? '')}`;
+  if (language === 'en') {
+    const reason = answer.needs_retry
+      ? 'I did not catch that clearly. Please say it again.'
+      : (answer.reason_en || '');
+    return `
+      <span>${status}</span>
+      <span>${escapeHtml(reason)}</span>
+    `;
+  }
+  return `
+    <span>${status}</span>
+    <span>${escapeHtml(answer.reason_en || '')}</span>
+    <span>${escapeHtml(answer.needs_retry ? '没太听清，请再说一遍。' : (answer.reason_zh || ''))}</span>
+  `;
 }
 
 function playAudioBlob(blob, onEnded = null, errorState = 'speech playback failed') {
@@ -1455,6 +1511,7 @@ async function submitAudioBlob(blob, mimeType, durationMs) {
           mime_type: mimeType,
           duration_ms: durationMs,
           attempt_id: makeAttemptId('conversation'),
+          detected_language: responseLanguage || null,
           include_audio: true,
         }),
       },
@@ -1492,6 +1549,12 @@ async function submitManualTranscript() {
   await submitTranscript(transcript);
 }
 
+async function submitLanguageChoice(choice) {
+  if (!currentParticipant || conversationState?.stage !== 'language_gate') return;
+  unlockDoubaoPlaybackForGesture();
+  await submitTranscript(choice);
+}
+
 async function submitTranscript(transcript) {
   if (!currentParticipant) return;
   setVoiceState('interpreting');
@@ -1516,6 +1579,7 @@ async function submitTranscript(transcript) {
 async function handleConversationResult(result, options = {}) {
   const { playReplyAudio = true, keepVoiceActive = false } = options;
   conversationState = result;
+  if (result.response_language) responseLanguage = result.response_language;
   pendingTranscript = '';
   renderConversation(result);
   if (!result.participant_deleted) {
@@ -1637,7 +1701,8 @@ function renderAssignment(assignment) {
   document.getElementById('assignmentBand').classList.remove('hidden');
   document.getElementById('assignmentCode').textContent = currentParticipant.public_code;
   document.getElementById('foodLabel').textContent = assignment.food_label;
-  document.getElementById('foodLabelZh').textContent = foodZh[assignment.food_code] || assignment.food_label;
+  document.getElementById('foodLabelZh').textContent =
+    selectedResponseLanguage() === 'en' ? '' : (foodZh[assignment.food_code] || assignment.food_label);
   document.getElementById('scoreLine').textContent =
     `ai_trace=${assignment.ai_trace_score} · relational=${assignment.relational_score}`;
 }
@@ -1677,6 +1742,30 @@ function escapeHtml(value) {
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;');
 }
+
+function handleLanguageGateShortcut(event) {
+  if (!currentParticipant || conversationState?.stage !== 'language_gate') return;
+  const target = event.target;
+  if (target?.tagName === 'INPUT' || target?.tagName === 'TEXTAREA' || target?.isContentEditable) {
+    return;
+  }
+  const key = String(event.key || '').toLowerCase();
+  if (key === 'e') {
+    event.preventDefault();
+    submitLanguageChoice('English').catch(error => {
+      console.error(error);
+      setVoiceState('language selection failed');
+    });
+  } else if (key === 'c') {
+    event.preventDefault();
+    submitLanguageChoice('中文').catch(error => {
+      console.error(error);
+      setVoiceState('language selection failed');
+    });
+  }
+}
+
+document.addEventListener('keydown', handleLanguageGateShortcut);
 
 pollHealth();
 refreshQueue();

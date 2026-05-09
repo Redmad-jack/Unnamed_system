@@ -82,7 +82,7 @@
 - 如何应用：用户取消走 discard；静音、超时、VAD fallback 等自然停止必须先 `requestData()` 再 `stop()` 并尝试上传
 
 **L14：题目 TTS 不朗读答案选项**
-- 规则：Have Some "Ai" 的语音播放只读题干和流程提示，A/B/C 选项留在屏幕上，不由模型朗读
+- 规则：Have Some "Ai" 的语音播放只读题干和流程提示，A/B 选项留在屏幕上，不由模型朗读
 - 原因：朗读选项会拉长题目前置音频，也会让录音开启时间更难预测
 - 如何应用：`question_speech_text()` 不拼接选项；题目音频结束后使用明确 cooldown 再开启录音
 
@@ -165,6 +165,11 @@
 - 规则：`ShopkeeperReplyService` 可以在 chitchat 的前 1-2 回合调用 Claude 生成自由 `reply_text`，但返回值只能作为可听见文本，不能决定 `stage`、`next_action`、题目、A/B、assignment 或 session cleanup
 - 原因：模板 echo 会让“闲聊”表现成答题机器人，但让 LLM 参与流程决策会污染评分和送客边界
 - 如何应用：闲聊 LLM 必须有模板 fallback；测试用 mock LLM，断言不写 `meal_answers`、不调用 Claude judge、第 3 回合仍按本地规则拉回或结束
+
+**L31：固定话术改动必须同步测试合同**
+- 规则：Food Gate、Language Gate、正式题拉回和最终出餐等固定话术改动后，必须同步 `ShopkeeperReplyService` / `ConversationOrchestrator` 的断言和 README/docs
+- 原因：话术是装置行为的一部分；测试仍断言旧话术会让发布前状态看似通过文档、实际行为不一致
+- 如何应用：改 `src/have_some_ai/chat.py` 或 `questions.yaml` 里的可听见话术时，同时搜索旧关键词并更新相关测试与文档
 
 ---
 

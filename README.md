@@ -17,15 +17,19 @@ src/
 
 ## 当前状态
 
+当前发布版本：`v1.2.1-EC`
+
 | 作品 | 当前进度 | 可以做什么 |
 | --- | --- | --- |
 | The "Stranger" | 已停止维护，以下内容只保留历史记录 | 不再作为当前开发重点 |
-| Have Some "Ai" | 当前主项目；v0.1 最小闭环完成，v0.2 语音原型已接入；豆包已切到 ASR/TTS 分离主链路 | 新建观众、Food Gate、闲聊 + 判断、ASR/TTS 语音、Claude A/B judge、食物分配、工作人员队列 |
+| Have Some "Ai" | 当前主项目；`v1.2.1-EC` 已收口 Language Gate、A/B-only 正式题显示、双语 Food Gate 开场和最终出餐话术 | 新建观众、Language Gate、双语 Food Gate、闲聊 + 判断、ASR/TTS 语音、Claude A/B judge、食物分配、工作人员队列 |
 
 当前 Have Some "Ai" 的现场交互已经从纯 A/B 调试流程，推进到：
 
 ```text
 新建观众
+  ↓
+Language Gate：选择 English / 中文，不计入正式题
   ↓
 Food Gate 闲聊入口：先问要不要吃 / 要不要参加
   ↓
@@ -43,14 +47,15 @@ ConversationOrchestrator 先区分 chitchat / unclear_speech / answer_attempt
   ↓
 两道正式题都有 accepted A/B 后，规则评分引擎分配食物
   ↓
+店主说出固定出餐话术
+  ↓
 工作人员队列
 ```
 
 其中：
 
-- A、B 是原设计选项，会显示在屏幕上。
-- C 是 `Other / 其他`，表示观众可以随便说。
-- C / freeform / 侧问 / 评论不会自动映射为 A/B；只有 `FormalTurnRouter` 判定用户正在尝试回答当前正式题时，才会调用 Claude judge。
+- A、B 是正式选项，会显示在屏幕上。
+- freeform / 侧问 / 评论不会自动映射为 A/B；只有 `FormalTurnRouter` 判定用户正在尝试回答当前正式题时，才会调用 Claude judge。
 - Claude judge 输出只允许 A / B / unclear，并会做 JSON 容错解析；malformed JSON 会 repair 一次，仍失败则进入重试。闲聊 Claude 只生成 `reply_text`，不能决定流程或食物。
 - 最终食物仍由规则评分引擎决定，LLM 不直接决定食物。
 - 不保存观众原始音频，只保存转写、置信度、理由和推断结果。
@@ -159,15 +164,16 @@ Have Some "Ai" 是一个食物分配系统，而不是另一个聊天实体。�
 
 ```text
 1. 新建匿名观众，生成 A001 形式编号
-2. Food Gate 问“想来点吃的吗？”
-3. `NO_FOOD` 进入最多 3 回合的 not-eating chat，随后送客并清理 transient participant，不抽正式题、不分配食物
-4. `WANT_FOOD` 后抽两道正式题
-5. 屏幕显示题目和 A/B/C 三个选项
-6. AIHubMix file STT 或豆包 ASR `bigmodel_async` 生成 transcript
-7. 正式题 transcript 先经过 `FormalTurnRouter`；只有 answer_attempt 才进入 Claude A/B/unclear judge
-8. chitchat 由店主接住，不判题、不评分、不推进；前 1-2 回合可自由回应，正式题 chitchat 第 3 回合拉回当前题
-9. 两道正式题分别决定 soup / salad 与 normal / aimiao
-10. 系统分配食物并写入工作人员队列
+2. Language Gate 问 `Hi! 你好！Would you like to continue in English or 中文`；English / en / 英文 或明显英文输入固定本次会话英文，中文 / Chinese / zh 或明显中文输入使用中文默认逻辑
+3. Food Gate 使用 `questions.yaml` 的 13 条开场轮换；中文问“想来点吃的吗？”，English 模式问 “Want something to eat?”
+4. `NO_FOOD` 进入最多 3 回合的 not-eating chat，随后送客并清理 transient participant，不抽正式题、不分配食物
+5. `WANT_FOOD` 后抽两道正式题
+6. 屏幕显示题目和 A/B 两个选项
+7. AIHubMix file STT 或豆包 ASR `bigmodel_async` 生成 transcript
+8. 正式题 transcript 先经过 `FormalTurnRouter`；只有 answer_attempt 才进入 Claude A/B/unclear judge
+9. chitchat 由店主接住，不判题、不评分、不推进；前 1-2 回合可自由回应，正式题 chitchat 第 3 回合拉回当前题
+10. 两道正式题分别决定 soup / salad 与 normal / aimiao
+11. 系统分配食物并写入工作人员队列
 ```
 
 当前四种结果：
@@ -177,13 +183,12 @@ Have Some "Ai" 是一个食物分配系统，而不是另一个聊天实体。�
 - `aimiao_soup`
 - `aimiao_salad`
 
-### A / B / C 的含义
+### A / B 的含义
 
 | 选项 | 作用 |
 | --- | --- |
 | A | 原设计选项，直接进入隐藏评分 rubric |
 | B | 原设计选项，直接进入隐藏评分 rubric |
-| C | Other / 其他，允许观众说别的；不等于正式评分答案 |
 
 实现上，语音会先变成 transcript，再进入 `ConversationOrchestrator`。Food Gate、not-eating chat、正式题 chitchat、unclear_speech 和 noise 都不会进入正式评分；只有 `FormalTurnRouter` 判定为 `answer_attempt` 的正式题回答才会交给 Claude 判断 A / B / unclear。Claude judge 输出会经过严格 JSON 解析、code fence / 前后文本 / trailing comma 容错、一次 JSON repair 和 schema 校验；数据库中的正式答案仍只在 `accepted` 时保存 A/B。chitchat 的前 1-2 回合可以由 `ShopkeeperReplyService` 调 Claude 生成 `reply_text`，失败时使用本地模板兜底。
 
@@ -339,9 +344,10 @@ Claude / Anthropic 配置见下方 Shared Environment。Have Some "Ai" 只在 `F
 1. 确认 `.env` 中 `HAVE_SOME_AI_VOICE_PROVIDER=doubao`、`HAVE_SOME_AI_STT_MODE=asr_tts_stream`，并设置 `DOUBAO_API_KEY` 或分别设置 `DOUBAO_ASR_API_KEY` / `DOUBAO_TTS_API_KEY`。
 2. 启动 `./.venv/bin/python scripts/start_have_some_ai.py --port 8010`。
 3. 打开 `http://127.0.0.1:8010/`，新建观众，点击 `Start Voice`。
-4. 期望先听到 Food Gate / 店主开场；TTS 播放期间页面可能显示 `doubao speaking`，后端会发送 `mic.muted_for_tts`，此时麦克风音频不会送 ASR，这是预期的回声防护。
-5. TTS 结束后应收到 `mic.resumed_after_tts`，再对着麦克风回答要不要吃。
-6. 想吃后进入两道正式题；只有正式题 `answer_attempt` 会触发 Claude judge。完成两道 A/B 后才出现 `score` / 食物分配。
+4. 期望先听到 Language Gate；说 English / 中文，或直接用明确的英文 / 中文回答来选择本次会话语言。
+5. 随后听到 Food Gate / 店主开场；TTS 播放期间页面可能显示 `doubao speaking`，后端会发送 `mic.muted_for_tts`，此时麦克风音频不会送 ASR，这是预期的回声防护。
+6. TTS 结束后应收到 `mic.resumed_after_tts`，再对着麦克风回答要不要吃。
+7. 想吃后进入两道正式题；只有正式题 `answer_attempt` 会触发 Claude judge。完成两道 A/B 后才出现 `score` / 食物分配。
 
 ### 语音排障
 
@@ -456,7 +462,7 @@ anthropic==0.97.0
 anyio==4.13.0
 certifi==2026.4.22
 click==8.3.3
-conscious-entity==0.1.0
+conscious-entity==1.2.1
 distro==1.9.0
 docstring_parser==0.18.0
 fastapi==0.136.1

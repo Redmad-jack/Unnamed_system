@@ -47,22 +47,87 @@ class CountingScoringEngine(ScoringEngine):
         return super().assign(*args, **kwargs)
 
 
-def test_new_participant_first_turn_asks_food_gate_without_draws():
+def test_new_participant_first_turn_asks_language_gate_without_draws():
     conn, service, orchestrator, _repo = _conversation_stack([])
     try:
         participant = service.create_participant()
 
-        result = orchestrator.handle_turn(participant.id, "你好")
+        result = orchestrator.handle_turn(participant.id, "")
         detail = service.participant_detail(participant.id)
 
-        assert result["stage"] == "food_gate"
-        assert result["next_action"] == "answer_food_gate"
+        assert result["stage"] == "language_gate"
+        assert result["next_action"] == "choose_language"
         assert result["total_questions"] == 2
         assert result["current_question_id"] is None
         assert result["assignment"] is None
-        assert "想来点吃的吗？" in result["reply_text"]
+        assert "Would you like to continue in English or 中文" in result["reply_text"]
         assert len(detail["draws"]) == 0
         assert len(detail["answers"]) == 0
+    finally:
+        conn.close()
+
+
+def test_language_gate_infers_english_before_food_gate_without_draws():
+    conn, service, orchestrator, _repo = _conversation_stack([])
+    try:
+        participant = service.create_participant()
+        orchestrator.handle_turn(participant.id, "")
+
+        result = orchestrator.handle_turn(participant.id, "I would like something to eat")
+        detail = service.participant_detail(participant.id)
+
+        assert result["stage"] == "food_gate"
+        assert result["response_language"] == "en"
+        assert result["next_action"] == "answer_food_gate"
+        assert result["answered_count"] == 0
+        assert result["total_questions"] == 2
+        assert result["current_question_id"] is None
+        assert result["reply_text"] == service.food_gate_prompt(
+            participant.id,
+            response_language="en",
+        )
+        assert result["reply_text"] == (
+            "Your outfit looks pretty good today. I might buy some tonight and "
+            "make my staff wear them on shift. Want something to eat?"
+        )
+        assert detail["draws"] == []
+        assert detail["answers"] == []
+    finally:
+        conn.close()
+
+
+def test_language_gate_infers_chinese_before_food_gate_without_draws():
+    conn, service, orchestrator, _repo = _conversation_stack([])
+    try:
+        participant = service.create_participant()
+        orchestrator.handle_turn(participant.id, "")
+
+        result = orchestrator.handle_turn(participant.id, "我想吃")
+        detail = service.participant_detail(participant.id)
+
+        assert result["stage"] == "food_gate"
+        assert result["response_language"] == "zh"
+        assert result["next_action"] == "answer_food_gate"
+        assert result["answered_count"] == 0
+        assert detail["draws"] == []
+        assert detail["answers"] == []
+    finally:
+        conn.close()
+
+
+def test_language_gate_reprompts_unclear_language_without_drawing_questions():
+    conn, service, orchestrator, _repo = _conversation_stack([])
+    try:
+        participant = service.create_participant()
+
+        result = orchestrator.handle_turn(participant.id, "嗯")
+        detail = service.participant_detail(participant.id)
+
+        assert result["stage"] == "language_gate"
+        assert result["next_action"] == "choose_language"
+        assert result["interpretation"] == {"route": "unclear_language"}
+        assert detail["draws"] == []
+        assert detail["answers"] == []
     finally:
         conn.close()
 
@@ -71,7 +136,7 @@ def test_no_food_enters_not_eating_chat_and_never_draws_questions():
     conn, service, orchestrator, _repo = _conversation_stack([])
     try:
         participant = service.create_participant()
-        orchestrator.handle_turn(participant.id, "")
+        _enter_food_gate(orchestrator, participant.id)
 
         result = orchestrator.handle_turn(participant.id, "先不吃了")
         detail = service.participant_detail(participant.id)
@@ -91,7 +156,7 @@ def test_food_gate_chitchat_is_not_unclear_and_does_not_default_to_no_food():
     conn, service, orchestrator, _repo = _conversation_stack([])
     try:
         participant = service.create_participant()
-        orchestrator.handle_turn(participant.id, "")
+        _enter_food_gate(orchestrator, participant.id)
 
         unclear = orchestrator.handle_turn(participant.id, "嗯")
         chitchat = orchestrator.handle_turn(participant.id, "你是谁啊")
@@ -111,7 +176,7 @@ def test_not_eating_chat_deletes_transient_participant_on_third_chat_turn():
     conn, service, orchestrator, _repo = _conversation_stack([])
     try:
         participant = service.create_participant()
-        orchestrator.handle_turn(participant.id, "")
+        _enter_food_gate(orchestrator, participant.id)
         orchestrator.handle_turn(participant.id, "先不吃了")
 
         first = orchestrator.handle_turn(participant.id, "这个摊位好好玩")
@@ -134,7 +199,7 @@ def test_want_food_starts_two_formal_questions():
     conn, service, orchestrator, _repo = _conversation_stack([])
     try:
         participant = service.create_participant()
-        orchestrator.handle_turn(participant.id, "")
+        _enter_food_gate(orchestrator, participant.id)
 
         result = orchestrator.handle_turn(participant.id, "想吃")
         detail = service.participant_detail(participant.id)
@@ -150,6 +215,27 @@ def test_want_food_starts_two_formal_questions():
         assert detail["draws"][1]["module_id"] == "normal_aimiao"
         assert result["current_question_id"] == detail["draws"][0]["question_id"]
         assert "先回答我两个问题" in result["reply_text"]
+    finally:
+        conn.close()
+
+
+def test_english_language_selection_keeps_formal_question_in_english():
+    conn, service, orchestrator, _repo = _conversation_stack([])
+    try:
+        participant = service.create_participant()
+        orchestrator.handle_turn(participant.id, "")
+        orchestrator.handle_turn(participant.id, "en")
+
+        result = orchestrator.handle_turn(participant.id, "yes")
+        detail = service.participant_detail(participant.id)
+
+        assert result["stage"] == "formal_question_1"
+        assert result["response_language"] == "en"
+        assert result["answered_count"] == 0
+        assert len(detail["draws"]) == 2
+        assert result["current_question_text"] == detail["draws"][0]["question_text"]
+        assert detail["draws"][0]["question_text_zh"] not in result["reply_text"]
+        assert "First question" in result["reply_text"]
     finally:
         conn.close()
 
@@ -194,7 +280,8 @@ def test_two_accepted_answers_assign_aimiao_soup():
         result = orchestrator.handle_turn(participant.id, "我选 A")
 
         assert result["stage"] == "farewell"
-        assert "系统给你定的是" in result["reply_text"]
+        assert "我给你定的是" in result["reply_text"]
+        assert "吃完猜猜我为什么给你这个东西" in result["reply_text"]
         assert "艾苗汤 / Ai Miao soup" in result["reply_text"]
         assert result["answered_count"] == 2
         assert result["next_action"] == "end_session"
@@ -217,7 +304,7 @@ def test_assigned_turn_does_not_change_assignment():
         assigned = orchestrator.handle_turn(participant.id, "我想换一个")
 
         assert assigned["stage"] == "assigned"
-        assert "结果不会再改" in assigned["reply_text"]
+        assert "换下一个人吧" in assigned["reply_text"]
         assert "汤 / Soup" in assigned["reply_text"]
         assert assigned["answered_count"] == 2
         assert assigned["assignment"]["assignment_id"] == ready["assignment"]["assignment_id"]
@@ -327,30 +414,31 @@ def test_orchestrator_decides_flow_reply_service_only_supplies_text():
     try:
         participant = service.create_participant()
 
-        result = orchestrator.handle_turn(participant.id, "你好")
+        result = orchestrator.handle_turn(participant.id, "")
 
         assert result["reply_text"] == "店主说话归店主，流程归流程。"
-        assert result["stage"] == "food_gate"
-        assert result["next_action"] == "answer_food_gate"
+        assert result["stage"] == "language_gate"
+        assert result["next_action"] == "choose_language"
         assert result["answered_count"] == 0
         assert result["assignment"] is None
     finally:
         conn.close()
 
 
-def test_conversation_turn_api_returns_food_gate(monkeypatch, tmp_path):
+def test_conversation_turn_api_returns_language_gate(monkeypatch, tmp_path):
     monkeypatch.setenv("HAVE_SOME_AI_DB_PATH", str(tmp_path / "meal.db"))
 
     with TestClient(app) as client:
         participant = client.post("/api/v1/participants", json={}).json()
         response = client.post(
             f"/api/v1/participants/{participant['id']}/conversation-turn",
-            json={"transcript": "你好"},
+                json={"transcript": ""},
         )
 
     assert response.status_code == 200
     payload = response.json()
-    assert payload["stage"] == "food_gate"
+    assert payload["stage"] == "language_gate"
+    assert payload["next_action"] == "choose_language"
     assert payload["total_questions"] == 2
     assert payload["assignment"] is None
 
@@ -376,5 +464,13 @@ def _enter_food_questions(
     orchestrator: ConversationOrchestrator,
     participant_id: str,
 ) -> dict:
-    orchestrator.handle_turn(participant_id, "")
+    _enter_food_gate(orchestrator, participant_id)
     return orchestrator.handle_turn(participant_id, "想吃")
+
+
+def _enter_food_gate(
+    orchestrator: ConversationOrchestrator,
+    participant_id: str,
+) -> dict:
+    orchestrator.handle_turn(participant_id, "")
+    return orchestrator.handle_turn(participant_id, "中文")

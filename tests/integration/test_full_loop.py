@@ -15,7 +15,7 @@ import pytest
 
 from conscious_entity.core.loop import InteractionLoop
 from conscious_entity.db.migrations import run_migrations
-from conscious_entity.llm.claude_client import ClaudeClient
+from conscious_entity.llm.claude_client import ClaudeClient, ClaudeCompletion
 from conscious_entity.perception.event_types import EventType
 from conscious_entity.state.state_core import EntityState
 
@@ -52,6 +52,9 @@ def mock_client():
     """A deterministic ClaudeClient mock that never calls the API."""
     client = MagicMock(spec=ClaudeClient)
     client.complete.return_value = "Something is present here."
+    client.complete_with_metadata.return_value = ClaudeCompletion(
+        text="Something is present here."
+    )
     return client
 
 

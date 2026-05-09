@@ -80,6 +80,42 @@ def test_shopkeeper_reply_returns_to_required_question_before_two_answers():
     assert "第二个问题" in result["reply_text"]
 
 
+def test_shopkeeper_reply_uses_english_for_selected_language():
+    service = ShopkeeperReplyService()
+
+    result = service.generate_reply({
+        "stage": "formal_question_1",
+        "response_language": "en",
+        "participant_status": "questioning",
+        "answered_count": 0,
+        "total_questions": 2,
+        "current_question_text": "Have you ever sincerely said thank you to AI?",
+        "last_user_transcript": "English",
+        "interpretation_status": None,
+        "assignment": None,
+    })
+
+    assert "First question" in result["reply_text"]
+    assert "Have you ever sincerely said thank you to AI?" in result["reply_text"]
+    assert "第一个问题" not in result["reply_text"]
+
+
+def test_shopkeeper_language_gate_uses_required_prompt():
+    service = ShopkeeperReplyService()
+
+    result = service.generate_reply({
+        "stage": "language_gate",
+        "participant_status": "new",
+        "answered_count": 0,
+        "total_questions": 2,
+    })
+
+    assert result["reply_text"] == (
+        "Hi! 你好！\n"
+        "Would you like to continue in English or 中文"
+    )
+
+
 def test_shopkeeper_reply_after_assigned_does_not_reinterpret_result():
     service = ShopkeeperReplyService()
 
@@ -97,7 +133,7 @@ def test_shopkeeper_reply_after_assigned_does_not_reinterpret_result():
         },
     })
 
-    assert "结果不会再改" in result["reply_text"]
+    assert "换下一个人吧" in result["reply_text"]
     assert "沙拉 / Salad" in result["reply_text"]
     assert "因为" not in result["reply_text"]
 
@@ -118,7 +154,7 @@ def test_shopkeeper_farewell_uses_system_assignment_only():
 
     assert "艾苗沙拉 / Ai Miao salad" in result["reply_text"]
     assert "Some invented label" not in result["reply_text"]
-    assert "不加菜单" in result["reply_text"]
+    assert "吃完猜猜我为什么给你这个东西" in result["reply_text"]
 
 
 def test_shopkeeper_freeform_not_eating_chat_uses_llm_without_echoing_template():

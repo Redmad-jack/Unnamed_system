@@ -96,7 +96,7 @@ Rules:
 - Return label A or B when the transcript directly names A/B or clearly matches
   the visible option text/meaning.
 - Return label unclear when this answer_attempt mentions both A and B, says
-  C/Other, refuses to choose, or cannot be mapped to exactly one option.
+  C/Other, refuses to choose, or cannot be mapped to exactly one visible option.
 - Do not infer hidden preferences beyond the transcript and visible options.
 - Do not chat, advance the flow, generate shopkeeper replies, score, or assign food.
 - Do not decide the food assignment.
@@ -150,11 +150,6 @@ def _user_prompt(
         "visible_choices": {
             "A": options_by_id.get("A"),
             "B": options_by_id.get("B"),
-            "C": {
-                "id": "C",
-                "text_en": "Other. Say anything.",
-                "text_zh": "其他。可以随便说。",
-            },
         },
         "scoring_options": options,
         "visitor_transcript": transcript,

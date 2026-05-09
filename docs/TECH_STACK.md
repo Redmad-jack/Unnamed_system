@@ -96,7 +96,7 @@ anthropic==0.97.0
 anyio==4.13.0
 certifi==2026.4.22
 click==8.3.3
-conscious-entity==0.1.0
+conscious-entity==1.2.1
 distro==1.9.0
 docstring_parser==0.18.0
 fastapi==0.136.1

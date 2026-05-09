@@ -4,6 +4,8 @@
 
 ## 当前边界
 
+当前发布版本：`v1.2.1-EC`
+
 ```text
 src/
 ├── conscious_entity/          # 保留：Stranger / 原 Conscious Entity
@@ -41,22 +43,24 @@ config/have_some_ai/
 当前系统已经支持：
 
 1. 新建匿名观众，生成 `A001` 形式的 public code
-2. Food Gate 先问“想来点吃的吗？”
-3. `NO_FOOD` 进入 `not_eating_chat`，最多闲聊 3 回合后送客并删除 transient participant，不抽正式题、不分配食物
-4. `WANT_FOOD` 后从两个正式模块各随机抽一题
-5. 屏幕显示 A / B / C；C 表示 Other / 其他
-6. AIHubMix/OpenAI-compatible TTS 或豆包 TTS V3 只读 Orchestrator 生成的话术
-7. 浏览器麦克风采集语音，AIHubMix file STT 或豆包 ASR `bigmodel_async` 生成 transcript
-8. 正式题 ASR final 先经过 `FormalTurnRouter`；只有 `answer_attempt` 才进入 Claude A/B/unclear judge
-9. chitchat 由店主话术接住，不进入 Claude judge、不评分、不推进；前 1-2 回合可由 `ShopkeeperReplyService` 调 Claude 生成自由 `reply_text`，失败则模板兜底
-10. 根据两道正式题映射到四种食物：
+2. Language Gate 先问 `Hi! 你好！Would you like to continue in English or 中文`；English / en / 英文 或明显英文输入固定本次会话 `response_language=en`，中文 / Chinese / zh 或明显中文输入使用中文默认逻辑
+3. Food Gate 使用 `questions.yaml` 的 13 条开场轮换；中文问“想来点吃的吗？”，English 模式问 “Want something to eat?”
+4. `NO_FOOD` 进入 `not_eating_chat`，最多闲聊 3 回合后送客并删除 transient participant，不抽正式题、不分配食物
+5. `WANT_FOOD` 后从两个正式模块各随机抽一题
+6. 屏幕显示 A / B 两个正式选项
+7. AIHubMix/OpenAI-compatible TTS 或豆包 TTS V3 只读 Orchestrator 生成的话术
+8. 浏览器麦克风采集语音，AIHubMix file STT 或豆包 ASR `bigmodel_async` 生成 transcript
+9. 正式题 ASR final 先经过 `FormalTurnRouter`；只有 `answer_attempt` 才进入 Claude A/B/unclear judge
+10. chitchat 由店主话术接住，不进入 Claude judge、不评分、不推进；前 1-2 回合可由 `ShopkeeperReplyService` 调 Claude 生成自由 `reply_text`，失败则模板兜底
+11. 根据两道正式题映射到四种食物：
    - `soup`
    - `salad`
    - `aimiao_soup`
    - `aimiao_salad`
-11. 将分配结果写入工作人员队列
-12. 工作人员将队列项更新为 `preparing` 或 `served`
-13. 导出所有 Have Some "Ai" 数据
+12. 店主说出固定出餐话术；中文为“两个问题够了，我给你定的是...”，English 为 “Two questions are enough. I assigned you...”
+13. 将分配结果写入工作人员队列
+14. 工作人员将队列项更新为 `preparing` 或 `served`
+15. 导出所有 Have Some "Ai" 数据
 
 ## 现场主链路
 
@@ -85,6 +89,7 @@ Browser PCM s16le 16k mono
 
 | 组件 | 职责 |
 | --- | --- |
+| `LanguageGateRouter` | 只判断 English / 中文 语言选择；不抽题、不写答案、不参与评分 |
 | `FoodGateRouter` | 只判断 Food Gate 中的想吃、不吃、闲聊、听不懂、取消等入口意图 |
 | `FormalTurnRouter` | 在正式题阶段先判断 transcript 是 answer_attempt、chitchat、unclear_speech、system_command 还是 noise |
 | `ConversationOrchestrator` | 唯一主状态机，维护 Food Gate、not_eating_chat、两道正式题、scoring、farewell、session cleanup |

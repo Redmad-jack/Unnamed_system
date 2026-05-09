@@ -128,9 +128,16 @@ class MealService:
             parts.append(question.text)
         return "\n".join(parts)
 
-    def food_gate_prompt(self, participant_id: str) -> str:
+    def food_gate_prompt(
+        self,
+        participant_id: str,
+        response_language: str | None = None,
+    ) -> str:
         participant = self._repo.get_participant(participant_id)
-        return self._question_bank.food_gate_prompt(participant.public_code)
+        return self._question_bank.food_gate_prompt(
+            participant.public_code,
+            response_language=response_language,
+        )
 
     def submit_voice_answer(
         self,

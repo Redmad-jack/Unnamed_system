@@ -159,15 +159,19 @@ Exhibition System: Have Some "Ai"
 - [x] 店主式“闲聊 + 判断”边界修正：`ConversationOrchestrator` 内新增 Food Gate / Formal turn routing，chitchat 不再进入 Claude judge；`NO_FOOD` 进入 3 回合 `not_eating_chat` 后送客并删除 transient participant；正式题 chitchat 最多 3 回合后拉回当前 A/B 问题
 - [x] session cleanup：`farewell` / `done` 后 WebSocket 主链路会结束 ASR session 并停止继续收麦克风；前端对 deleted/end_session 不再刷新已删除 participant
 - [x] 豆包新版控制台鉴权修正：ASR/TTS 均使用 `X-Api-Key + X-Api-Resource-Id`，不要求 App ID / Access Key；TTS 失败仍会返回 `tts.error` 并恢复收麦
-- [x] 文档审计更新（2026-05-09）：README、`docs/HAVE_SOME_AI_STRUCTURE.md`、`docs/TECH_STACK.md` 已同步当前主链路；明确 C/freeform/chitchat 不会自动映射 A/B，语音排障先检查 8010 服务监听和 `/api/v1/voice-config`
+- [x] 文档审计更新（2026-05-09）：README、`docs/HAVE_SOME_AI_STRUCTURE.md`、`docs/TECH_STACK.md` 已同步当前主链路；明确 freeform/chitchat 不会自动映射 A/B，语音排障先检查 8010 服务监听和 `/api/v1/voice-config`
 - [x] 闲聊话术接入 Claude（2026-05-09）：Food Gate chitchat、`not_eating_chat` 与正式题 chitchat 的前 1-2 回合可由 `ShopkeeperReplyService` 用 Claude 生成自由 `reply_text`；第 3 回合仍按本地状态机送客或拉回题目，LLM 失败走模板兜底
 - [x] 清理审计执行（2026-05-09）：删除本地 pytest / Python cache 与旧 egg-info，移除 Have Some "Ai" 运行时代码和前端里的旧 realtime 残留字段 / 分支，补齐 API 与语音配置文档冲突
+- [x] Language gate（2026-05-09）：正式题前新增非评分语言选择；English / en / 英文或明显英文输入固定本次会话 `response_language=en`，中文 / Chinese / zh 或明显中文输入走中文默认逻辑；不改题库 id、选项 id、scores、模块结构或数据库结构
+- [x] 正式题选项显示收口（2026-05-09）：屏幕和 Claude judge 的 visible choices 只保留 A/B；freeform/chitchat 仍不写入正式答案
+- [x] Food Gate 语言选择后路径修正（2026-05-09）：选择 English 后进入 `questions.yaml` 的 13 条英文开场轮换 + “Want something to eat?”；中文继续使用 13 条中文开场 + “想来点吃的吗？”
+- [x] `v1.2.1-EC` 发布前收口（2026-05-09）：README / 结构文档同步 Language Gate、A/B-only 显示、双语 Food Gate、最终固定出餐话术与测试合同
 
 ### 进行中（Work 2）
 
 - 语音层真实端到端联调：AIHubMix file-STT 已保留；豆包主链路已改为 ASR/TTS 分离 WebSocket，仍需用真实火山凭证和浏览器麦克风确认 ASR definite 分句、Claude judge、TTS PCM 播放、barge-in 和完整答题流程
 - 本地 8010 服务当前未监听；如需重新测试，运行 `./.venv/bin/python scripts/start_have_some_ai.py --port 8010`，再用 `lsof`、`/health`、`/api/v1/voice-config` 确认服务可达
-- 最近 Have Some "Ai" voice / conversation / API / chat / service 单元测试子集：`79 passed`
+- 最近完整测试套件：`288 passed`
 
 ### 下一步（Work 2）
 

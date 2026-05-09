@@ -591,6 +591,7 @@ def test_conversation_audio_calls_file_stt_tts_and_orchestrator(
     assert response.status_code == 200
     assert payload["transcript"] == "老板你好"
     assert payload["stage"] == "food_gate"
+    assert payload["response_language"] == "zh"
     assert payload["reply_audio_base64"] == base64.b64encode(b"fake-mp3").decode("ascii")
     assert any("audio/transcriptions" in url for url in urls)
     assert any("audio/speech" in url for url in urls)
@@ -621,12 +622,12 @@ def test_conversation_turn_can_return_reply_audio(monkeypatch, tmp_path):
         post for post in _FakeHTTPClient.posts if "audio/speech" in post["url"]
     ]
     assert response.status_code == 200
-    assert payload["stage"] == "food_gate"
+    assert payload["stage"] == "language_gate"
     assert payload["reply_audio_base64"] == base64.b64encode(b"fake-mp3").decode("ascii")
     assert payload["reply_audio_mime_type"] == "audio/mpeg"
     assert payload["reply_audio_provider"] == "openai_compatible"
     assert len(speech_posts) == 1
-    assert "想来点吃的吗" in speech_posts[0]["json"]["input"]
+    assert "Would you like to continue in English or 中文" in speech_posts[0]["json"]["input"]
 
 
 def test_conversation_turn_doubao_mode_never_uses_openai_tts(monkeypatch, tmp_path):
@@ -650,7 +651,7 @@ def test_conversation_turn_doubao_mode_never_uses_openai_tts(monkeypatch, tmp_pa
 
     payload = response.json()
     assert response.status_code == 200
-    assert payload["stage"] == "food_gate"
+    assert payload["stage"] == "language_gate"
     assert payload["reply_audio_base64"] is None
     assert payload["reply_audio_mime_type"] is None
     assert payload["reply_audio_provider"] == "doubao_stream"
@@ -702,6 +703,14 @@ def test_conversation_audio_food_gate_turn_does_not_store_formal_answer(
 
     with TestClient(app) as client:
         participant = client.post("/api/v1/participants", json={}).json()
+        client.post(
+            f"/api/v1/participants/{participant['id']}/conversation-turn",
+            json={"transcript": ""},
+        )
+        client.post(
+            f"/api/v1/participants/{participant['id']}/conversation-turn",
+            json={"transcript": "中文"},
+        )
         response = client.post(
             f"/api/v1/participants/{participant['id']}/conversation-audio",
             json=_conversation_audio_payload("food-gate"),
@@ -739,6 +748,10 @@ def test_conversation_audio_formal_question_maps_and_saves_answer(
         client.post(
             f"/api/v1/participants/{participant['id']}/conversation-turn",
             json={"transcript": ""},
+        )
+        client.post(
+            f"/api/v1/participants/{participant['id']}/conversation-turn",
+            json={"transcript": "中文"},
         )
         question = client.post(
             f"/api/v1/participants/{participant['id']}/conversation-turn",
@@ -793,6 +806,10 @@ def test_conversation_audio_two_answers_generate_assignment(
         client.post(
             f"/api/v1/participants/{participant['id']}/conversation-turn",
             json={"transcript": ""},
+        )
+        client.post(
+            f"/api/v1/participants/{participant['id']}/conversation-turn",
+            json={"transcript": "中文"},
         )
         client.post(
             f"/api/v1/participants/{participant['id']}/conversation-turn",
@@ -851,6 +868,10 @@ def test_conversation_audio_after_assignment_does_not_change_result(
         )
         client.post(
             f"/api/v1/participants/{participant['id']}/conversation-turn",
+            json={"transcript": "中文"},
+        )
+        client.post(
+            f"/api/v1/participants/{participant['id']}/conversation-turn",
             json={"transcript": "想吃"},
         )
         ready = None
@@ -904,6 +925,10 @@ def test_conversation_stream_uses_doubao_asr_tts_and_existing_claude_judge(
         client.post(
             f"/api/v1/participants/{participant['id']}/conversation-turn",
             json={"transcript": ""},
+        )
+        client.post(
+            f"/api/v1/participants/{participant['id']}/conversation-turn",
+            json={"transcript": "中文"},
         )
         question = client.post(
             f"/api/v1/participants/{participant['id']}/conversation-turn",
@@ -1055,6 +1080,10 @@ def test_conversation_stream_tts_error_keeps_asr_mic_path_open(
         client.post(
             f"/api/v1/participants/{participant['id']}/conversation-turn",
             json={"transcript": ""},
+        )
+        client.post(
+            f"/api/v1/participants/{participant['id']}/conversation-turn",
+            json={"transcript": "中文"},
         )
         client.post(
             f"/api/v1/participants/{participant['id']}/conversation-turn",

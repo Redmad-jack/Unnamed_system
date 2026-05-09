@@ -17,6 +17,11 @@ class QuestionBank:
             for item in config.get("food_gate_openers", [])
             if str(item).strip()
         ]
+        self._food_gate_openers_en = [
+            str(item).strip()
+            for item in config.get("food_gate_openers_en", [])
+            if str(item).strip()
+        ]
         self._questions_by_id = self._index_questions(self._modules)
 
     def draw_questions(self) -> list[Question]:
@@ -43,23 +48,37 @@ class QuestionBank:
     def iter_questions(self) -> Iterable[Question]:
         return self._questions_by_id.values()
 
-    def food_gate_prompt(self, public_code: str) -> str:
-        opener = self._food_gate_opener(public_code)
+    def food_gate_prompt(
+        self,
+        public_code: str,
+        response_language: str | None = None,
+    ) -> str:
+        if response_language == "en":
+            opener = self._food_gate_opener(public_code, language="en")
+            if not opener:
+                return "Want something to eat?"
+            return f"{opener} Want something to eat?"
+        opener = self._food_gate_opener(public_code, language="zh")
         return f"{opener}想来点吃的吗？"
 
-    def _food_gate_opener(self, public_code: str) -> str:
-        if not self._food_gate_openers:
+    def _food_gate_opener(self, public_code: str, *, language: str) -> str:
+        openers = (
+            self._food_gate_openers_en
+            if language == "en" and self._food_gate_openers_en
+            else self._food_gate_openers
+        )
+        if not openers:
             return ""
         number_text = "".join(ch for ch in public_code if ch.isdigit())
         try:
             participant_number = int(number_text)
         except ValueError:
             participant_number = 1
-        index = max(0, participant_number - 1) % len(self._food_gate_openers)
-        opener = self._food_gate_openers[index]
+        index = max(0, participant_number - 1) % len(openers)
+        opener = openers[index]
         if opener.endswith(("。", "？", "！", ".", "?", "!")):
-            return f"{opener}"
-        return f"{opener}。"
+            return opener
+        return f"{opener}." if language == "en" else f"{opener}。"
 
     @staticmethod
     def _index_questions(modules: list[dict[str, Any]]) -> dict[str, Question]:

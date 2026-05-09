@@ -16,6 +16,10 @@ FOOD_GATE_WANT = "WANT_FOOD"
 FOOD_GATE_NO = "NO_FOOD"
 FOOD_GATE_UNCLEAR = "UNCLEAR"
 
+RESPONSE_LANGUAGE_EN = "en"
+RESPONSE_LANGUAGE_ZH = "zh"
+
+STAGE_LANGUAGE_GATE = "language_gate"
 STAGE_FOOD_GATE = "food_gate"
 STAGE_NOT_EATING_CHAT = "not_eating_chat"
 STAGE_FORMAL_QUESTION_1 = "formal_question_1"
@@ -31,6 +35,7 @@ ROUTE_UNCLEAR_SPEECH = "unclear_speech"
 ROUTE_ANSWER_ATTEMPT = "answer_attempt"
 ROUTE_SYSTEM_COMMAND = "system_command"
 ROUTE_NOISE = "noise"
+ROUTE_LANGUAGE = "language"
 
 MAX_NOT_EATING_CHAT_TURNS = 3
 MAX_FORMAL_CHITCHAT_TURNS = 3
@@ -59,9 +64,11 @@ class ConversationOrchestrator:
         self._awaiting_question_by_participant: dict[str, str] = {}
         self._chat_mode_by_participant: dict[str, str] = {}
         self._food_gate_prompted: set[str] = set()
+        self._response_language_by_participant: dict[str, str] = {}
         self._food_gate_chitchat_count: dict[str, int] = {}
         self._not_eating_chat_count: dict[str, int] = {}
         self._formal_chitchat_count: dict[str, int] = {}
+        self._language_router = LanguageGateRouter()
         self._food_gate_router = FoodGateRouter()
         self._formal_turn_router = FormalTurnRouter()
 
@@ -102,9 +109,11 @@ class ConversationOrchestrator:
         clean_transcript = transcript.strip()
 
         assignment = detail["assignment"]
+        response_language = self._response_language(participant_id, detail)
         if assignment is not None:
             self._clear_live_state(participant_id)
             return self._response(
+                participant_id=participant_id,
                 stage=STAGE_ASSIGNED,
                 participant_status=detail["participant"]["status"],
                 answered_count=len(detail["answers"]),
@@ -113,6 +122,9 @@ class ConversationOrchestrator:
                 interpretation=None,
                 chat_mode=CHAT_MODE_B_WANT_FOOD,
             )
+
+        if response_language is None:
+            return self._handle_language_gate(participant_id, detail, clean_transcript)
 
         chat_mode = self._chat_mode(participant_id, detail)
         if chat_mode == CHAT_MODE_A_NO_FOOD:
@@ -132,6 +144,7 @@ class ConversationOrchestrator:
             current_question = _draw_by_question_id(detail["draws"], awaiting_question_id)
             if not clean_transcript:
                 return self._response(
+                    participant_id=participant_id,
                     stage=_formal_stage(len(detail["answers"])),
                     participant_status=detail["participant"]["status"],
                     answered_count=len(detail["answers"]),
@@ -159,6 +172,7 @@ class ConversationOrchestrator:
             current_question["question_id"]
         )
         return self._response(
+            participant_id=participant_id,
             stage=_formal_stage(len(detail["answers"])),
             participant_status=detail["participant"]["status"],
             answered_count=len(detail["answers"]),
@@ -167,6 +181,34 @@ class ConversationOrchestrator:
             last_user_transcript=clean_transcript,
             interpretation=None,
             chat_mode=CHAT_MODE_B_WANT_FOOD,
+        )
+
+    def _handle_language_gate(
+        self,
+        participant_id: str,
+        detail: dict[str, Any],
+        transcript: str,
+    ) -> dict[str, Any]:
+        routed = self._language_router.route(transcript)
+        if routed.route == ROUTE_LANGUAGE and routed.command in {
+            RESPONSE_LANGUAGE_EN,
+            RESPONSE_LANGUAGE_ZH,
+        }:
+            self._response_language_by_participant[participant_id] = routed.command
+            return self._handle_food_gate(participant_id, detail, "")
+
+        interpretation = None
+        if transcript:
+            interpretation = {"route": "unclear_language"}
+        return self._response(
+            participant_id=participant_id,
+            stage=STAGE_LANGUAGE_GATE,
+            participant_status=detail["participant"]["status"],
+            answered_count=0,
+            next_action="choose_language",
+            last_user_transcript=transcript,
+            interpretation=interpretation,
+            response_language=None,
         )
 
     def _handle_food_gate(
@@ -178,13 +220,19 @@ class ConversationOrchestrator:
         if participant_id not in self._food_gate_prompted:
             self._food_gate_prompted.add(participant_id)
             return self._response(
+                participant_id=participant_id,
                 stage=STAGE_FOOD_GATE,
                 participant_status=detail["participant"]["status"],
                 answered_count=0,
                 next_action="answer_food_gate",
                 interpretation=None,
                 food_gate_result=None,
-                food_gate_prompt=self._service.food_gate_prompt(participant_id),
+                food_gate_prompt=self._service.food_gate_prompt(
+                    participant_id,
+                    response_language=self._response_language_by_participant.get(
+                        participant_id
+                    ),
+                ),
             )
 
         routed = self._food_gate_router.route(transcript)
@@ -197,6 +245,7 @@ class ConversationOrchestrator:
 
         if routed.route in {ROUTE_UNCLEAR_SPEECH, ROUTE_NOISE}:
             return self._response(
+                participant_id=participant_id,
                 stage=STAGE_FOOD_GATE,
                 participant_status=detail["participant"]["status"],
                 answered_count=0,
@@ -204,19 +253,30 @@ class ConversationOrchestrator:
                 last_user_transcript=transcript,
                 interpretation={"route": routed.route},
                 food_gate_result=FOOD_GATE_UNCLEAR,
-                food_gate_prompt=self._service.food_gate_prompt(participant_id),
+                food_gate_prompt=self._service.food_gate_prompt(
+                    participant_id,
+                    response_language=self._response_language_by_participant.get(
+                        participant_id
+                    ),
+                ),
             )
 
         count = self._food_gate_chitchat_count.get(participant_id, 0) + 1
         self._food_gate_chitchat_count[participant_id] = count
         return self._response(
+            participant_id=participant_id,
             stage=STAGE_FOOD_GATE,
             participant_status=detail["participant"]["status"],
             answered_count=0,
             next_action="answer_food_gate",
             last_user_transcript=transcript,
             interpretation={"route": ROUTE_CHITCHAT, "count": count},
-            food_gate_prompt=self._service.food_gate_prompt(participant_id),
+            food_gate_prompt=self._service.food_gate_prompt(
+                participant_id,
+                response_language=self._response_language_by_participant.get(
+                    participant_id
+                ),
+            ),
         )
 
     def _handle_not_eating_chat(
@@ -227,6 +287,7 @@ class ConversationOrchestrator:
     ) -> dict[str, Any]:
         if not transcript:
             return self._response(
+                participant_id=participant_id,
                 stage=STAGE_NOT_EATING_CHAT,
                 participant_status=detail["participant"]["status"],
                 answered_count=len(detail["answers"]),
@@ -243,6 +304,7 @@ class ConversationOrchestrator:
             self._clear_live_state(participant_id)
             self._service.delete_transient_participant(participant_id)
             return self._response(
+                participant_id=participant_id,
                 stage=STAGE_DONE,
                 participant_status="deleted",
                 answered_count=len(detail["answers"]),
@@ -254,6 +316,7 @@ class ConversationOrchestrator:
                 participant_deleted=True,
             )
         return self._response(
+            participant_id=participant_id,
             stage=STAGE_NOT_EATING_CHAT,
             participant_status=detail["participant"]["status"],
             answered_count=len(detail["answers"]),
@@ -275,6 +338,7 @@ class ConversationOrchestrator:
         self._awaiting_question_by_participant.pop(participant_id, None)
         self._not_eating_chat_count[participant_id] = 0
         return self._response(
+            participant_id=participant_id,
             stage=STAGE_NOT_EATING_CHAT,
             participant_status=detail["participant"]["status"],
             answered_count=len(detail["answers"]),
@@ -306,6 +370,7 @@ class ConversationOrchestrator:
             current_question["question_id"]
         )
         return self._response(
+            participant_id=participant_id,
             stage=_formal_stage(len(fresh_detail["answers"])),
             participant_status=fresh_detail["participant"]["status"],
             answered_count=len(fresh_detail["answers"]),
@@ -334,6 +399,7 @@ class ConversationOrchestrator:
         if routed.route == ROUTE_SYSTEM_COMMAND and routed.command == "repeat":
             self._awaiting_question_by_participant[participant_id] = question_id
             return self._response(
+                participant_id=participant_id,
                 stage=_formal_stage(len(detail["answers"])),
                 participant_status=detail["participant"]["status"],
                 answered_count=len(detail["answers"]),
@@ -347,6 +413,7 @@ class ConversationOrchestrator:
         if routed.route == ROUTE_SYSTEM_COMMAND and routed.command == "cancel":
             self._clear_live_state(participant_id)
             return self._response(
+                participant_id=participant_id,
                 stage=STAGE_DONE,
                 participant_status=detail["participant"]["status"],
                 answered_count=len(detail["answers"]),
@@ -360,6 +427,7 @@ class ConversationOrchestrator:
         if routed.route in {ROUTE_UNCLEAR_SPEECH, ROUTE_NOISE}:
             self._awaiting_question_by_participant[participant_id] = question_id
             return self._response(
+                participant_id=participant_id,
                 stage=_formal_stage(len(detail["answers"])),
                 participant_status=detail["participant"]["status"],
                 answered_count=len(detail["answers"]),
@@ -383,7 +451,8 @@ class ConversationOrchestrator:
             participant_id,
             question_id=question_id,
             transcript=transcript,
-            detected_language=detected_language,
+            detected_language=detected_language
+            or self._response_language_by_participant.get(participant_id),
             stt_confidence=stt_confidence,
             stt_metadata=metadata,
             attempt_id=attempt_id,
@@ -421,6 +490,7 @@ class ConversationOrchestrator:
                     "question_id"
                 ]
             return self._response(
+                participant_id=participant_id,
                 stage=_formal_stage(answered_count),
                 participant_status=detail["participant"]["status"],
                 answered_count=answered_count,
@@ -435,6 +505,7 @@ class ConversationOrchestrator:
         current_question = _draw_by_question_id(detail["draws"], question_id)
         self._awaiting_question_by_participant[participant_id] = question_id
         return self._response(
+            participant_id=participant_id,
             stage=_formal_stage(answered_count),
             participant_status=detail["participant"]["status"],
             answered_count=answered_count,
@@ -456,6 +527,7 @@ class ConversationOrchestrator:
         count = self._formal_chitchat_count.get(participant_id, 0) + 1
         self._formal_chitchat_count[participant_id] = count
         return self._response(
+            participant_id=participant_id,
             stage=_formal_stage(len(detail["answers"])),
             participant_status=detail["participant"]["status"],
             answered_count=len(detail["answers"]),
@@ -477,6 +549,7 @@ class ConversationOrchestrator:
         self._clear_live_state(participant_id)
         self._chat_mode_by_participant[participant_id] = CHAT_MODE_B_WANT_FOOD
         return self._response(
+            participant_id=participant_id,
             stage=STAGE_FAREWELL,
             participant_status=STAGE_ASSIGNED,
             answered_count=answered_count,
@@ -515,6 +588,24 @@ class ConversationOrchestrator:
             return CHAT_MODE_B_WANT_FOOD
         return None
 
+    def _response_language(
+        self,
+        participant_id: str,
+        detail: dict[str, Any],
+    ) -> str | None:
+        explicit = self._response_language_by_participant.get(participant_id)
+        if explicit is not None:
+            return explicit
+        if (
+            detail["draws"]
+            or detail["answers"]
+            or detail["assignment"] is not None
+            or self._chat_mode_by_participant.get(participant_id) is not None
+        ):
+            self._response_language_by_participant[participant_id] = RESPONSE_LANGUAGE_ZH
+            return RESPONSE_LANGUAGE_ZH
+        return None
+
     def _clear_live_state(self, participant_id: str) -> None:
         self._awaiting_question_by_participant.pop(participant_id, None)
         self._chat_mode_by_participant.pop(participant_id, None)
@@ -525,6 +616,7 @@ class ConversationOrchestrator:
     def _response(
         self,
         *,
+        participant_id: str,
         stage: str,
         participant_status: str,
         answered_count: int,
@@ -540,9 +632,19 @@ class ConversationOrchestrator:
         not_eating_chat_count: int | None = None,
         formal_chitchat_count: int | None = None,
         participant_deleted: bool = False,
+        response_language: str | None = None,
     ) -> dict[str, Any]:
+        resolved_language = (
+            response_language
+            if response_language is not None
+            else self._response_language_by_participant.get(participant_id)
+        )
+        if resolved_language is None and stage != STAGE_LANGUAGE_GATE:
+            resolved_language = RESPONSE_LANGUAGE_ZH
         current_question_text = (
-            _question_text(current_question) if current_question is not None else None
+            _question_text(current_question, resolved_language)
+            if current_question is not None
+            else None
         )
         context = {
             "stage": stage,
@@ -561,6 +663,7 @@ class ConversationOrchestrator:
             "not_eating_chat_count": not_eating_chat_count,
             "formal_chitchat_count": formal_chitchat_count,
             "participant_deleted": participant_deleted,
+            "response_language": resolved_language,
         }
         reply = self._reply_service.generate_reply(context)
         return {
@@ -571,6 +674,7 @@ class ConversationOrchestrator:
             "not_eating_chat_count": not_eating_chat_count,
             "formal_chitchat_count": formal_chitchat_count,
             "participant_deleted": participant_deleted,
+            "response_language": resolved_language,
             "answered_count": answered_count,
             "total_questions": TOTAL_REQUIRED_QUESTIONS,
             "current_question_id": (
@@ -581,6 +685,30 @@ class ConversationOrchestrator:
             "interpretation": interpretation,
             "assignment": assignment,
         }
+
+
+class LanguageGateRouter:
+    """Choose response language without entering the scored question flow."""
+
+    def route(self, transcript: str) -> TurnRoute:
+        compact = _compact(transcript)
+        if not compact:
+            return TurnRoute(ROUTE_NOISE)
+        if compact in {"e", "en"} or any(
+            token in compact for token in {"english", "英文"}
+        ):
+            return TurnRoute(ROUTE_LANGUAGE, RESPONSE_LANGUAGE_EN)
+        if compact in {"c", "zh"} or any(
+            token in compact for token in {"chinese", "中文", "汉语", "漢語"}
+        ):
+            return TurnRoute(ROUTE_LANGUAGE, RESPONSE_LANGUAGE_ZH)
+        if _is_unclear_speech(compact):
+            return TurnRoute(ROUTE_UNCLEAR_SPEECH)
+        if _has_cjk_text(transcript):
+            return TurnRoute(ROUTE_LANGUAGE, RESPONSE_LANGUAGE_ZH)
+        if _has_clear_latin_text(compact):
+            return TurnRoute(ROUTE_LANGUAGE, RESPONSE_LANGUAGE_EN)
+        return TurnRoute(ROUTE_UNCLEAR_SPEECH)
 
 
 class FoodGateRouter:
@@ -897,7 +1025,9 @@ def _draw_by_question_id(draws: list[dict[str, Any]], question_id: str) -> dict[
     raise ValueError(f"Question was not drawn for participant: {question_id}")
 
 
-def _question_text(draw: dict[str, Any]) -> str:
+def _question_text(draw: dict[str, Any], response_language: str | None) -> str:
+    if response_language == RESPONSE_LANGUAGE_EN:
+        return str(draw["question_text"])
     return str(draw.get("question_text_zh") or draw["question_text"])
 
 
@@ -911,3 +1041,12 @@ def _interpretation_from_voice_result(voice_result: dict[str, Any]) -> dict[str,
 
 def _compact(text: str) -> str:
     return "".join(ch for ch in text.strip().lower() if ch.isalnum())
+
+
+def _has_cjk_text(text: str) -> bool:
+    return any("\u4e00" <= ch <= "\u9fff" for ch in text)
+
+
+def _has_clear_latin_text(compact: str) -> bool:
+    latin_count = sum(1 for ch in compact if "a" <= ch <= "z")
+    return latin_count >= 2

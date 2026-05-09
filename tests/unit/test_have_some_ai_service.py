@@ -125,11 +125,26 @@ def test_food_gate_prompt_rotates_by_public_code():
 
     participants = [service.create_participant() for _ in range(14)]
 
-    assert service.food_gate_prompt(participants[0].id).startswith("你今天衣服挺漂亮啊。")
-    assert service.food_gate_prompt(participants[1].id).startswith("你看起来像是")
-    assert service.food_gate_prompt(participants[12].id).startswith("你今天运气还行")
-    assert service.food_gate_prompt(participants[13].id).startswith("你今天衣服挺漂亮啊。")
+    assert service.food_gate_prompt(participants[0].id).startswith("你今天衣服很漂亮啊，我晚上")
+    assert service.food_gate_prompt(participants[1].id).startswith("你好啊，先提前告诉你")
+    assert service.food_gate_prompt(participants[12].id).startswith("你好，人类，一会")
+    assert service.food_gate_prompt(participants[13].id).startswith("你今天衣服很漂亮啊，我晚上")
     assert service.food_gate_prompt(participants[0].id).endswith("想来点吃的吗？")
+    assert service.food_gate_prompt(
+        participants[0].id,
+        response_language="en",
+    ) == (
+        "Your outfit looks pretty good today. I might buy some tonight and "
+        "make my staff wear them on shift. Want something to eat?"
+    )
+    assert service.food_gate_prompt(
+        participants[12].id,
+        response_language="en",
+    ).startswith("Hi, human.")
+    assert service.food_gate_prompt(
+        participants[13].id,
+        response_language="en",
+    ).startswith("Your outfit looks pretty good today.")
 
     conn.close()
 

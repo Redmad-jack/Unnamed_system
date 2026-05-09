@@ -127,6 +127,10 @@ def test_claude_prompt_forbids_flow_and_food_decisions():
     assert "FormalTurnRouter" in system
     assert '"label":"A"' in system
 
+    prompt_payload = json.loads(llm.calls[0]["messages"][0]["content"])
+    assert set(prompt_payload["visible_choices"]) == {"A", "B"}
+    assert "C" not in prompt_payload["visible_choices"]
+
 
 def test_claude_rubric_judge_repairs_malformed_json():
     llm = FakeLLM([

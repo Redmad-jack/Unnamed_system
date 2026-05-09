@@ -46,6 +46,7 @@ class ShopkeeperReplyService:
         """Build a safe future-LLM prompt without internal allocation logic."""
         safe_context = {
             "stage": context.get("stage"),
+            "response_language": _response_language(context),
             "participant_status": context.get("participant_status"),
             "next_action": context.get("next_action"),
             "answered_count": context.get("answered_count"),
@@ -55,7 +56,10 @@ class ShopkeeperReplyService:
             "interpretation_status": context.get("interpretation_status"),
             "interpretation_route": _interpretation_route(context),
             "assignment_present": bool(context.get("assignment")),
-            "assigned_food_text": _assignment_food_text(context.get("assignment")),
+            "assigned_food_text": _assignment_food_text_for(
+                context.get("assignment"),
+                _response_language(context),
+            ),
             "chat_mode": context.get("chat_mode"),
             "food_gate_result": context.get("food_gate_result"),
             "food_gate_prompt": context.get("food_gate_prompt"),
@@ -70,6 +74,7 @@ class ShopkeeperReplyService:
         return (
             "你是 Have Some \"Ai\" 装置里的真实小店老板。短句，口语，温和，有一点黑色幽默。"
             "只能润色店主话术，不能决定流程、答案、题目、进度或出餐结果。"
+            "必须遵守 response_language：en 只输出英文；zh 输出中文。"
             "闲聊的前一到两回合可以自然回应观众，不要只复述观众原话。"
             "如果 should_return_to_formal_question_now 为 true，才把话明确带回当前正式题。"
             "不要主动提出新的正式问题，除非 current_question_text 或 Food Gate 正在要求你问。"
@@ -125,6 +130,11 @@ class ShopkeeperReplyService:
         return self._llm_client
 
     def _template_reply(self, context: dict[str, Any]) -> str:
+        if _response_language(context) == "en":
+            return self._template_reply_en(context)
+        return self._template_reply_zh(context)
+
+    def _template_reply_zh(self, context: dict[str, Any]) -> str:
         stage = str(context.get("stage") or "")
         answered_count = int(context.get("answered_count") or 0)
         total_questions = int(context.get("total_questions") or 2)
@@ -138,6 +148,8 @@ class ShopkeeperReplyService:
         formal_chitchat_count = int(context.get("formal_chitchat_count") or 0)
         not_eating_chat_count = int(context.get("not_eating_chat_count") or 0)
 
+        if stage == "language_gate":
+            return _language_gate_prompt()
         if stage == "food_gate":
             if route == "unclear_speech":
                 return "我没听清。你要不要吃点东西，或者参加一下？"
@@ -179,16 +191,87 @@ class ShopkeeperReplyService:
             return _with_question("第二个问题。", question_text)
         if stage in {"scoring", "farewell"}:
             if assignment_text:
-                return f"两个问题够了，系统给你定的是：{assignment_text}。我只照这个出，不加菜单。拿好以后就先走吧。"
-            return "两个问题够了，厨房可以出餐了。命运已经下锅。"
+                return f"两个问题够了，我给你定的是：{assignment_text}。吃完猜猜我为什么给你这个东西？"
+            return "两个问题够了，厨房可以出餐了。"
         if stage == "assigned":
             if assignment_text:
-                return f"餐已经定了：{assignment_text}。结果不会再改。"
-            return "餐已经定了，结果不会再改。锅比我还固执。"
+                return f"餐已经定了：{assignment_text}。换下一个人吧。"
+            return "餐已经定了，结果不会再改。再见。"
 
         if answered_count < total_questions:
             return _with_question("先把正事办完。", question_text)
         return "行，先这样。"
+
+    def _template_reply_en(self, context: dict[str, Any]) -> str:
+        stage = str(context.get("stage") or "")
+        answered_count = int(context.get("answered_count") or 0)
+        total_questions = int(context.get("total_questions") or 2)
+        question_text = _clean_text(context.get("current_question_text"))
+        transcript = _clean_text(context.get("last_user_transcript"))
+        food_gate_prompt = _clean_text(context.get("food_gate_prompt"))
+        interpretation_status = _clean_text(context.get("interpretation_status"))
+        assignment_text = _assignment_food_text_for(context.get("assignment"), "en")
+        interpretation = context.get("interpretation") if isinstance(context.get("interpretation"), dict) else {}
+        route = interpretation.get("route")
+        formal_chitchat_count = int(context.get("formal_chitchat_count") or 0)
+        not_eating_chat_count = int(context.get("not_eating_chat_count") or 0)
+
+        if stage == "language_gate":
+            return _language_gate_prompt()
+        if stage == "food_gate":
+            if route == "unclear_speech":
+                return "I didn't catch that. Would you like something to eat, or would you like to join in?"
+            if route == "noise":
+                return "That was only a little sound. Tell me directly: do you want something to eat?"
+            if route == "chitchat" and transcript:
+                return f"I heard you: {_short_echo(transcript)}. First, tell me: would you like something to eat?"
+            return food_gate_prompt or "Would you like something to eat?"
+        if stage == "not_eating_chat":
+            if context.get("food_gate_result") == "NO_FOOD":
+                return "All right. No food today. You can still stay here for a moment."
+            if not_eating_chat_count >= 2:
+                return "I hear you. One more sentence, then I need to talk to someone else."
+            if transcript:
+                return f"I hear you: {_short_echo(transcript)}. Not eating is fine; call it passing by."
+            return "Not eating is fine. Say what you want to say."
+        if stage == "done":
+            if context.get("participant_deleted"):
+                return "All right. No food today. I need to talk to someone else now. You can go."
+            return "All right. That's it for today."
+        if stage in {"formal_question_1", "formal_question_2"}:
+            if route == "chitchat":
+                if formal_chitchat_count >= 3:
+                    return _with_question(
+                        "We need to come back to this question. Tell me directly: A or B? The question is: ",
+                        question_text,
+                    )
+                return _with_question("I heard that. Let's finish this question first: ", question_text)
+            if route in {"unclear_speech", "noise"}:
+                return _with_question("I didn't quite catch that. Please say it again. The question is: ", question_text)
+            if interpretation.get("source") == "judge" and interpretation.get("status") == "unclear":
+                return _with_question("That sounds like an answer, but I can't tell A from B. Please say A or B: ", question_text)
+            if interpretation.get("status") == "accepted":
+                if answered_count < total_questions:
+                    return _with_question("Got it. Second question: ", question_text)
+                return "Got it."
+            if answered_count == 0:
+                return _with_question(
+                    "Good. I need you to answer two questions before I can serve you. First question: ",
+                    question_text,
+                )
+            return _with_question("Second question: ", question_text)
+        if stage in {"scoring", "farewell"}:
+            if assignment_text:
+                return f"Two questions are enough. I assigned you: {assignment_text}. You may want to think about why I’m giving it to you."
+            return "Two questions are enough. The kitchen can serve now."
+        if stage == "assigned":
+            if assignment_text:
+                return f"Your food is already set: {assignment_text}. It will not change."
+            return "Your food is already set. It will not change."
+
+        if answered_count < total_questions:
+            return _with_question("Let's finish the actual questions first: ", question_text)
+        return "All right. That's it."
 
 
 _FREEFORM_CHAT_SYSTEM_PROMPT = """You write only the next spoken line for the shopkeeper in Have Some "Ai".
@@ -197,10 +280,11 @@ Hard boundaries:
 - The local state machine has already decided stage, next_action, question, assignment, and session ending. Do not change them.
 - Do not classify A/B answers, score the visitor, choose food, or mention hidden logic.
 - Free chitchat means you may respond to the visitor's latest remark naturally for one or two short sentences.
+- Follow response_language from the context: if it is en, write English only; if it is zh, write Chinese.
 - Keep the current question or Food Gate as background. Do not repeat it during early free chitchat unless the context says to return now.
 - Never claim that the system is conscious or alive.
 - Return plain speakable text only. No JSON, Markdown, bullet points, labels, or quotation marks.
-- Prefer Chinese when the visitor uses Chinese; English is fine when the visitor uses English.
+- Keep the selected language even if the visitor briefly mixes languages.
 - Keep it under 60 Chinese characters or 35 English words.
 """
 
@@ -209,6 +293,17 @@ def _with_question(prefix: str, question_text: str | None) -> str:
     if not question_text:
         return prefix
     return f"{prefix}{question_text}"
+
+
+def _language_gate_prompt() -> str:
+    return (
+        "Hi! 你好！\n"
+        "Would you like to continue in English or 中文"
+    )
+
+
+def _response_language(context: dict[str, Any]) -> str:
+    return "en" if context.get("response_language") == "en" else "zh"
 
 
 def _clean_text(value: Any) -> str | None:
@@ -232,14 +327,26 @@ _ASSIGNMENT_FOOD_TEXT = {
     "aimiao_salad": "艾苗沙拉 / Ai Miao salad",
 }
 
+_ASSIGNMENT_FOOD_TEXT_EN = {
+    "soup": "Soup",
+    "salad": "Salad",
+    "aimiao_soup": "Ai Miao soup",
+    "aimiao_salad": "Ai Miao salad",
+}
+
 
 def _assignment_food_text(value: Any) -> str | None:
+    return _assignment_food_text_for(value, "zh")
+
+
+def _assignment_food_text_for(value: Any, response_language: str) -> str | None:
     if not isinstance(value, dict):
         return None
     code = _clean_text(value.get("food_code"))
     if code is None:
         return None
-    return _ASSIGNMENT_FOOD_TEXT.get(code)
+    text_map = _ASSIGNMENT_FOOD_TEXT_EN if response_language == "en" else _ASSIGNMENT_FOOD_TEXT
+    return text_map.get(code)
 
 
 def _interpretation_route(context: dict[str, Any]) -> str | None:
