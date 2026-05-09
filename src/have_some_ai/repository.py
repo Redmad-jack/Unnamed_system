@@ -84,6 +84,13 @@ class MealRepository:
         )
         self._conn.commit()
 
+    def delete_participant(self, participant_id: str) -> None:
+        self._conn.execute(
+            "DELETE FROM meal_participants WHERE id = ?",
+            (participant_id,),
+        )
+        self._conn.commit()
+
     def store_draws(self, participant_id: str, draws: list[DrawnQuestion]) -> None:
         for draw in draws:
             question = draw.question

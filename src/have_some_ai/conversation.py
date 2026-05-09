@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Any
 
 from have_some_ai.chat import ShopkeeperReplyService
@@ -16,15 +17,29 @@ FOOD_GATE_NO = "NO_FOOD"
 FOOD_GATE_UNCLEAR = "UNCLEAR"
 
 STAGE_FOOD_GATE = "food_gate"
-STAGE_FOOD_GATE_CLARIFY = "food_gate_clarify"
-STAGE_FREE_CHAT = "free_chat"
-STAGE_ASKING_REQUIRED_QUESTION = "asking_required_question"
-STAGE_AWAITING_REQUIRED_ANSWER = "awaiting_required_answer"
-STAGE_AFTER_REQUIRED_ANSWER = "after_required_answer"
-STAGE_FOOD_CHAT_DETOUR = "food_chat_detour"
-STAGE_FOOD_CHAT_LIMIT = "food_chat_limit"
-STAGE_READY_TO_ASSIGN = "ready_to_assign"
+STAGE_NOT_EATING_CHAT = "not_eating_chat"
+STAGE_FORMAL_QUESTION_1 = "formal_question_1"
+STAGE_FORMAL_QUESTION_2 = "formal_question_2"
+STAGE_FAREWELL = "farewell"
 STAGE_ASSIGNED = "assigned"
+STAGE_DONE = "done"
+
+ROUTE_WANT_FOOD = "want_food"
+ROUTE_NO_FOOD = "no_food"
+ROUTE_CHITCHAT = "chitchat"
+ROUTE_UNCLEAR_SPEECH = "unclear_speech"
+ROUTE_ANSWER_ATTEMPT = "answer_attempt"
+ROUTE_SYSTEM_COMMAND = "system_command"
+ROUTE_NOISE = "noise"
+
+MAX_NOT_EATING_CHAT_TURNS = 3
+MAX_FORMAL_CHITCHAT_TURNS = 3
+
+
+@dataclass(frozen=True)
+class TurnRoute:
+    route: str
+    command: str | None = None
 
 
 class ConversationOrchestrator:
@@ -44,8 +59,11 @@ class ConversationOrchestrator:
         self._awaiting_question_by_participant: dict[str, str] = {}
         self._chat_mode_by_participant: dict[str, str] = {}
         self._food_gate_prompted: set[str] = set()
-        self._food_gate_unclear_count: dict[str, int] = {}
-        self._food_chat_detour_count: dict[str, int] = {}
+        self._food_gate_chitchat_count: dict[str, int] = {}
+        self._not_eating_chat_count: dict[str, int] = {}
+        self._formal_chitchat_count: dict[str, int] = {}
+        self._food_gate_router = FoodGateRouter()
+        self._formal_turn_router = FormalTurnRouter()
 
     def conversation_turn(
         self,
@@ -66,8 +84,8 @@ class ConversationOrchestrator:
             attempt_id=attempt_id,
         )
 
-    def prepare_realtime_turn(self, participant_id: str) -> dict[str, Any]:
-        """Open or report the current conversation turn for realtime voice."""
+    def prepare_stream_turn(self, participant_id: str) -> dict[str, Any]:
+        """Open or report the current conversation turn for streaming voice."""
         return self.handle_turn(participant_id, "")
 
     def handle_turn(
@@ -98,7 +116,7 @@ class ConversationOrchestrator:
 
         chat_mode = self._chat_mode(participant_id, detail)
         if chat_mode == CHAT_MODE_A_NO_FOOD:
-            return self._handle_free_chat(participant_id, detail, clean_transcript)
+            return self._handle_not_eating_chat(participant_id, detail, clean_transcript)
 
         if not detail["draws"] and chat_mode != CHAT_MODE_B_WANT_FOOD:
             return self._handle_food_gate(participant_id, detail, clean_transcript)
@@ -114,11 +132,11 @@ class ConversationOrchestrator:
             current_question = _draw_by_question_id(detail["draws"], awaiting_question_id)
             if not clean_transcript:
                 return self._response(
-                    stage=STAGE_AWAITING_REQUIRED_ANSWER,
+                    stage=_formal_stage(len(detail["answers"])),
                     participant_status=detail["participant"]["status"],
                     answered_count=len(detail["answers"]),
                     current_question=current_question,
-                    next_action="submit_required_answer",
+                    next_action="answer_formal_question",
                     last_user_transcript=clean_transcript,
                     interpretation=None,
                     chat_mode=CHAT_MODE_B_WANT_FOOD,
@@ -141,11 +159,11 @@ class ConversationOrchestrator:
             current_question["question_id"]
         )
         return self._response(
-            stage=STAGE_ASKING_REQUIRED_QUESTION,
+            stage=_formal_stage(len(detail["answers"])),
             participant_status=detail["participant"]["status"],
             answered_count=len(detail["answers"]),
             current_question=current_question,
-            next_action="submit_required_answer",
+            next_action="answer_formal_question",
             last_user_transcript=clean_transcript,
             interpretation=None,
             chat_mode=CHAT_MODE_B_WANT_FOOD,
@@ -169,40 +187,81 @@ class ConversationOrchestrator:
                 food_gate_prompt=self._service.food_gate_prompt(participant_id),
             )
 
-        result = classify_food_gate(transcript)
-        if result == FOOD_GATE_WANT:
+        routed = self._food_gate_router.route(transcript)
+        if routed.route == ROUTE_WANT_FOOD:
             return self._enter_want_food(participant_id, detail, transcript)
-        if result == FOOD_GATE_NO:
-            return self._enter_no_food(participant_id, detail, transcript, result)
+        if routed.route in {ROUTE_NO_FOOD, ROUTE_SYSTEM_COMMAND} and routed.command == "cancel":
+            return self._enter_no_food(participant_id, detail, transcript, FOOD_GATE_NO)
+        if routed.route == ROUTE_NO_FOOD:
+            return self._enter_no_food(participant_id, detail, transcript, FOOD_GATE_NO)
 
-        unclear_count = self._food_gate_unclear_count.get(participant_id, 0) + 1
-        self._food_gate_unclear_count[participant_id] = unclear_count
-        if unclear_count == 1:
+        if routed.route in {ROUTE_UNCLEAR_SPEECH, ROUTE_NOISE}:
             return self._response(
-                stage=STAGE_FOOD_GATE_CLARIFY,
+                stage=STAGE_FOOD_GATE,
                 participant_status=detail["participant"]["status"],
                 answered_count=0,
                 next_action="answer_food_gate",
                 last_user_transcript=transcript,
-                interpretation={"status": FOOD_GATE_UNCLEAR},
+                interpretation={"route": routed.route},
                 food_gate_result=FOOD_GATE_UNCLEAR,
+                food_gate_prompt=self._service.food_gate_prompt(participant_id),
             )
-        return self._enter_no_food(participant_id, detail, transcript, FOOD_GATE_UNCLEAR)
 
-    def _handle_free_chat(
+        count = self._food_gate_chitchat_count.get(participant_id, 0) + 1
+        self._food_gate_chitchat_count[participant_id] = count
+        return self._response(
+            stage=STAGE_FOOD_GATE,
+            participant_status=detail["participant"]["status"],
+            answered_count=0,
+            next_action="answer_food_gate",
+            last_user_transcript=transcript,
+            interpretation={"route": ROUTE_CHITCHAT, "count": count},
+            food_gate_prompt=self._service.food_gate_prompt(participant_id),
+        )
+
+    def _handle_not_eating_chat(
         self,
         participant_id: str,
         detail: dict[str, Any],
         transcript: str,
     ) -> dict[str, Any]:
+        if not transcript:
+            return self._response(
+                stage=STAGE_NOT_EATING_CHAT,
+                participant_status=detail["participant"]["status"],
+                answered_count=len(detail["answers"]),
+                next_action="not_eating_chat",
+                last_user_transcript=transcript,
+                interpretation=None,
+                chat_mode=CHAT_MODE_A_NO_FOOD,
+                not_eating_chat_count=self._not_eating_chat_count.get(participant_id, 0),
+            )
+
+        count = self._not_eating_chat_count.get(participant_id, 0) + 1
+        self._not_eating_chat_count[participant_id] = count
+        if count >= MAX_NOT_EATING_CHAT_TURNS:
+            self._clear_live_state(participant_id)
+            self._service.delete_transient_participant(participant_id)
+            return self._response(
+                stage=STAGE_DONE,
+                participant_status="deleted",
+                answered_count=len(detail["answers"]),
+                next_action="end_session",
+                last_user_transcript=transcript,
+                interpretation={"route": ROUTE_CHITCHAT, "count": count},
+                chat_mode=CHAT_MODE_A_NO_FOOD,
+                not_eating_chat_count=count,
+                participant_deleted=True,
+            )
         return self._response(
-            stage=STAGE_FREE_CHAT,
+            stage=STAGE_NOT_EATING_CHAT,
             participant_status=detail["participant"]["status"],
             answered_count=len(detail["answers"]),
-            next_action="free_chat",
+            next_action="not_eating_chat",
             last_user_transcript=transcript,
-            interpretation=None,
+            interpretation={"route": ROUTE_CHITCHAT, "count": count},
             chat_mode=CHAT_MODE_A_NO_FOOD,
+            not_eating_chat_count=count,
         )
 
     def _enter_no_food(
@@ -214,15 +273,17 @@ class ConversationOrchestrator:
     ) -> dict[str, Any]:
         self._chat_mode_by_participant[participant_id] = CHAT_MODE_A_NO_FOOD
         self._awaiting_question_by_participant.pop(participant_id, None)
+        self._not_eating_chat_count[participant_id] = 0
         return self._response(
-            stage=STAGE_FREE_CHAT,
+            stage=STAGE_NOT_EATING_CHAT,
             participant_status=detail["participant"]["status"],
             answered_count=len(detail["answers"]),
-            next_action="free_chat",
+            next_action="not_eating_chat",
             last_user_transcript=transcript,
             interpretation={"status": food_gate_result},
             chat_mode=CHAT_MODE_A_NO_FOOD,
             food_gate_result=food_gate_result,
+            not_eating_chat_count=0,
         )
 
     def _enter_want_food(
@@ -232,8 +293,9 @@ class ConversationOrchestrator:
         transcript: str,
     ) -> dict[str, Any]:
         self._chat_mode_by_participant[participant_id] = CHAT_MODE_B_WANT_FOOD
-        self._food_gate_unclear_count.pop(participant_id, None)
-        self._food_chat_detour_count[participant_id] = 0
+        self._food_gate_chitchat_count.pop(participant_id, None)
+        self._not_eating_chat_count.pop(participant_id, None)
+        self._formal_chitchat_count[participant_id] = 0
         if not detail["draws"]:
             self._service.start_questionnaire(participant_id)
         fresh_detail = self._service.participant_detail(participant_id)
@@ -244,11 +306,11 @@ class ConversationOrchestrator:
             current_question["question_id"]
         )
         return self._response(
-            stage=STAGE_ASKING_REQUIRED_QUESTION,
+            stage=_formal_stage(len(fresh_detail["answers"])),
             participant_status=fresh_detail["participant"]["status"],
             answered_count=len(fresh_detail["answers"]),
             current_question=current_question,
-            next_action="submit_required_answer",
+            next_action="answer_formal_question",
             last_user_transcript=transcript,
             interpretation={"status": FOOD_GATE_WANT},
             chat_mode=CHAT_MODE_B_WANT_FOOD,
@@ -268,17 +330,52 @@ class ConversationOrchestrator:
     ) -> dict[str, Any]:
         detail = self._service.participant_detail(participant_id)
         current_question = _draw_by_question_id(detail["draws"], question_id)
-        if _is_continue_ack(transcript):
+        routed = self._formal_turn_router.route(transcript, current_question)
+        if routed.route == ROUTE_SYSTEM_COMMAND and routed.command == "repeat":
             self._awaiting_question_by_participant[participant_id] = question_id
             return self._response(
-                stage=STAGE_AWAITING_REQUIRED_ANSWER,
+                stage=_formal_stage(len(detail["answers"])),
                 participant_status=detail["participant"]["status"],
                 answered_count=len(detail["answers"]),
                 current_question=current_question,
                 next_action="repeat_current_question",
                 last_user_transcript=transcript,
-                interpretation={"status": "continue_ack"},
+                interpretation={"route": ROUTE_SYSTEM_COMMAND, "command": "repeat"},
                 chat_mode=CHAT_MODE_B_WANT_FOOD,
+            )
+
+        if routed.route == ROUTE_SYSTEM_COMMAND and routed.command == "cancel":
+            self._clear_live_state(participant_id)
+            return self._response(
+                stage=STAGE_DONE,
+                participant_status=detail["participant"]["status"],
+                answered_count=len(detail["answers"]),
+                current_question=current_question,
+                next_action="end_session",
+                last_user_transcript=transcript,
+                interpretation={"route": ROUTE_SYSTEM_COMMAND, "command": "cancel"},
+                chat_mode=CHAT_MODE_B_WANT_FOOD,
+            )
+
+        if routed.route in {ROUTE_UNCLEAR_SPEECH, ROUTE_NOISE}:
+            self._awaiting_question_by_participant[participant_id] = question_id
+            return self._response(
+                stage=_formal_stage(len(detail["answers"])),
+                participant_status=detail["participant"]["status"],
+                answered_count=len(detail["answers"]),
+                current_question=current_question,
+                next_action="repeat_current_question",
+                last_user_transcript=transcript,
+                interpretation={"route": routed.route},
+                chat_mode=CHAT_MODE_B_WANT_FOOD,
+            )
+
+        if routed.route == ROUTE_CHITCHAT:
+            return self._formal_chitchat_response(
+                participant_id,
+                detail,
+                current_question,
+                transcript,
             )
 
         metadata = {"source": "conversation_turn"} | (stt_metadata or {})
@@ -311,19 +408,24 @@ class ConversationOrchestrator:
         if voice_result["status"] == "accepted":
             interpretation = _interpretation_from_voice_result(voice_result)
             self._awaiting_question_by_participant.pop(participant_id, None)
-            self._food_chat_detour_count[participant_id] = 0
+            self._formal_chitchat_count[participant_id] = 0
             if answered_count >= len(detail["draws"]):
                 return self._assign_and_respond(
                     participant_id,
                     answered_count,
                     interpretation=interpretation,
                 )
+            next_question = _first_unanswered_question(detail)
+            if next_question is not None:
+                self._awaiting_question_by_participant[participant_id] = next_question[
+                    "question_id"
+                ]
             return self._response(
-                stage=STAGE_AFTER_REQUIRED_ANSWER,
+                stage=_formal_stage(answered_count),
                 participant_status=detail["participant"]["status"],
                 answered_count=answered_count,
-                current_question=_first_unanswered_question(detail),
-                next_action="ask_next_required_question",
+                current_question=next_question,
+                next_action="answer_formal_question",
                 last_user_transcript=transcript,
                 interpretation_status=voice_result["status"],
                 interpretation=interpretation,
@@ -332,48 +434,37 @@ class ConversationOrchestrator:
 
         current_question = _draw_by_question_id(detail["draws"], question_id)
         self._awaiting_question_by_participant[participant_id] = question_id
-        if _is_food_chat_detour(transcript, voice_result):
-            return self._food_chat_detour_response(
-                participant_id,
-                detail,
-                current_question,
-                transcript,
-                voice_result,
-            )
         return self._response(
-            stage=STAGE_AWAITING_REQUIRED_ANSWER,
+            stage=_formal_stage(answered_count),
             participant_status=detail["participant"]["status"],
             answered_count=answered_count,
             current_question=current_question,
             next_action="repeat_current_question",
             last_user_transcript=transcript,
             interpretation_status=voice_result["status"],
-            interpretation={"status": "unclear"},
+            interpretation={"status": "unclear", "source": "judge"},
             chat_mode=CHAT_MODE_B_WANT_FOOD,
         )
 
-    def _food_chat_detour_response(
+    def _formal_chitchat_response(
         self,
         participant_id: str,
         detail: dict[str, Any],
         current_question: dict[str, Any],
         transcript: str,
-        voice_result: dict[str, Any],
     ) -> dict[str, Any]:
-        count = self._food_chat_detour_count.get(participant_id, 0) + 1
-        self._food_chat_detour_count[participant_id] = count
-        stage = STAGE_FOOD_CHAT_DETOUR if count < 3 else STAGE_FOOD_CHAT_LIMIT
+        count = self._formal_chitchat_count.get(participant_id, 0) + 1
+        self._formal_chitchat_count[participant_id] = count
         return self._response(
-            stage=stage,
+            stage=_formal_stage(len(detail["answers"])),
             participant_status=detail["participant"]["status"],
             answered_count=len(detail["answers"]),
             current_question=current_question,
             next_action="repeat_current_question",
             last_user_transcript=transcript,
-            interpretation_status=voice_result["status"],
-            interpretation={"status": "detour", "count": count},
+            interpretation={"route": ROUTE_CHITCHAT, "count": count},
             chat_mode=CHAT_MODE_B_WANT_FOOD,
-            food_chat_detour_count=count,
+            formal_chitchat_count=count,
         )
 
     def _assign_and_respond(
@@ -386,10 +477,10 @@ class ConversationOrchestrator:
         self._clear_live_state(participant_id)
         self._chat_mode_by_participant[participant_id] = CHAT_MODE_B_WANT_FOOD
         return self._response(
-            stage=STAGE_READY_TO_ASSIGN,
+            stage=STAGE_FAREWELL,
             participant_status=STAGE_ASSIGNED,
             answered_count=answered_count,
-            next_action="assign",
+            next_action="end_session",
             assignment=assignment.__dict__,
             interpretation=interpretation,
             chat_mode=CHAT_MODE_B_WANT_FOOD,
@@ -426,8 +517,10 @@ class ConversationOrchestrator:
 
     def _clear_live_state(self, participant_id: str) -> None:
         self._awaiting_question_by_participant.pop(participant_id, None)
-        self._food_gate_unclear_count.pop(participant_id, None)
-        self._food_chat_detour_count.pop(participant_id, None)
+        self._chat_mode_by_participant.pop(participant_id, None)
+        self._food_gate_chitchat_count.pop(participant_id, None)
+        self._not_eating_chat_count.pop(participant_id, None)
+        self._formal_chitchat_count.pop(participant_id, None)
 
     def _response(
         self,
@@ -444,7 +537,9 @@ class ConversationOrchestrator:
         chat_mode: str | None = None,
         food_gate_result: str | None = None,
         food_gate_prompt: str | None = None,
-        food_chat_detour_count: int | None = None,
+        not_eating_chat_count: int | None = None,
+        formal_chitchat_count: int | None = None,
+        participant_deleted: bool = False,
     ) -> dict[str, Any]:
         current_question_text = (
             _question_text(current_question) if current_question is not None else None
@@ -452,6 +547,7 @@ class ConversationOrchestrator:
         context = {
             "stage": stage,
             "participant_status": participant_status,
+            "next_action": next_action,
             "answered_count": answered_count,
             "total_questions": TOTAL_REQUIRED_QUESTIONS,
             "current_question_text": current_question_text,
@@ -462,7 +558,9 @@ class ConversationOrchestrator:
             "chat_mode": chat_mode,
             "food_gate_result": food_gate_result,
             "food_gate_prompt": food_gate_prompt,
-            "food_chat_detour_count": food_chat_detour_count,
+            "not_eating_chat_count": not_eating_chat_count,
+            "formal_chitchat_count": formal_chitchat_count,
+            "participant_deleted": participant_deleted,
         }
         reply = self._reply_service.generate_reply(context)
         return {
@@ -470,7 +568,9 @@ class ConversationOrchestrator:
             "stage": stage,
             "chat_mode": chat_mode,
             "food_gate_result": food_gate_result,
-            "food_chat_detour_count": food_chat_detour_count,
+            "not_eating_chat_count": not_eating_chat_count,
+            "formal_chitchat_count": formal_chitchat_count,
+            "participant_deleted": participant_deleted,
             "answered_count": answered_count,
             "total_questions": TOTAL_REQUIRED_QUESTIONS,
             "current_question_id": (
@@ -483,53 +583,300 @@ class ConversationOrchestrator:
         }
 
 
-def classify_food_gate(transcript: str) -> str:
-    compact = _compact(transcript)
+class FoodGateRouter:
+    """Classify food-gate utterances before any scoring flow exists."""
+
+    def route(self, transcript: str) -> TurnRoute:
+        compact = _compact(transcript)
+        if _is_noise(compact):
+            return TurnRoute(ROUTE_NOISE)
+        if _is_unclear_speech(compact):
+            return TurnRoute(ROUTE_UNCLEAR_SPEECH)
+        command = _system_command(compact)
+        if command == "cancel":
+            return TurnRoute(ROUTE_SYSTEM_COMMAND, command)
+        if _matches_any(compact, _FOOD_GATE_NO_TOKENS):
+            return TurnRoute(ROUTE_NO_FOOD)
+        if _matches_any(compact, _FOOD_GATE_WANT_TOKENS):
+            return TurnRoute(ROUTE_WANT_FOOD)
+        return TurnRoute(ROUTE_CHITCHAT)
+
+
+class FormalTurnRouter:
+    """Route formal-question turns before Claude A/B judging."""
+
+    def route(self, transcript: str, current_question: dict[str, Any]) -> TurnRoute:
+        compact = _compact(transcript)
+        if _is_noise(compact):
+            return TurnRoute(ROUTE_NOISE)
+        if _is_unclear_speech(compact):
+            return TurnRoute(ROUTE_UNCLEAR_SPEECH)
+        command = _system_command(compact)
+        if command is not None:
+            return TurnRoute(ROUTE_SYSTEM_COMMAND, command)
+        if _has_choice_marker(transcript, compact):
+            return TurnRoute(ROUTE_ANSWER_ATTEMPT)
+        if compact in _FORMAL_NONANSWER_ACK_TOKENS:
+            return TurnRoute(ROUTE_CHITCHAT)
+        if _looks_like_side_chat(transcript, compact):
+            return TurnRoute(ROUTE_CHITCHAT)
+        if _looks_like_option_semantics(compact, current_question):
+            return TurnRoute(ROUTE_ANSWER_ATTEMPT)
+        if _matches_any(compact, _FORMAL_UNCLEAR_ANSWER_TOKENS):
+            return TurnRoute(ROUTE_ANSWER_ATTEMPT)
+        return TurnRoute(ROUTE_ANSWER_ATTEMPT)
+
+
+_FOOD_GATE_NO_TOKENS = {
+    "不吃",
+    "不想吃",
+    "不要",
+    "不用",
+    "先不",
+    "先不了",
+    "算了",
+    "不饿",
+    "不需要",
+    "不了",
+    "只是看看",
+    "看看",
+    "路过",
+    "no",
+    "nope",
+    "notnow",
+    "notreally",
+    "dontwant",
+    "donotwant",
+}
+
+_FOOD_GATE_WANT_TOKENS = {
+    "想吃",
+    "要吃",
+    "来点",
+    "吃的",
+    "吃",
+    "要",
+    "想试试",
+    "试试",
+    "参加",
+    "可以",
+    "来吧",
+    "好",
+    "行",
+    "yes",
+    "yeah",
+    "yep",
+    "ok",
+    "okay",
+    "sure",
+    "please",
+    "want",
+    "hungry",
+}
+
+_UNCLEAR_SPEECH_TOKENS = {
+    "嗯",
+    "啊",
+    "呃",
+    "额",
+    "呃呃",
+    "嗯嗯",
+    "唔",
+    "呜",
+    "em",
+    "um",
+    "uh",
+    "er",
+}
+
+_REPEAT_COMMAND_TOKENS = {
+    "重复",
+    "再说一遍",
+    "再讲一遍",
+    "没听清",
+    "听不清",
+    "听不见",
+    "repeat",
+    "again",
+}
+
+_CANCEL_COMMAND_TOKENS = {
+    "停止",
+    "取消",
+    "结束",
+    "不玩了",
+    "算了",
+    "stop",
+    "cancel",
+    "quit",
+}
+
+_SIDE_CHAT_TOKENS = {
+    "你是谁",
+    "你是",
+    "你呢",
+    "你觉得",
+    "你会",
+    "你能",
+    "这个摊位",
+    "摊位",
+    "装置",
+    "作品",
+    "项目",
+    "好好玩",
+    "好玩",
+    "今天有点累",
+    "有点累",
+    "好累",
+    "累",
+    "天气",
+    "老板",
+    "店主",
+    "聊天",
+    "聊聊",
+    "开玩笑",
+    "哈哈",
+    "笑",
+    "whatisthis",
+    "whoareyou",
+    "installation",
+    "project",
+    "booth",
+    "tired",
+    "fun",
+    "haha",
+}
+
+_FORMAL_UNCLEAR_ANSWER_TOKENS = {
+    "随便",
+    "都行",
+    "都可以",
+    "都像",
+    "都不像",
+    "不确定",
+    "不知道",
+    "可能吧",
+    "选c",
+    "c",
+    "other",
+    "notsure",
+    "idontknow",
+}
+
+_FORMAL_NONANSWER_ACK_TOKENS = {
+    "好",
+    "好吧",
+    "好的",
+    "行",
+    "行吧",
+    "可以",
+    "可以吧",
+    "ok",
+    "okay",
+    "sure",
+    "fine",
+}
+
+
+def _formal_stage(answered_count: int) -> str:
+    return STAGE_FORMAL_QUESTION_1 if answered_count <= 0 else STAGE_FORMAL_QUESTION_2
+
+
+def _matches_any(compact: str, tokens: set[str]) -> bool:
+    return any(token in compact for token in tokens)
+
+
+def _is_noise(compact: str) -> bool:
+    return not compact
+
+
+def _is_unclear_speech(compact: str) -> bool:
     if not compact:
-        return FOOD_GATE_UNCLEAR
-    no_tokens = {
-        "不吃",
-        "不想吃",
-        "不要",
-        "不用",
-        "先不",
-        "算了",
-        "不饿",
-        "不需要",
-        "不了",
-        "no",
-        "nope",
-        "notnow",
-        "notreally",
-        "dontwant",
-        "donotwant",
-    }
-    if any(token in compact for token in no_tokens):
-        return FOOD_GATE_NO
-    want_tokens = {
-        "想吃",
-        "要吃",
-        "来点",
-        "吃的",
-        "吃",
-        "要",
-        "想",
-        "可以",
-        "好",
-        "行",
+        return False
+    if compact in {"a", "b", "c"}:
+        return False
+    if compact in _UNCLEAR_SPEECH_TOKENS:
+        return True
+    return len(compact) < 2
+
+
+def _system_command(compact: str) -> str | None:
+    if _matches_any(compact, _REPEAT_COMMAND_TOKENS):
+        return "repeat"
+    if _matches_any(compact, _CANCEL_COMMAND_TOKENS):
+        return "cancel"
+    return None
+
+
+def _has_choice_marker(transcript: str, compact: str) -> bool:
+    upper = transcript.upper()
+    if "选A" in upper or "选B" in upper or "选C" in upper:
+        return True
+    if compact in {"a", "b", "c"}:
+        return True
+    return any(
+        token in compact
+        for token in {"选a", "选b", "选c", "答案a", "答案b", "答案c", "aa", "bb"}
+    )
+
+
+def _looks_like_side_chat(transcript: str, compact: str) -> bool:
+    if _matches_any(compact, _SIDE_CHAT_TOKENS):
+        return True
+    if ("?" in transcript or "？" in transcript) and any(
+        token in compact for token in {"你", "这个", "什么", "为什么", "怎么", "who", "what", "why", "how"}
+    ):
+        return True
+    return False
+
+
+def _looks_like_option_semantics(compact: str, current_question: dict[str, Any]) -> bool:
+    options = current_question.get("options") or []
+    option_text = "".join(
+        _compact(str(option.get("text", "")) + str(option.get("text_zh", "")))
+        for option in options
+    )
+    semantic_tokens = {
+        "有",
+        "没有",
+        "是",
+        "不是",
+        "开着",
+        "关着",
+        "打开",
+        "关上",
+        "open",
+        "closed",
         "yes",
-        "yeah",
-        "yep",
-        "ok",
-        "okay",
-        "sure",
-        "please",
-        "want",
-        "hungry",
+        "no",
     }
-    if any(token in compact for token in want_tokens):
-        return FOOD_GATE_WANT
-    return FOOD_GATE_UNCLEAR
+    if compact in semantic_tokens:
+        return True
+    return any(token and token in compact for token in _option_keywords(option_text))
+
+
+def _option_keywords(option_text: str) -> set[str]:
+    return {
+        token
+        for token in {
+            "open",
+            "closed",
+            "yes",
+            "no",
+            "有",
+            "没有",
+            "开着",
+            "关着",
+            "理解",
+            "分析",
+            "难过",
+            "生气",
+            "道歉",
+            "谢谢",
+            "ai",
+        }
+        if token in option_text
+    }
 
 
 def _first_unanswered_question(detail: dict[str, Any]) -> dict[str, Any] | None:
@@ -560,78 +907,6 @@ def _interpretation_from_voice_result(voice_result: dict[str, Any]) -> dict[str,
         "choice": voice_result["option_id"],
         "confidence": voice_result["confidence"],
     }
-
-
-def _is_continue_ack(transcript: str) -> bool:
-    compact = _compact(transcript)
-    return compact in {
-        "好",
-        "好吧",
-        "好的",
-        "行",
-        "行吧",
-        "可以",
-        "可以吧",
-        "ok",
-        "okay",
-        "sure",
-        "fine",
-    }
-
-
-def _is_food_chat_detour(transcript: str, voice_result: dict[str, Any]) -> bool:
-    if voice_result.get("status") == "accepted":
-        return False
-    compact = _compact(transcript)
-    if not compact or _is_continue_ack(transcript):
-        return False
-    non_detour_unclear = {
-        "不知道",
-        "不确定",
-        "可能吧",
-        "随便",
-        "没听清",
-        "听不清",
-        "听不见",
-        "再说一遍",
-        "不懂",
-        "不明白",
-        "unclear",
-        "idontknow",
-        "notsure",
-    }
-    if any(token in compact for token in non_detour_unclear):
-        return False
-    detour_tokens = {
-        "你呢",
-        "你觉得",
-        "为什么",
-        "什么",
-        "怎么",
-        "哪",
-        "哈哈",
-        "笑",
-        "开玩笑",
-        "聊天",
-        "聊",
-        "天气",
-        "项目",
-        "老板",
-        "店主",
-        "ai",
-        "人工智能",
-        "whatis",
-        "why",
-        "how",
-        "joke",
-        "haha",
-    }
-    return (
-        "?" in transcript
-        or "？" in transcript
-        or any(token in compact for token in detour_tokens)
-        or len(compact) >= 8
-    )
 
 
 def _compact(text: str) -> str:

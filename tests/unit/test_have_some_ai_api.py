@@ -6,16 +6,17 @@ import json
 
 from fastapi.testclient import TestClient
 
-from have_some_ai.interfaces.api import (
-    _disable_realtime_tts_audio,
-    _drain_realtime_voice_events,
-    _enable_realtime_tts_audio,
-    _handle_realtime_voice_event,
-)
 from have_some_ai.conversation import ConversationOrchestrator
+from have_some_ai.doubao.asr_protocol import ASRTranscriptEvent
+from have_some_ai.doubao.tts_protocol import (
+    TTSEvent,
+    TTS_SESSION_CANCELED,
+    TTS_SESSION_FINISHED,
+    TTS_SESSION_STARTED,
+    TTS_RESPONSE,
+)
 from have_some_ai.interfaces.api import app
 from have_some_ai.voice import ClaudeRubricInterpreter, RubricInterpretation
-from have_some_ai.voice_realtime import RealtimeVoiceEvent
 
 
 class _FakeHTTPResponse:
@@ -79,18 +80,16 @@ def test_voice_config_keeps_file_stt_fallback(monkeypatch, tmp_path):
     assert payload["provider"] == "aihubmix"
     assert payload["stt_mode"] == "file"
     assert payload["file_stt_available"] is True
-    assert payload["realtime_available"] is False
-    assert payload["conversation_realtime_available"] is False
-    assert payload["realtime_transport"] is None
+    assert "realtime_available" not in payload
+    assert "conversation_realtime_available" not in payload
+    assert "realtime_transport" not in payload
 
 
-def test_voice_config_exposes_doubao_realtime_pcm_fields(monkeypatch, tmp_path):
+def test_voice_config_exposes_doubao_stream_pcm_fields(monkeypatch, tmp_path):
     monkeypatch.setenv("HAVE_SOME_AI_DB_PATH", str(tmp_path / "meal.db"))
     monkeypatch.setenv("HAVE_SOME_AI_VOICE_PROVIDER", "doubao")
-    monkeypatch.setenv("HAVE_SOME_AI_STT_MODE", "realtime_dialogue")
-    monkeypatch.setenv("HAVE_SOME_AI_DOUBAO_APP_ID", "app-id")
-    monkeypatch.setenv("HAVE_SOME_AI_DOUBAO_APP_KEY", "app-key")
-    monkeypatch.setenv("HAVE_SOME_AI_DOUBAO_ACCESS_TOKEN", "access-token")
+    monkeypatch.setenv("HAVE_SOME_AI_STT_MODE", "asr_tts_stream")
+    monkeypatch.setenv("DOUBAO_API_KEY", "shared-key")
 
     with TestClient(app) as client:
         response = client.get("/api/v1/voice-config")
@@ -98,41 +97,47 @@ def test_voice_config_exposes_doubao_realtime_pcm_fields(monkeypatch, tmp_path):
     assert response.status_code == 200
     payload = response.json()
     assert payload["provider"] == "doubao"
-    assert payload["stt_mode"] == "realtime_dialogue"
-    assert payload["conversation_realtime_available"] is True
-    assert payload["realtime_transport"] == "backend_websocket"
+    assert payload["stt_mode"] == "asr_tts_stream"
+    assert payload["conversation_stream_available"] is True
+    assert "conversation_realtime_available" not in payload
+    assert "realtime_transport" not in payload
     assert payload["input_audio_format"] == "pcm_s16le"
     assert payload["input_sample_rate"] == 16000
     assert payload["output_audio_format"] == "pcm_s16le"
     assert payload["output_sample_rate"] == 24000
     assert payload["provider_capabilities"]["structured_answer"] is False
     assert payload["provider_capabilities"]["credentials_configured"] is True
+    assert payload["provider_capabilities"]["asr_credentials_configured"] is True
+    assert payload["provider_capabilities"]["tts_credentials_configured"] is True
+    assert payload["provider_capabilities"]["speaker"] == "zh_female_yingyujiaoxue_uranus_bigtts"
 
 
 def test_voice_config_marks_doubao_credentials_missing(monkeypatch, tmp_path):
     monkeypatch.setenv("HAVE_SOME_AI_DB_PATH", str(tmp_path / "meal.db"))
     monkeypatch.setenv("HAVE_SOME_AI_VOICE_PROVIDER", "doubao")
-    monkeypatch.setenv("HAVE_SOME_AI_STT_MODE", "realtime_dialogue")
-    monkeypatch.setenv("HAVE_SOME_AI_DOUBAO_APP_ID", "")
-    monkeypatch.setenv("HAVE_SOME_AI_DOUBAO_APP_KEY", "")
-    monkeypatch.setenv("HAVE_SOME_AI_DOUBAO_ACCESS_TOKEN", "")
+    monkeypatch.setenv("HAVE_SOME_AI_STT_MODE", "asr_tts_stream")
+    monkeypatch.setenv("DOUBAO_API_KEY", "")
+    monkeypatch.setenv("DOUBAO_ASR_API_KEY", "")
+    monkeypatch.setenv("DOUBAO_TTS_API_KEY", "")
 
     with TestClient(app) as client:
         response = client.get("/api/v1/voice-config")
 
     assert response.status_code == 200
     payload = response.json()
-    assert payload["conversation_realtime_available"] is True
+    assert payload["conversation_stream_available"] is True
     assert payload["provider_capabilities"]["credentials_configured"] is False
+    assert payload["provider_capabilities"]["asr_credentials_configured"] is False
+    assert payload["provider_capabilities"]["tts_credentials_configured"] is False
 
 
-def test_voice_config_treats_doubao_app_key_as_fixed_gateway_value(monkeypatch, tmp_path):
+def test_voice_config_accepts_separate_doubao_asr_tts_credentials(monkeypatch, tmp_path):
     monkeypatch.setenv("HAVE_SOME_AI_DB_PATH", str(tmp_path / "meal.db"))
     monkeypatch.setenv("HAVE_SOME_AI_VOICE_PROVIDER", "doubao")
-    monkeypatch.setenv("HAVE_SOME_AI_STT_MODE", "realtime_dialogue")
-    monkeypatch.setenv("HAVE_SOME_AI_DOUBAO_APP_ID", "app-id")
-    monkeypatch.delenv("HAVE_SOME_AI_DOUBAO_APP_KEY", raising=False)
-    monkeypatch.setenv("HAVE_SOME_AI_DOUBAO_ACCESS_TOKEN", "access-token")
+    monkeypatch.setenv("HAVE_SOME_AI_STT_MODE", "asr_tts_stream")
+    monkeypatch.delenv("DOUBAO_API_KEY", raising=False)
+    monkeypatch.setenv("DOUBAO_ASR_API_KEY", "asr-key")
+    monkeypatch.setenv("DOUBAO_TTS_API_KEY", "tts-key")
 
     with TestClient(app) as client:
         response = client.get("/api/v1/voice-config")
@@ -140,6 +145,8 @@ def test_voice_config_treats_doubao_app_key_as_fixed_gateway_value(monkeypatch, 
     assert response.status_code == 200
     payload = response.json()
     assert payload["provider_capabilities"]["credentials_configured"] is True
+    assert payload["provider_capabilities"]["asr_credentials_configured"] is True
+    assert payload["provider_capabilities"]["tts_credentials_configured"] is True
 
 
 def test_file_stt_posts_aihubmix_transcription_with_language(monkeypatch):
@@ -628,10 +635,8 @@ def test_conversation_turn_doubao_mode_never_uses_openai_tts(monkeypatch, tmp_pa
     _FakeHTTPClient.posts = []
     monkeypatch.setenv("HAVE_SOME_AI_DB_PATH", str(tmp_path / "meal.db"))
     monkeypatch.setenv("HAVE_SOME_AI_VOICE_PROVIDER", "doubao")
-    monkeypatch.setenv("HAVE_SOME_AI_STT_MODE", "realtime_dialogue")
-    monkeypatch.setenv("HAVE_SOME_AI_DOUBAO_APP_ID", "app-id")
-    monkeypatch.setenv("HAVE_SOME_AI_DOUBAO_APP_KEY", "app-key")
-    monkeypatch.setenv("HAVE_SOME_AI_DOUBAO_ACCESS_TOKEN", "access-token")
+    monkeypatch.setenv("HAVE_SOME_AI_STT_MODE", "asr_tts_stream")
+    monkeypatch.setenv("DOUBAO_API_KEY", "doubao-key")
     monkeypatch.setenv("HAVE_SOME_AI_VOICE_API_KEY", "legacy-tts-key")
     monkeypatch.setenv("HAVE_SOME_AI_VOICE_BASE_URL", "https://voice-provider.example/v1")
     monkeypatch.setattr(openai_tts.httpx, "Client", _FakeHTTPClient)
@@ -648,7 +653,7 @@ def test_conversation_turn_doubao_mode_never_uses_openai_tts(monkeypatch, tmp_pa
     assert payload["stage"] == "food_gate"
     assert payload["reply_audio_base64"] is None
     assert payload["reply_audio_mime_type"] is None
-    assert payload["reply_audio_provider"] == "doubao_realtime"
+    assert payload["reply_audio_provider"] == "doubao_stream"
     assert not [post for post in _FakeHTTPClient.posts if "audio/speech" in post["url"]]
 
 
@@ -710,7 +715,7 @@ def test_conversation_audio_food_gate_turn_does_not_store_formal_answer(
     assert claude_calls["count"] == 0
 
 
-def test_conversation_audio_awaiting_required_answer_maps_and_saves_answer(
+def test_conversation_audio_formal_question_maps_and_saves_answer(
     monkeypatch,
     tmp_path,
 ):
@@ -746,7 +751,7 @@ def test_conversation_audio_awaiting_required_answer_maps_and_saves_answer(
         detail = client.get(f"/api/v1/participants/{participant['id']}").json()
 
     payload = response.json()
-    assert payload["stage"] == "after_required_answer"
+    assert payload["stage"] == "formal_question_2"
     assert payload["interpretation"] == {
         "status": "accepted",
         "choice": "B",
@@ -807,7 +812,7 @@ def test_conversation_audio_two_answers_generate_assignment(
         detail = client.get(f"/api/v1/participants/{participant['id']}").json()
 
     assert final is not None
-    assert final["stage"] == "ready_to_assign"
+    assert final["stage"] == "farewell"
     assert final["assignment"] is not None
     assert len(detail["answers"]) == 2
     assert detail["assignment"]["assignment_id"] == final["assignment"]["assignment_id"]
@@ -871,13 +876,14 @@ def test_conversation_audio_after_assignment_does_not_change_result(
     assert claude_calls["count"] == 2
 
 
-def test_conversation_realtime_uses_doubao_transcript_and_existing_claude_judge(
+def test_conversation_stream_uses_doubao_asr_tts_and_existing_claude_judge(
     monkeypatch,
     tmp_path,
 ):
     from have_some_ai.interfaces import api
 
-    _FakeRealtimeAdapter.instances = []
+    _FakeASRClient.instances = []
+    _FakeTTSClient.instances = []
     claude_calls = {"count": 0}
 
     def fake_interpret(self, **kwargs):
@@ -887,14 +893,11 @@ def test_conversation_realtime_uses_doubao_transcript_and_existing_claude_judge(
 
     monkeypatch.setenv("HAVE_SOME_AI_DB_PATH", str(tmp_path / "meal.db"))
     monkeypatch.setenv("HAVE_SOME_AI_VOICE_PROVIDER", "doubao")
-    monkeypatch.setenv("HAVE_SOME_AI_STT_MODE", "realtime_dialogue")
-    monkeypatch.setenv("HAVE_SOME_AI_DOUBAO_APP_ID", "app-secret-id")
-    monkeypatch.setenv("HAVE_SOME_AI_DOUBAO_APP_KEY", "app-secret-key")
-    monkeypatch.setenv("HAVE_SOME_AI_DOUBAO_ACCESS_TOKEN", "app-secret-token")
-    monkeypatch.setattr(api, "DoubaoRealtimeVoiceAdapter", _FakeRealtimeAdapter)
+    monkeypatch.setenv("HAVE_SOME_AI_STT_MODE", "asr_tts_stream")
+    monkeypatch.setenv("DOUBAO_API_KEY", "doubao-secret")
+    monkeypatch.setattr(api, "DoubaoASRClient", _FakeASRClient)
+    monkeypatch.setattr(api, "DoubaoTTSBidirectionalClient", _FakeTTSClient)
     monkeypatch.setattr(ClaudeRubricInterpreter, "interpret", fake_interpret)
-
-    audio_base64 = base64.b64encode(b"pcm-from-browser").decode("ascii")
 
     with TestClient(app) as client:
         participant = client.post("/api/v1/participants", json={}).json()
@@ -908,333 +911,290 @@ def test_conversation_realtime_uses_doubao_transcript_and_existing_claude_judge(
         ).json()
 
         with client.websocket_connect(
-            f"/api/v1/participants/{participant['id']}/conversation-realtime"
+            f"/api/v1/participants/{participant['id']}/conversation-stream"
         ) as websocket:
             connected = websocket.receive_json()
-            websocket.send_json({"type": "session.start", "session_id": "sess-test"})
+            output_config = websocket.receive_json()
+            websocket.send_json({"type": "session.start", "prepare_turn": False})
             started = websocket.receive_json()
-            websocket.send_json({
-                "type": "audio.append",
-                "audio_base64": audio_base64,
-            })
-            initial_audio = websocket.receive_json()
-            websocket.send_json({"type": "audio.end"})
-            asr_ended = websocket.receive_json()
-            transcript = websocket.receive_json()
-            conversation = websocket.receive_json()
-            provider_asr_ended = websocket.receive_json()
-            reply_audio = websocket.receive_json()
+            websocket.send_bytes(b"x" * 6400)
+            partial = _receive_json_type(websocket, "asr.partial")
+            final = _receive_json_type(websocket, "asr.final")
+            conversation = _receive_json_type(websocket, "conversation")
+            judge = _receive_json_type(websocket, "judge")
+            muted = _receive_json_type(websocket, "mic.muted_for_tts")
+            tts_started = _receive_json_event(websocket, "tts.event", TTS_SESSION_STARTED)
+            tts_audio = websocket.receive_bytes()
+            resumed = _receive_json_type(websocket, "mic.resumed_after_tts")
+            websocket.send_json({"type": "session.cancel"})
 
         detail = client.get(f"/api/v1/participants/{participant['id']}").json()
 
-    adapter = _FakeRealtimeAdapter.instances[0]
+    asr = _FakeASRClient.instances[0]
+    tts = _FakeTTSClient.instances[0]
     combined_response = json.dumps(
-        [
-            connected,
-            started,
-            initial_audio,
-            asr_ended,
-            transcript,
-            conversation,
-            provider_asr_ended,
-            reply_audio,
-        ],
+        [connected, output_config, started, partial, final, conversation, judge, muted, tts_started, resumed],
         ensure_ascii=False,
     )
-    assert connected["type"] == "state"
-    assert started["state"] == "session.started"
-    assert initial_audio["type"] == "audio.delta"
-    assert asr_ended["state"] == "asr.ended"
-    assert transcript == {"type": "transcript.final", "transcript": "我选 B"}
-    assert conversation["type"] == "conversation"
-    assert conversation["conversation"]["stage"] == "after_required_answer"
-    assert conversation["conversation"]["interpretation"] == {
-        "status": "accepted",
-        "choice": "B",
-        "confidence": 0.93,
+    assert connected["state"] == "connected"
+    assert output_config == {
+        "type": "audio.output_config",
+        "format": "pcm_s16le",
+        "sample_rate": 24000,
+        "channels": 1,
     }
-    assert provider_asr_ended["state"] == "provider.asr.ended"
-    assert reply_audio["type"] == "audio.delta"
-    assert adapter.end_asr_calls == 1
-    assert adapter.audio_chunks == [b"pcm-from-browser"]
+    assert started["state"] == "session.started"
+    assert partial == {"type": "asr.partial", "text": "我"}
+    assert final["text"] == "我选 B"
+    assert conversation["conversation"]["stage"] == "formal_question_2"
+    assert judge == {"type": "judge", "label": "B", "confidence": 0.93}
+    assert muted["type"] == "mic.muted_for_tts"
+    assert tts_audio == b"fake-pcm-24k"
+    assert resumed["type"] == "mic.resumed_after_tts"
+    assert asr.audio_chunks == [b"x" * 6400]
+    assert asr.finish_calls == 1
+    assert tts.spoken_texts
     assert claude_calls["count"] == 1
     assert detail["answers"][0]["question_id"] == question["current_question_id"]
     assert detail["answers"][0]["option_id"] == "B"
-    assert detail["voice_interpretations"][0]["stt_metadata"]["provider"] == "doubao"
-    assert "app-secret-id" not in combined_response
-    assert "app-secret-key" not in combined_response
-    assert "app-secret-token" not in combined_response
-    assert audio_base64 not in combined_response
+    assert detail["voice_interpretations"][0]["stt_metadata"]["provider"] == "doubao_asr"
+    assert "doubao-secret" not in combined_response
 
 
-def test_conversation_realtime_can_play_reply_text_without_preparing_turn(
+def test_conversation_stream_tts_only_uses_task_request_path(monkeypatch, tmp_path):
+    from have_some_ai.interfaces import api
+
+    _FakeASRClient.instances = []
+    _FakeTTSClient.instances = []
+    monkeypatch.setenv("HAVE_SOME_AI_DB_PATH", str(tmp_path / "meal.db"))
+    monkeypatch.setenv("HAVE_SOME_AI_VOICE_PROVIDER", "doubao")
+    monkeypatch.setenv("HAVE_SOME_AI_STT_MODE", "asr_tts_stream")
+    monkeypatch.setenv("DOUBAO_API_KEY", "doubao-key")
+    monkeypatch.setattr(api, "DoubaoASRClient", _FakeASRClient)
+    monkeypatch.setattr(api, "DoubaoTTSBidirectionalClient", _FakeTTSClient)
+
+    with TestClient(app) as client:
+        participant = client.post("/api/v1/participants", json={}).json()
+        with client.websocket_connect(
+            f"/api/v1/participants/{participant['id']}/conversation-stream"
+        ) as websocket:
+            websocket.receive_json()
+            websocket.receive_json()
+            websocket.send_json({"type": "session.start", "prepare_turn": False})
+            websocket.receive_json()
+            websocket.send_json({"type": "tts.speak", "text": "想来点吃的吗？"})
+            _receive_json_type(websocket, "mic.muted_for_tts")
+            websocket.receive_json()
+            audio = websocket.receive_bytes()
+            _receive_json_type(websocket, "mic.resumed_after_tts")
+            websocket.send_json({"type": "session.cancel"})
+
+    tts = _FakeTTSClient.instances[0]
+    assert audio == b"fake-pcm-24k"
+    assert tts.spoken_texts == ["想来点吃的吗？"]
+
+
+def test_conversation_stream_barge_in_cancels_tts_session(monkeypatch, tmp_path):
+    from have_some_ai.interfaces import api
+
+    _SlowTTSClient.instances = []
+    monkeypatch.setenv("HAVE_SOME_AI_DB_PATH", str(tmp_path / "meal.db"))
+    monkeypatch.setenv("HAVE_SOME_AI_VOICE_PROVIDER", "doubao")
+    monkeypatch.setenv("HAVE_SOME_AI_STT_MODE", "asr_tts_stream")
+    monkeypatch.setenv("DOUBAO_API_KEY", "doubao-key")
+    monkeypatch.setattr(api, "DoubaoASRClient", _FakeASRClient)
+    monkeypatch.setattr(api, "DoubaoTTSBidirectionalClient", _SlowTTSClient)
+
+    with TestClient(app) as client:
+        participant = client.post("/api/v1/participants", json={}).json()
+        with client.websocket_connect(
+            f"/api/v1/participants/{participant['id']}/conversation-stream"
+        ) as websocket:
+            websocket.receive_json()
+            websocket.receive_json()
+            websocket.send_json({"type": "session.start", "prepare_turn": False})
+            websocket.receive_json()
+            websocket.send_json({"type": "tts.speak", "text": "很长的一句话"})
+            _receive_json_type(websocket, "mic.muted_for_tts")
+            websocket.send_json({"type": "barge_in"})
+            canceling = _receive_json_type(websocket, "tts.canceling")
+            canceled = _receive_json_event(websocket, "tts.event", TTS_SESSION_CANCELED)
+            resumed = _receive_json_type(websocket, "mic.resumed_after_tts")
+            websocket.send_json({"type": "session.cancel"})
+
+    tts = _SlowTTSClient.instances[0]
+    assert canceling["type"] == "tts.canceling"
+    assert canceled["event"] == TTS_SESSION_CANCELED
+    assert resumed["type"] == "mic.resumed_after_tts"
+    assert tts.cancel_calls == 1
+
+
+def test_conversation_stream_tts_error_keeps_asr_mic_path_open(
     monkeypatch,
     tmp_path,
 ):
     from have_some_ai.interfaces import api
 
-    _FakeRealtimeAdapter.instances = []
+    _FakeASRClient.instances = []
+    _FailingTTSClient.instances = []
+
+    def fake_interpret(self, **kwargs):
+        assert kwargs["transcript"] == "我选 B"
+        return RubricInterpretation("B", 0.93, "清楚选择 B。", "Clear B.", "zh", {})
+
     monkeypatch.setenv("HAVE_SOME_AI_DB_PATH", str(tmp_path / "meal.db"))
     monkeypatch.setenv("HAVE_SOME_AI_VOICE_PROVIDER", "doubao")
-    monkeypatch.setenv("HAVE_SOME_AI_STT_MODE", "realtime_dialogue")
-    monkeypatch.setenv("HAVE_SOME_AI_DOUBAO_APP_ID", "app-id")
-    monkeypatch.setenv("HAVE_SOME_AI_DOUBAO_APP_KEY", "app-key")
-    monkeypatch.setenv("HAVE_SOME_AI_DOUBAO_ACCESS_TOKEN", "access-token")
-    monkeypatch.setattr(api, "DoubaoRealtimeVoiceAdapter", _FakeRealtimeAdapter)
+    monkeypatch.setenv("HAVE_SOME_AI_STT_MODE", "asr_tts_stream")
+    monkeypatch.setenv("DOUBAO_API_KEY", "doubao-key")
+    monkeypatch.setattr(api, "DoubaoASRClient", _FakeASRClient)
+    monkeypatch.setattr(api, "DoubaoTTSBidirectionalClient", _FailingTTSClient)
+    monkeypatch.setattr(ClaudeRubricInterpreter, "interpret", fake_interpret)
 
     with TestClient(app) as client:
         participant = client.post("/api/v1/participants", json={}).json()
-        with client.websocket_connect(
-            f"/api/v1/participants/{participant['id']}/conversation-realtime"
-        ) as websocket:
-            connected = websocket.receive_json()
-            websocket.send_json({
-                "type": "session.start",
-                "session_id": "tts-only",
-                "prepare_turn": False,
-            })
-            started = websocket.receive_json()
-            websocket.send_json({
-                "type": "tts.speak",
-                "text": "你今天衣服挺漂亮啊。想来点吃的吗？",
-            })
-            reply_audio = websocket.receive_json()
-
-    adapter = _FakeRealtimeAdapter.instances[0]
-    assert connected["type"] == "state"
-    assert started["state"] == "session.started"
-    assert started["conversation"] is None
-    assert reply_audio["type"] == "audio.delta"
-    assert adapter.speech_texts == ["你今天衣服挺漂亮啊。想来点吃的吗？"]
-
-
-def test_conversation_realtime_forwards_client_interrupt(
-    monkeypatch,
-    tmp_path,
-):
-    from have_some_ai.interfaces import api
-
-    _FakeRealtimeAdapter.instances = []
-    monkeypatch.setenv("HAVE_SOME_AI_DB_PATH", str(tmp_path / "meal.db"))
-    monkeypatch.setenv("HAVE_SOME_AI_VOICE_PROVIDER", "doubao")
-    monkeypatch.setenv("HAVE_SOME_AI_STT_MODE", "realtime_dialogue")
-    monkeypatch.setenv("HAVE_SOME_AI_DOUBAO_APP_ID", "app-id")
-    monkeypatch.setenv("HAVE_SOME_AI_DOUBAO_APP_KEY", "app-key")
-    monkeypatch.setenv("HAVE_SOME_AI_DOUBAO_ACCESS_TOKEN", "access-token")
-    monkeypatch.setattr(api, "DoubaoRealtimeVoiceAdapter", _FakeRealtimeAdapter)
-
-    with TestClient(app) as client:
-        participant = client.post("/api/v1/participants", json={}).json()
-        with client.websocket_connect(
-            f"/api/v1/participants/{participant['id']}/conversation-realtime"
-        ) as websocket:
-            websocket.receive_json()
-            websocket.send_json({
-                "type": "session.start",
-                "session_id": "interrupt-session",
-                "prepare_turn": False,
-            })
-            websocket.receive_json()
-            websocket.send_json({"type": "client.interrupt", "reason": "local_voice"})
-            interrupted = websocket.receive_json()
-
-    adapter = _FakeRealtimeAdapter.instances[0]
-    assert interrupted == {"type": "state", "state": "client.interrupted"}
-    assert adapter.interrupt_calls == 1
-
-
-def test_realtime_drain_waits_past_idle_for_first_audio_after_state():
-    websocket = _CollectingWebSocket()
-    adapter = _DelayedAudioAdapter()
-
-    asyncio.run(_drain_realtime_voice_events(
-        websocket,
-        conversation=None,
-        adapter=adapter,
-        participant_id="participant",
-        timeout_seconds=0.5,
-        idle_seconds=0.03,
-    ))
-
-    assert [message["type"] for message in websocket.messages] == [
-        "state",
-        "audio.delta",
-    ]
-
-
-def test_realtime_audio_is_suppressed_until_backend_tts_is_authorized():
-    websocket = _CollectingWebSocket()
-    adapter = _FakeRealtimeAdapter()
-    event = RealtimeVoiceEvent(
-        "audio.delta",
-        {
-            "audio_base64": base64.b64encode(b"provider-auto-pcm").decode("ascii"),
-            "audio_format": "pcm_s16le",
-            "sample_rate": 24000,
-        },
-    )
-
-    _disable_realtime_tts_audio(adapter)
-    asyncio.run(_handle_realtime_voice_event(
-        websocket,
-        conversation=None,
-        adapter=adapter,
-        participant_id="participant",
-        event=event,
-    ))
-    assert websocket.messages == []
-
-    _enable_realtime_tts_audio(adapter)
-    asyncio.run(_handle_realtime_voice_event(
-        websocket,
-        conversation=None,
-        adapter=adapter,
-        participant_id="participant",
-        event=event,
-    ))
-    assert websocket.messages == [
-        {
-            "type": "audio.delta",
-            "audio_base64": base64.b64encode(b"provider-auto-pcm").decode("ascii"),
-            "audio_format": "pcm_s16le",
-            "sample_rate": 24000,
-        }
-    ]
-
-
-def test_realtime_drain_does_not_treat_suppressed_audio_as_local_tts():
-    websocket = _CollectingWebSocket()
-    adapter = _SuppressedAudioThenStateAdapter()
-    _disable_realtime_tts_audio(adapter)
-
-    asyncio.run(_drain_realtime_voice_events(
-        websocket,
-        conversation=None,
-        adapter=adapter,
-        participant_id="participant",
-        timeout_seconds=0.2,
-        idle_seconds=0.001,
-    ))
-
-    assert websocket.messages == [
-        {"type": "state", "state": "provider.event", "event": 123}
-    ]
-
-
-def test_realtime_provider_chat_delta_is_not_forwarded_to_browser():
-    websocket = _CollectingWebSocket()
-    adapter = _FakeRealtimeAdapter()
-
-    asyncio.run(_handle_realtime_voice_event(
-        websocket,
-        conversation=None,
-        adapter=adapter,
-        participant_id="participant",
-        event=RealtimeVoiceEvent("chat.delta", {"content": "我自己加一个问题。"}),
-    ))
-
-    assert websocket.messages == []
-    assert adapter.interrupt_calls == 1
-
-
-class _CollectingWebSocket:
-    def __init__(self):
-        self.messages = []
-
-    async def send_json(self, payload):
-        self.messages.append(payload)
-
-
-class _DelayedAudioAdapter:
-    session_id = "delayed-session"
-
-    async def events(self):
-        yield RealtimeVoiceEvent("state", {"event": 100})
-        await asyncio.sleep(0.08)
-        yield RealtimeVoiceEvent(
-            "audio.delta",
-            {
-                "audio_base64": base64.b64encode(b"late-pcm").decode("ascii"),
-                "audio_format": "pcm_s16le",
-                "sample_rate": 24000,
-            },
+        client.post(
+            f"/api/v1/participants/{participant['id']}/conversation-turn",
+            json={"transcript": ""},
+        )
+        client.post(
+            f"/api/v1/participants/{participant['id']}/conversation-turn",
+            json={"transcript": "想吃"},
         )
 
+        with client.websocket_connect(
+            f"/api/v1/participants/{participant['id']}/conversation-stream"
+        ) as websocket:
+            websocket.receive_json()
+            websocket.receive_json()
+            websocket.send_json({"type": "session.start", "prepare_turn": False})
+            websocket.receive_json()
+            websocket.send_json({"type": "tts.speak", "text": "会失败的一句话"})
+            muted = _receive_json_type(websocket, "mic.muted_for_tts")
+            error = _receive_json_type(websocket, "tts.error")
+            resumed = _receive_json_type(websocket, "mic.resumed_after_tts")
+            websocket.send_bytes(b"x" * 6400)
+            final = _receive_json_type(websocket, "asr.final")
+            conversation = _receive_json_type(websocket, "conversation")
+            websocket.send_json({"type": "session.cancel"})
 
-class _SuppressedAudioThenStateAdapter:
-    async def events(self):
-        yield RealtimeVoiceEvent(
-            "audio.delta",
-            {
-                "audio_base64": base64.b64encode(b"provider-auto-pcm").decode("ascii"),
-                "audio_format": "pcm_s16le",
-                "sample_rate": 24000,
-            },
-        )
-        await asyncio.sleep(0.01)
-        yield RealtimeVoiceEvent("state", {"event": 123})
+    asr = _FakeASRClient.instances[0]
+    assert muted["type"] == "mic.muted_for_tts"
+    assert error["provider"] == "doubao_tts"
+    assert "DOUBAO_TTS_API_KEY" in error["message"]
+    assert resumed["type"] == "mic.resumed_after_tts"
+    assert final["text"] == "我选 B"
+    assert conversation["conversation"]["stage"] == "formal_question_2"
+    assert asr.audio_chunks == [b"x" * 6400]
 
 
-class _FakeRealtimeAdapter:
-    instances: list["_FakeRealtimeAdapter"] = []
+def _receive_json_type(websocket, expected_type: str) -> dict:
+    for _ in range(20):
+        message = websocket.receive()
+        if "text" not in message:
+            continue
+        payload = json.loads(message["text"])
+        if payload.get("type") == expected_type:
+            return payload
+    raise AssertionError(f"Did not receive {expected_type}")
 
-    def __init__(self):
+
+def _receive_json_event(websocket, expected_type: str, expected_event: int) -> dict:
+    for _ in range(20):
+        message = websocket.receive()
+        if "text" not in message:
+            continue
+        payload = json.loads(message["text"])
+        if payload.get("type") == expected_type and payload.get("event") == expected_event:
+            return payload
+    raise AssertionError(f"Did not receive {expected_type} event {expected_event}")
+
+
+class _FakeASRClient:
+    instances: list["_FakeASRClient"] = []
+
+    def __init__(self, *args, **kwargs):
         self.__class__.instances.append(self)
-        self.session_id = None
+        self.request_id = "fake-asr-request"
+        self.connect_id = "fake-asr-connect"
+        self.provider_log_id = "fake-asr-log"
         self.audio_chunks: list[bytes] = []
-        self.end_asr_calls = 0
-        self.interrupt_calls = 0
-        self.speech_texts: list[str] = []
-        self._events: list[RealtimeVoiceEvent] = []
+        self.finish_calls = 0
+        self._finished = False
+        self._events: asyncio.Queue[ASRTranscriptEvent | None] = asyncio.Queue()
 
     async def connect(self):
         return None
 
-    async def start_session(self, *, session_id=None, system_prompt=None):
-        self.session_id = session_id or "fake-session"
-        self.system_prompt = system_prompt
-
     async def append_audio(self, audio: bytes):
         self.audio_chunks.append(audio)
-
-    async def end_asr(self):
-        self.end_asr_calls += 1
-        self._events.append(RealtimeVoiceEvent(
-            "transcript.final",
-            {
-                "transcript": "我选 B",
-                "event": 451,
-                "metadata": {
-                    "provider_event": "fake_final",
-                    "audio_base64": "should-not-be-stored",
-                },
-            },
-        ))
-        self._events.append(RealtimeVoiceEvent("speech.ended", {"event": 459}))
-
-    async def speak_text(self, text: str):
-        self.speech_texts.append(text)
-        self._events.append(RealtimeVoiceEvent(
-            "audio.delta",
-            {
-                "audio_base64": base64.b64encode(b"fake-pcm-24k").decode("ascii"),
-                "audio_format": "pcm_s16le",
-                "sample_rate": 24000,
-            },
+        await self._events.put(ASRTranscriptEvent("partial", "我"))
+        await self._events.put(ASRTranscriptEvent(
+            "final",
+            "我选 B",
+            start_time=1,
+            end_time=2,
+            definite=True,
+            key=(1, 2, "我选 B"),
+            metadata={"utterance": {"text": "我选 B", "definite": True}},
         ))
 
-    async def interrupt(self):
-        self.interrupt_calls += 1
-
-    async def stop_session(self):
-        return None
+    async def finish(self, audio: bytes = b""):
+        if self._finished:
+            return
+        self._finished = True
+        self.finish_calls += 1
+        await self._events.put(None)
 
     async def close(self):
         return None
 
     async def events(self):
-        while self._events:
-            yield self._events.pop(0)
+        while True:
+            event = await self._events.get()
+            if event is None:
+                return
+            yield event
+
+
+class _FakeTTSClient:
+    instances: list["_FakeTTSClient"] = []
+
+    def __init__(self, *args, **kwargs):
+        self.__class__.instances.append(self)
+        self.spoken_texts: list[str] = []
+        self.cancel_calls = 0
+
+    async def synthesize(self, text: str):
+        self.spoken_texts.append(text)
+        yield TTSEvent(TTS_SESSION_STARTED, session_id="fake-tts-session")
+        yield TTSEvent(TTS_RESPONSE, session_id="fake-tts-session", audio=b"fake-pcm-24k")
+        yield TTSEvent(TTS_SESSION_FINISHED, session_id="fake-tts-session", payload={})
+
+    async def cancel_current_session(self):
+        self.cancel_calls += 1
+
+    async def close(self):
+        return None
+
+
+class _SlowTTSClient(_FakeTTSClient):
+    instances: list["_SlowTTSClient"] = []
+
+    async def synthesize(self, text: str):
+        self.spoken_texts.append(text)
+        yield TTSEvent(TTS_SESSION_STARTED, session_id="slow-tts-session")
+        await asyncio.sleep(0.2)
+        yield TTSEvent(TTS_SESSION_CANCELED, session_id="slow-tts-session", payload={})
+
+
+class _FailingTTSClient(_FakeTTSClient):
+    instances: list["_FailingTTSClient"] = []
+
+    async def synthesize(self, text: str):
+        self.spoken_texts.append(text)
+        if False:
+            yield TTSEvent(TTS_SESSION_STARTED, session_id="unused")
+        raise ValueError("Missing DOUBAO_TTS_API_KEY or DOUBAO_API_KEY")
 
 
 def _conversation_audio_payload(attempt_id: str) -> dict[str, object]:

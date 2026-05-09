@@ -146,32 +146,33 @@ Exhibition System: Have Some "Ai"
 - [x] 本地 `.venv` 已重建到 python.org Framework Python 3.13.5，普通 pytest 不再因 Anaconda debugging 插件段错误中断
 - [x] 统一店主对话状态机后端 transcript 版：`ConversationOrchestrator` + `/conversation-turn`，模板回复，不接豆包、不改前端、不处理音频
 - [x] 店主自然回复服务：`ShopkeeperReplyService` 只生成 `reply_text`，不决定 stage / 题目 / A-B / assignment / next_action
-- [x] `/conversation-turn` awaiting 阶段接入正式回答流程：复用 `submit_voice_answer()` 生成 A/B/unclear，accepted 写正式答案，unclear 留在当前题，两道正式题完成后才 `assign_food()`
+- [x] `/conversation-turn` 正式题阶段接入 A/B/unclear judge：accepted 写正式答案，judge unclear 留在当前题，两道正式题完成后才 `assign_food()`
 - [x] 统一语音入口：新增 `/conversation-audio`，流程为 file STT → `ConversationOrchestrator` → `reply_text` → TTS，前端主语音按钮改走统一状态机；旧 `voice-audio` / `voice-answers` 保留兼容
-- [x] 豆包 realtime v1：`voice_realtime.py` 恢复为可用适配器，本地 `/conversation-realtime` WebSocket 桥接豆包听说，浏览器只发 PCM16 16k base64；正常链路依赖豆包 server VAD，手动停止时 `audio.end` 映射为豆包 EndASR `400`
-- [x] 豆包 v1 边界：豆包只负责实时 transcript 与 PCM 24k TTS，正式 A/B 判题仍走 `ConversationOrchestrator.conversation_turn()` → `submit_voice_answer()` → Claude rubric interpreter → `ScoringEngine`
-- [x] 豆包官方协议对齐：上传音频使用 `TaskRequest=200`，后端文本合成使用 `ChatTTSText=500`，StartSession 使用 `dialog.extra.model=1.2.1.1`、server VAD/default 麦克风模式、输入 PCM16 16k、输出 `pcm_s16le` 24k
 - [x] 修复店主不出声：`/conversation-turn` 支持 `include_audio` 返回 TTS，前端新建观众后的 Food Gate 和手动 transcript fallback 会播放 `reply_text`
 - [x] 废码清理：关闭本地 8010 服务，移除旧 OpenAI Realtime STT session 入口、前端 WebRTC 死代码、豆包 direct A/B 提交实验路径
-- [x] 店主对话重构：新增 Food Gate 与 `A_NO_FOOD` / `B_WANT_FOOD` chat mode；`NO_FOOD` 只闲聊不分配，`WANT_FOOD` 进入两道正式题；移除原第 3 道正式判断题，结果改为 `soup` / `salad` / `aimiao_soup` / `aimiao_salad`
-- [x] 豆包模式全接管店主发声：`provider=doubao` 时 `/conversation-turn` / `/conversation-audio` 不再生成 OpenAI-compatible TTS 音频，新建观众 Food Gate、手动 transcript 与 Start Voice 回复都通过本地 `/conversation-realtime` 触发豆包 PCM TTS
-- [x] 修复网页听不到豆包声音：后端 realtime drain 会等待首个音频事件，不再被短 idle timeout 截断；前端在用户点击入口提前解锁 Web Audio 播放上下文
-- [x] 豆包真实握手诊断：新增 `scripts/diagnose_doubao_realtime.py`，确认 `X-Api-App-Key` 必须使用固定值 `PlgvMymc7f3tQnJ6`；修复本机 `.env`、示例文档与代码默认值后，真实 `StartSession=150` 成功
-- [x] 豆包 TTS-only 发声修复：开场/独立播报改用 `SayHello=300`，真实返回 `TTSResponse=352` PCM 音频；正式回答后的本地回复等待 provider `ASREnded=459` 后再发送 `ChatTTSText=500`
-- [x] 豆包电话式打断 v1：前端保持麦克风 PCM 流上传；后端在 `audio.append` 过程中持续小步读取 provider 事件；收到 `ASRInfo=450` 或本地检测到用户说话时停止 WebAudio 队列，并通过本地 WebSocket 转发 `ClientInterrupt=515`
-- [x] 豆包电话式打断审查：关闭本地 8010 服务；补充本地插话误判保护，避免本地 RMS 误触发后长期丢弃后续音频；同步 README / TECH_STACK / HAVE_SOME_AI_STRUCTURE / lessons 的实时语音状态
-- [x] 豆包长通话修正：新建观众开场改为直接启动 `/conversation-realtime` 长连接；active capture 时不再按单轮 conversation/audio 自动 close；播放中上传静音帧抑制 TTS 回声，本地 RMS 不再直接打断播放；验证：Have Some "Ai" 单测子集 `81 passed`，前端脚本语法通过
-- [x] 豆包自主回复收口：后端 realtime 只转发本地 `SayHello` / `ChatTTSText` 授权后的 TTS 音频，忽略 provider 自主 `chat.delta` 与未授权 PCM；最终店主话术直接引用系统 assignment 的四种合法食物之一，避免豆包临场发明菜单或不知道分配结果；验证：Have Some "Ai" 单测 `86 passed`
+- [x] 店主对话重构：新增 Food Gate 与 `A_NO_FOOD` / `B_WANT_FOOD` chat mode；`NO_FOOD` 只闲聊不分配，`WANT_FOOD` 进入两道正式题；移除早期多余正式判断题，结果改为 `soup` / `salad` / `aimiao_soup` / `aimiao_salad`
+- [x] 豆包 ASR/TTS split migration：新增 ASR `bigmodel_async` 协议/client、TTS V3 `tts/bidirection` 协议/client，本地主 WebSocket 改为 `/conversation-stream`
+- [x] 豆包职责收口：豆包只负责 ASR 与 TTS；店主话术由 `ConversationOrchestrator` + `ShopkeeperReplyService` 产生，A/B/unclear 由 Claude judge，食物由 `ScoringEngine`
+- [x] 流式音频硬化：前端发送 binary PCM16 16k mono，后端聚合 200ms 音频；TTS 输出 binary PCM16 24k mono，并在播放期间 half-duplex 暂停 ASR 上行
+- [x] 旧豆包端到端语音链路移出运行时代码；相关诊断脚本删除，避免恢复旧主链路
+- [x] 真实联调前修复：ASR client 改为收到实际麦克风音频后懒连接，避免开场 TTS 阶段因 ASR 握手失败/延迟导致页面“无声音且无法录音”；初始 TTS 任务创建前后端先暂停 ASR 上行
+- [x] 店主式“闲聊 + 判断”边界修正：`ConversationOrchestrator` 内新增 Food Gate / Formal turn routing，chitchat 不再进入 Claude judge；`NO_FOOD` 进入 3 回合 `not_eating_chat` 后送客并删除 transient participant；正式题 chitchat 最多 3 回合后拉回当前 A/B 问题
+- [x] session cleanup：`farewell` / `done` 后 WebSocket 主链路会结束 ASR session 并停止继续收麦克风；前端对 deleted/end_session 不再刷新已删除 participant
+- [x] 豆包新版控制台鉴权修正：ASR/TTS 均使用 `X-Api-Key + X-Api-Resource-Id`，不要求 App ID / Access Key；TTS 失败仍会返回 `tts.error` 并恢复收麦
+- [x] 文档审计更新（2026-05-09）：README、`docs/HAVE_SOME_AI_STRUCTURE.md`、`docs/TECH_STACK.md` 已同步当前主链路；明确 C/freeform/chitchat 不会自动映射 A/B，语音排障先检查 8010 服务监听和 `/api/v1/voice-config`
+- [x] 闲聊话术接入 Claude（2026-05-09）：Food Gate chitchat、`not_eating_chat` 与正式题 chitchat 的前 1-2 回合可由 `ShopkeeperReplyService` 用 Claude 生成自由 `reply_text`；第 3 回合仍按本地状态机送客或拉回题目，LLM 失败走模板兜底
+- [x] 清理审计执行（2026-05-09）：删除本地 pytest / Python cache 与旧 egg-info，移除 Have Some "Ai" 运行时代码和前端里的旧 realtime 残留字段 / 分支，补齐 API 与语音配置文档冲突
 
 ### 进行中（Work 2）
 
-- 语音层真实端到端联调：AIHubMix file-STT 已保留；豆包 realtime 已通过真实握手、TTS-only 桥接与 interrupt 通道冒烟测试；最新前端已改为长连接通话、回声抑制和未授权豆包自主音频抑制，仍需在浏览器用真实麦克风确认 ASR 文本、打断手感与完整答题流程
-- 本地 8010 服务当前已按用户要求关闭；如需重新测试，运行 `./.venv/bin/python scripts/start_have_some_ai.py --port 8010`
+- 语音层真实端到端联调：AIHubMix file-STT 已保留；豆包主链路已改为 ASR/TTS 分离 WebSocket，仍需用真实火山凭证和浏览器麦克风确认 ASR definite 分句、Claude judge、TTS PCM 播放、barge-in 和完整答题流程
+- 本地 8010 服务当前未监听；如需重新测试，运行 `./.venv/bin/python scripts/start_have_some_ai.py --port 8010`，再用 `lsof`、`/health`、`/api/v1/voice-config` 确认服务可达
+- 最近 Have Some "Ai" voice / conversation / API / chat / service 单元测试子集：`79 passed`
 
 ### 下一步（Work 2）
 
 - [ ] 细化 `questions.yaml` 与 `scoring.yaml`，确定最终分配机制
-- [ ] 语音层：继续浏览器端到端联调，确认 unified conversation-audio 与 doubao conversation-realtime 的 Food Gate、正式答题、unclear/打岔重试、两题完成后分配食物
+- [ ] 语音层：继续浏览器端到端联调，确认 `/conversation-audio` fallback 与 `/conversation-stream` 的 Food Gate、not-eating 送客、正式答题、chitchat 拉回、两题完成后分配食物
 - [ ] 语音层：打磨低置信度重新录音机制
 - [ ] 观众端 / 工作人员端拆分为两个独立页面
 - [ ] 安全 / 忌口覆盖逻辑（必须优先于艺术算法）
@@ -182,7 +183,8 @@ Exhibition System: Have Some "Ai"
 
 | 项目 | 状态 | 影响 |
 | --- | --- | --- |
-| Have Some "Ai" 语音 STT/TTS 选型 | AIHubMix 走 file STT：`whisper-large-v3` + OpenAI-compatible TTS；豆包走后端 WebSocket realtime dialogue，输入 PCM16 16k，输出 PCM16 24k，正式判题仍交给 Claude；前端 active capture 时保持长连接，播放中用静音帧降低回声自触发；后端只播放本地授权 TTS，抑制 provider 自主回复音频 | 豆包握手/TTS/interrupt 已通过冒烟；待真实浏览器麦克风完整验收 |
+| Have Some "Ai" 语音 STT/TTS 选型 | AIHubMix 走 file STT：`whisper-large-v3` + OpenAI-compatible TTS；豆包走 ASR `bigmodel_async` + TTS V3 双向流式，输入 PCM16 16k，输出 PCM16 24k，正式判题仍交给 Claude | 待真实浏览器麦克风完整验收 |
+| 本机 8010 服务 | 当前未监听；`/health` 连不上时，网页语音不会工作 | 排障时先启动服务，不要先误判为麦克风或 TTS bug |
 | Have Some "Ai" 最终题库与评分 | 待细化 | 影响 questions.yaml / scoring.yaml |
 | 访客身份识别方式 | 待确认（v0.3） | 影响 visitor_id 字段设计 |
 | 视觉风格 / 设计语言 | 待确认 | 影响展览界面开发 |

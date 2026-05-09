@@ -82,32 +82,34 @@ class ClaudeRubricInterpreter:
         return _interpret_payload(payload, valid_options, detected_language)
 
 
-_SYSTEM_PROMPT = """You map a visitor's spoken answer to one scoring rubric option.
+ClaudeRubricJudge = ClaudeRubricInterpreter
+
+
+_SYSTEM_PROMPT = """You are a strict A/B choice judge for Have Some "Ai".
 
 Rules:
 - Return compact valid JSON only. Do not use Markdown. Do not wrap in code fences.
 - Do not add explanations outside the JSON.
-- The screen shows visible choices A, B, and C.
-- A and B are scoring options. C means Other / free answer.
-- Choose option_id A or B only when the answer is clear enough.
-- Use option_id null and status unclear when the transcript is empty, too short,
-  mostly filler, or clearly indicates the system did not hear the visitor.
-- If the visitor explicitly says A, map to option_id A.
-- If the visitor explicitly says B, map to option_id B.
-- If the visitor says C/Other or gives a free answer, infer whether the meaning is closer to A or B.
-- If the visitor only says C/Other without any content, return unclear.
+- This function is called only after the local FormalTurnRouter has classified
+  the transcript as an answer_attempt for the current formal question.
+- Judge whether the answer_attempt clearly corresponds to option A or option B.
+- Return label A or B when the transcript directly names A/B or clearly matches
+  the visible option text/meaning.
+- Return label unclear when this answer_attempt mentions both A and B, says
+  C/Other, refuses to choose, or cannot be mapped to exactly one option.
+- Do not infer hidden preferences beyond the transcript and visible options.
+- Do not chat, advance the flow, generate shopkeeper replies, score, or assign food.
 - Do not decide the food assignment.
-- If the answer is unclear, return option_id null with low confidence.
+- If the answer is unclear, return label unclear with low confidence.
 - Support Chinese, English, and mixed Chinese-English transcripts.
 - confidence must be between 0 and 1.
-- Include spoken_choice as A, B, C, freeform, or unclear.
-- Include status as accepted or unclear.
+- rationale must be one short sentence for logs only.
 
 Accepted example:
-{"status":"accepted","option_id":"A","confidence":0.86,"reason":"The user said they have had this experience before.","detected_language":"zh","spoken_choice":"freeform"}
+{"label":"A","confidence":0.86,"rationale":"The visitor clearly said A.","detected_language":"zh"}
 
 Unclear example:
-{"status":"unclear","option_id":null,"confidence":0.2,"reason":"The answer is too ambiguous to map to an option.","detected_language":"unknown","spoken_choice":"unclear"}
+{"label":"unclear","confidence":0.2,"rationale":"The visitor did not clearly choose A or B.","detected_language":"unknown"}
 """
 
 
@@ -119,9 +121,9 @@ Rules:
 - Return one JSON object only.
 - Do not use Markdown, code fences, or explanations.
 - Use status accepted or unclear.
-- Use option_id as a string or null.
+- Use label as A, B, or unclear.
 - Use confidence as a number between 0 and 1.
-- Use reason as a string.
+- Use rationale as a string.
 """
 
 
@@ -246,12 +248,10 @@ def _repair_prompt(malformed_output: str) -> str:
         {
             "malformed_output": malformed_output,
             "required_shape": {
-                "status": "accepted or unclear",
-                "option_id": "A, B, or null",
+                "label": "A, B, or unclear",
                 "confidence": "number between 0 and 1",
-                "reason": "string",
+                "rationale": "string",
                 "detected_language": "zh, en, mixed, or unknown",
-                "spoken_choice": "A, B, C, freeform, or unclear",
             },
         },
         ensure_ascii=False,
@@ -264,7 +264,8 @@ def _interpret_payload(
     detected_language: str | None,
 ) -> RubricInterpretation:
     confidence = _coerce_confidence(payload.get("confidence"))
-    option_id = _normalize_option_id(payload.get("option_id"))
+    label = _normalize_label(payload.get("label", payload.get("option_id")))
+    option_id = label if label in {"A", "B"} else None
     status = str(payload.get("status") or "").strip().lower()
     if status not in {"accepted", "unclear"}:
         status = "accepted" if option_id else "unclear"
@@ -274,11 +275,11 @@ def _interpret_payload(
         status = "unclear"
     if status == "accepted" and option_id is None:
         status = "unclear"
-    if status == "unclear" or confidence < 0.65:
+    if status == "unclear" or confidence < 0.55:
         option_id = None
         status = "unclear"
 
-    reason = str(payload.get("reason") or "").strip()
+    reason = str(payload.get("rationale") or payload.get("reason") or "").strip()
     reason_zh = str(payload.get("reason_zh") or reason or "没太听清，请再说一遍。")
     reason_en = str(
         payload.get("reason_en")
@@ -286,10 +287,12 @@ def _interpret_payload(
         or "The answer is unclear; please try again."
     )
     normalized = dict(payload)
+    normalized["label"] = option_id or "unclear"
     normalized["status"] = status
     normalized["option_id"] = option_id
     normalized["confidence"] = confidence
-    if reason and "reason" not in normalized:
+    if reason:
+        normalized["rationale"] = reason
         normalized["reason"] = reason
 
     return RubricInterpretation(
@@ -322,13 +325,14 @@ def _unclear_interpretation(
     )
 
 
-def _normalize_option_id(value: Any) -> str | None:
+def _normalize_label(value: Any) -> str:
     if value is None:
-        return None
+        return "unclear"
     normalized = str(value).strip()
     if not normalized or normalized.lower() in {"null", "none"}:
-        return None
-    return normalized.upper()
+        return "unclear"
+    normalized = normalized.upper()
+    return normalized if normalized in {"A", "B"} else "unclear"
 
 
 def _coerce_confidence(value: Any) -> float:

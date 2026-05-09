@@ -4,6 +4,7 @@ import random
 import sqlite3
 from pathlib import Path
 
+import pytest
 from fastapi.testclient import TestClient
 
 from have_some_ai.config import load_have_some_ai_config
@@ -36,6 +37,16 @@ class FakeRubricInterpreter:
         return self._results.pop(0)
 
 
+class CountingScoringEngine(ScoringEngine):
+    def __init__(self, scoring_config, question_bank):
+        super().__init__(scoring_config, question_bank)
+        self.calls = 0
+
+    def assign(self, *args, **kwargs):
+        self.calls += 1
+        return super().assign(*args, **kwargs)
+
+
 def test_new_participant_first_turn_asks_food_gate_without_draws():
     conn, service, orchestrator, _repo = _conversation_stack([])
     try:
@@ -56,7 +67,7 @@ def test_new_participant_first_turn_asks_food_gate_without_draws():
         conn.close()
 
 
-def test_no_food_enters_free_chat_and_never_draws_questions():
+def test_no_food_enters_not_eating_chat_and_never_draws_questions():
     conn, service, orchestrator, _repo = _conversation_stack([])
     try:
         participant = service.create_participant()
@@ -65,10 +76,10 @@ def test_no_food_enters_free_chat_and_never_draws_questions():
         result = orchestrator.handle_turn(participant.id, "先不吃了")
         detail = service.participant_detail(participant.id)
 
-        assert result["stage"] == "free_chat"
+        assert result["stage"] == "not_eating_chat"
         assert result["chat_mode"] == CHAT_MODE_A_NO_FOOD
         assert result["food_gate_result"] == "NO_FOOD"
-        assert result["next_action"] == "free_chat"
+        assert result["next_action"] == "not_eating_chat"
         assert result["assignment"] is None
         assert detail["draws"] == []
         assert detail["answers"] == []
@@ -76,22 +87,45 @@ def test_no_food_enters_free_chat_and_never_draws_questions():
         conn.close()
 
 
-def test_food_gate_unclear_once_clarifies_then_defaults_to_no_food():
+def test_food_gate_chitchat_is_not_unclear_and_does_not_default_to_no_food():
     conn, service, orchestrator, _repo = _conversation_stack([])
     try:
         participant = service.create_participant()
         orchestrator.handle_turn(participant.id, "")
 
-        clarify = orchestrator.handle_turn(participant.id, "嗯")
-        fallback = orchestrator.handle_turn(participant.id, "随便")
+        unclear = orchestrator.handle_turn(participant.id, "嗯")
+        chitchat = orchestrator.handle_turn(participant.id, "你是谁啊")
 
-        assert clarify["stage"] == "food_gate_clarify"
-        assert clarify["food_gate_result"] == "UNCLEAR"
-        assert "想来点吃的，还是先不吃" in clarify["reply_text"]
-        assert fallback["stage"] == "free_chat"
-        assert fallback["chat_mode"] == CHAT_MODE_A_NO_FOOD
-        assert fallback["food_gate_result"] == "UNCLEAR"
+        assert unclear["stage"] == "food_gate"
+        assert unclear["interpretation"] == {"route": "unclear_speech"}
+        assert chitchat["stage"] == "food_gate"
+        assert chitchat["interpretation"] == {"route": "chitchat", "count": 1}
+        assert chitchat["next_action"] == "answer_food_gate"
+        assert chitchat["chat_mode"] is None
         assert service.participant_detail(participant.id)["draws"] == []
+    finally:
+        conn.close()
+
+
+def test_not_eating_chat_deletes_transient_participant_on_third_chat_turn():
+    conn, service, orchestrator, _repo = _conversation_stack([])
+    try:
+        participant = service.create_participant()
+        orchestrator.handle_turn(participant.id, "")
+        orchestrator.handle_turn(participant.id, "先不吃了")
+
+        first = orchestrator.handle_turn(participant.id, "这个摊位好好玩")
+        second = orchestrator.handle_turn(participant.id, "我今天有点累")
+        third = orchestrator.handle_turn(participant.id, "你是谁啊")
+
+        assert first["stage"] == "not_eating_chat"
+        assert first["not_eating_chat_count"] == 1
+        assert second["not_eating_chat_count"] == 2
+        assert third["stage"] == "done"
+        assert third["next_action"] == "end_session"
+        assert third["participant_deleted"] is True
+        with pytest.raises(KeyError):
+            service.participant_detail(participant.id)
     finally:
         conn.close()
 
@@ -105,10 +139,10 @@ def test_want_food_starts_two_formal_questions():
         result = orchestrator.handle_turn(participant.id, "想吃")
         detail = service.participant_detail(participant.id)
 
-        assert result["stage"] == "asking_required_question"
+        assert result["stage"] == "formal_question_1"
         assert result["chat_mode"] == CHAT_MODE_B_WANT_FOOD
         assert result["food_gate_result"] == "WANT_FOOD"
-        assert result["next_action"] == "submit_required_answer"
+        assert result["next_action"] == "answer_formal_question"
         assert result["answered_count"] == 0
         assert result["total_questions"] == 2
         assert len(detail["draws"]) == 2
@@ -131,9 +165,9 @@ def test_one_formal_answer_never_assigns_and_points_to_second_question():
         result = orchestrator.handle_turn(participant.id, "我选 A")
         detail = service.participant_detail(participant.id)
 
-        assert result["stage"] == "after_required_answer"
+        assert result["stage"] == "formal_question_2"
         assert result["answered_count"] == 1
-        assert result["next_action"] == "ask_next_required_question"
+        assert result["next_action"] == "answer_formal_question"
         assert result["interpretation"] == {
             "status": "accepted",
             "choice": "A",
@@ -156,15 +190,14 @@ def test_two_accepted_answers_assign_aimiao_soup():
         participant = service.create_participant()
         _enter_food_questions(orchestrator, participant.id)
         orchestrator.handle_turn(participant.id, "我选 A")
-        orchestrator.handle_turn(participant.id, "")
 
         result = orchestrator.handle_turn(participant.id, "我选 A")
 
-        assert result["stage"] == "ready_to_assign"
+        assert result["stage"] == "farewell"
         assert "系统给你定的是" in result["reply_text"]
         assert "艾苗汤 / Ai Miao soup" in result["reply_text"]
         assert result["answered_count"] == 2
-        assert result["next_action"] == "assign"
+        assert result["next_action"] == "end_session"
         assert result["assignment"]["food_code"] == "aimiao_soup"
     finally:
         conn.close()
@@ -179,7 +212,6 @@ def test_assigned_turn_does_not_change_assignment():
         participant = service.create_participant()
         _enter_food_questions(orchestrator, participant.id)
         orchestrator.handle_turn(participant.id, "我选 A")
-        orchestrator.handle_turn(participant.id, "")
         ready = orchestrator.handle_turn(participant.id, "我选 B")
 
         assigned = orchestrator.handle_turn(participant.id, "我想换一个")
@@ -194,6 +226,38 @@ def test_assigned_turn_does_not_change_assignment():
         conn.close()
 
 
+def test_scoring_engine_called_once_after_two_formal_answers():
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    run_migrations(conn)
+    configs = load_have_some_ai_config(Path("config/have_some_ai"))
+    bank = QuestionBank(configs["questions"], rng=random.Random(7))
+    repo = MealRepository(conn)
+    scoring = CountingScoringEngine(configs["scoring"], bank)
+    service = MealService(
+        repo,
+        bank,
+        scoring,
+        rubric_interpreter=FakeRubricInterpreter([
+            RubricInterpretation("A", 0.9, "清楚。", "Clear.", "zh", {}),
+            RubricInterpretation("B", 0.9, "清楚。", "Clear.", "zh", {}),
+        ]),
+    )
+    orchestrator = ConversationOrchestrator(service)
+    try:
+        participant = service.create_participant()
+        _enter_food_questions(orchestrator, participant.id)
+        orchestrator.handle_turn(participant.id, "我选 A")
+        farewell = orchestrator.handle_turn(participant.id, "我选 B")
+        assigned = orchestrator.handle_turn(participant.id, "我想换一个")
+
+        assert farewell["stage"] == "farewell"
+        assert assigned["stage"] == "assigned"
+        assert scoring.calls == 1
+    finally:
+        conn.close()
+
+
 def test_unclear_formal_answer_does_not_advance_or_store_answer():
     conn, service, orchestrator, repo = _conversation_stack([
         RubricInterpretation("B", 0.4, "不清楚。", "Unclear.", "zh", {}),
@@ -204,18 +268,18 @@ def test_unclear_formal_answer_does_not_advance_or_store_answer():
 
         result = orchestrator.handle_turn(participant.id, "可能吧")
 
-        assert result["stage"] == "awaiting_required_answer"
+        assert result["stage"] == "formal_question_1"
         assert result["answered_count"] == 0
         assert result["current_question_id"] == question["current_question_id"]
         assert result["next_action"] == "repeat_current_question"
-        assert result["interpretation"] == {"status": "unclear"}
+        assert result["interpretation"] == {"status": "unclear", "source": "judge"}
         assert result["assignment"] is None
         assert repo.get_answers(participant.id) == []
     finally:
         conn.close()
 
 
-def test_acknowledgement_during_formal_question_repeats_without_rubric_call():
+def test_acknowledgement_during_formal_question_is_chitchat_without_rubric_call():
     conn, service, orchestrator, repo = _conversation_stack([
         RubricInterpretation("A", 0.9, "清楚。", "Clear.", "zh", {}),
     ])
@@ -225,22 +289,18 @@ def test_acknowledgement_during_formal_question_repeats_without_rubric_call():
 
         result = orchestrator.handle_turn(participant.id, "好吧")
 
-        assert result["stage"] == "awaiting_required_answer"
+        assert result["stage"] == "formal_question_1"
         assert result["current_question_id"] == question["current_question_id"]
         assert result["next_action"] == "repeat_current_question"
-        assert result["interpretation"] == {"status": "continue_ack"}
+        assert result["interpretation"] == {"route": "chitchat", "count": 1}
         assert repo.get_answers(participant.id) == []
         assert service._rubric_interpreter.calls == []
     finally:
         conn.close()
 
 
-def test_food_chat_detours_are_limited_and_never_store_formal_answers():
-    conn, service, orchestrator, repo = _conversation_stack([
-        RubricInterpretation(None, 0.2, "打岔。", "Detour.", "zh", {}),
-        RubricInterpretation(None, 0.2, "打岔。", "Detour.", "zh", {}),
-        RubricInterpretation(None, 0.2, "打岔。", "Detour.", "zh", {}),
-    ])
+def test_formal_chitchat_is_routed_before_judge_and_limited():
+    conn, service, orchestrator, repo = _conversation_stack([])
     try:
         participant = service.create_participant()
         question = _enter_food_questions(orchestrator, participant.id)
@@ -249,15 +309,14 @@ def test_food_chat_detours_are_limited_and_never_store_formal_answers():
         second = orchestrator.handle_turn(participant.id, "哈哈那你吃不吃？")
         third = orchestrator.handle_turn(participant.id, "为什么非要问这个？")
 
-        assert first["stage"] == "food_chat_detour"
-        assert first["food_chat_detour_count"] == 1
-        assert second["stage"] == "food_chat_detour"
-        assert second["food_chat_detour_count"] == 2
-        assert third["stage"] == "food_chat_limit"
-        assert third["food_chat_detour_count"] == 3
-        assert "不聊那么多了" in third["reply_text"]
+        assert first["stage"] == "formal_question_1"
+        assert first["formal_chitchat_count"] == 1
+        assert second["formal_chitchat_count"] == 2
+        assert third["formal_chitchat_count"] == 3
+        assert "回到这题" in third["reply_text"]
         assert third["current_question_id"] == question["current_question_id"]
         assert repo.get_answers(participant.id) == []
+        assert service._rubric_interpreter.calls == []
     finally:
         conn.close()
 

@@ -46,14 +46,15 @@ urllib.request HTTPS check against https://pypi.org/simple/pip/: 200
 
 | 项目 | 版本 | 用途 | 版本锁定 |
 | --- | --- | --- | --- |
-| anthropic | latest stable | Claude API 客户端（表达层、反思层） | 锁定在 pyproject.toml |
+| anthropic | latest stable | Claude API 客户端（表达层、反思层、Have Some "Ai" 正式题 judge 与闲聊话术） | 锁定在 pyproject.toml |
 | httpx | >=0.27.0 | Anthropic 兼容网关、推理时代语音网关 HTTP 调用 | 锁定在 pyproject.toml |
-| sentence-transformers | latest stable | 本地 Embedding 模型（语义记忆检索，v0.2 引入） | 锁定在 pyproject.toml |
+| sentence-transformers | deferred | 本地 Embedding 模型（The "Stranger" 语义记忆检索，尚未接入当前主项目） | 当前未声明在 pyproject.toml |
 
 **Claude 模型分配：**
 
 - 表达层（ExpressionEngine）→ `claude-sonnet-4-6`（语气细节、开放生成）
 - 反思层（ReflectionEngine）→ `claude-haiku-4-5-20251001`（批量压缩，成本控制）
+- Have Some "Ai"：正式 A/B/unclear judge 只处理 `answer_attempt`；chitchat 话术层只生成 `reply_text`，不决定流程或食物
 
 **Embedding 模型：**
 
@@ -163,16 +164,28 @@ websockets==16.0
 | --- | --- |
 | AIHubMix OpenAI-compatible file STT | Have Some "Ai" 语音转文字，默认模型 `whisper-large-v3`，走 `/audio/transcriptions` |
 | OpenAI-compatible TTS | 非豆包 provider 的店主回复 fallback，默认模型 `gpt-4o-mini-tts` |
-| 火山引擎豆包 realtime dialogue | Have Some "Ai" 后端 WebSocket 桥接实时听说，输入 `pcm_s16le` 16k mono，输出 `pcm_s16le` 24k；正常麦克风链路使用 server VAD，开场和主语音按钮共用长连接；播放中前端用静音帧降低回声自触发，确认 provider `ASRInfo=450` 后通过 `ClientInterrupt=515` 打断；豆包 provider 下店主发声全走此通道，正式 A/B 判题仍由 Claude rubric interpreter 执行 |
-| sentence-transformers | Conscious Entity 语义记忆检索（Embedding） |
+| 火山引擎豆包 ASR 2.0 + TTS 2.0 | Have Some "Ai" 后端 WebSocket 分离接入：ASR 使用 `bigmodel_async` 常驻 session，只消费 `definite=true` 分句；TTS 使用 V3 双向流式 `tts/bidirection`，固定 Tina 老师 2.0 音色，输出 PCM 24k；正式 A/B/unclear 判题仍由 Claude rubric judge 执行，chitchat 可由 Claude 话术层生成 `reply_text` |
+| sentence-transformers | Conscious Entity 语义记忆检索（Embedding），当前仍为 deferred，未安装为项目依赖 |
 
-豆包 realtime 调试脚本：
+Have Some "Ai" 豆包音频接口：
+
+- 浏览器输入：`getUserMedia()` 采集 Float32，downmix mono，重采样到 16000 Hz，转换为 PCM s16le，通过 binary WebSocket frame 发送。
+- 后端 ASR：`/conversation-stream` 聚合约 200ms PCM 后发送给 Doubao ASR `bigmodel_async`；只在 participant session 结束、cancel、浏览器断开或后端重连时发送 ASR final packet。
+- 后端 TTS：Doubao TTS V3 `tts/bidirection` 输出 PCM s16le 24k mono，通过 WebSocket binary frame 直接回浏览器。
+- 浏览器输出：按后端 `audio.output_config` 的 `sample_rate=24000` 创建 AudioBuffer 队列播放，不把 24k PCM 当作浏览器默认采样率。
+- half-duplex：TTS 播放期间前后端暂停 ASR 上行；`mic.muted_for_tts` / `mic.resumed_after_tts` 是预期状态事件。
+- barge-in：协议和后端 `CancelSession=101` 已接入；前端本地自动打断默认关闭，现场体验仍需验收。
+
+豆包手动 smoke test：
 
 ```bash
-.venv/bin/python scripts/diagnose_doubao_realtime.py --variant full_server_vad_pcm --probe-mode say_hello
+./.venv/bin/python scripts/start_have_some_ai.py --port 8010
+lsof -nP -iTCP:8010 -sTCP:LISTEN
+curl -s http://127.0.0.1:8010/health
+curl -s http://127.0.0.1:8010/api/v1/voice-config
 ```
 
-该脚本只连接火山 WebSocket，不写入项目数据库；输出事件 ID、payload 摘要与 `X-Tt-Logid`，不会输出密钥和音频正文。
+打开 `http://127.0.0.1:8010/`，新建观众后使用 Start Voice；确认 Food Gate TTS、`mic.muted_for_tts` / `mic.resumed_after_tts`、ASR partial/final、正式 answer_attempt 的 Claude judge、TTS PCM 播放和两道正式题后的食物分配。若 8010 没有监听，先不要诊断浏览器麦克风或 TTS。
 
 ---
 
@@ -221,18 +234,26 @@ HAVE_SOME_AI_STT_LANGUAGE=zh
 HAVE_SOME_AI_TTS_MODEL=gpt-4o-mini-tts
 HAVE_SOME_AI_TTS_VOICE=alloy
 
-# Doubao realtime dialogue
+# Doubao ASR/TTS split streaming
 HAVE_SOME_AI_VOICE_PROVIDER=doubao
-HAVE_SOME_AI_STT_MODE=realtime_dialogue
-HAVE_SOME_AI_DOUBAO_APP_ID=your_volcengine_app_id_here
-HAVE_SOME_AI_DOUBAO_APP_KEY=PlgvMymc7f3tQnJ6
-HAVE_SOME_AI_DOUBAO_ACCESS_TOKEN=your_volcengine_access_token_here
-HAVE_SOME_AI_DOUBAO_RESOURCE_ID=volc.speech.dialog
-HAVE_SOME_AI_DOUBAO_WS_URL=wss://openspeech.bytedance.com/api/v3/realtime/dialogue
-HAVE_SOME_AI_DOUBAO_MODEL=1.2.1.1
-HAVE_SOME_AI_DOUBAO_SPEAKER=zh_female_vv_jupiter_bigtts
-HAVE_SOME_AI_DOUBAO_BOT_NAME=Have Some Ai
-HAVE_SOME_AI_DOUBAO_SPEAKING_STYLE=用简短、温和、带一点展览店主感的中文或英文回答。
+HAVE_SOME_AI_STT_MODE=asr_tts_stream
+DOUBAO_API_KEY=your_volcengine_api_key_here
+DOUBAO_ASR_ENDPOINT=wss://openspeech.bytedance.com/api/v3/sauc/bigmodel_async
+DOUBAO_ASR_RESOURCE_ID=volc.seedasr.sauc.duration
+DOUBAO_ASR_ENABLE_NONSTREAM=true
+DOUBAO_ASR_END_WINDOW_SIZE_MS=800
+DOUBAO_ASR_FORCE_TO_SPEECH_TIME_MS=1000
+DOUBAO_ASR_RESULT_TYPE=single
+DOUBAO_ASR_AUDIO_FORMAT=pcm
+DOUBAO_ASR_SAMPLE_RATE=16000
+DOUBAO_ASR_BITS=16
+DOUBAO_ASR_CHANNELS=1
+DOUBAO_TTS_ENDPOINT=wss://openspeech.bytedance.com/api/v3/tts/bidirection
+DOUBAO_TTS_RESOURCE_ID=seed-tts-2.0
+DOUBAO_TTS_AUDIO_FORMAT=pcm
+DOUBAO_TTS_SAMPLE_RATE=24000
+DOUBAO_TTS_SPEECH_RATE=0
+DOUBAO_TTS_LOUDNESS_RATE=0
 ```
 
 ### 开发环境假设

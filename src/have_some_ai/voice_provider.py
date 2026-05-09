@@ -5,9 +5,6 @@ from dataclasses import dataclass
 from typing import Any
 
 
-_DEFAULT_DOUBAO_APP_KEY = "PlgvMymc7f3tQnJ6"
-
-
 @dataclass(frozen=True)
 class VoiceProviderConfig:
     provider: str
@@ -17,8 +14,7 @@ class VoiceProviderConfig:
     tts_model: str
     tts_voice: str
     stt_language: str | None
-    conversation_realtime_available: bool = False
-    realtime_transport: str | None = None
+    conversation_stream_available: bool = False
     input_audio_format: str | None = None
     input_sample_rate: int | None = None
     output_audio_format: str | None = None
@@ -37,9 +33,7 @@ class VoiceProviderConfig:
             "tts_voice": self.tts_voice,
             "stt_language": self.stt_language,
             "file_stt_available": self.stt_mode in {"file", "auto"},
-            "realtime_available": self.stt_mode in {"realtime", "auto"},
-            "conversation_realtime_available": self.conversation_realtime_available,
-            "realtime_transport": self.realtime_transport,
+            "conversation_stream_available": self.conversation_stream_available,
             "input_audio_format": self.input_audio_format,
             "input_sample_rate": self.input_sample_rate,
             "output_audio_format": self.output_audio_format,
@@ -63,26 +57,19 @@ def resolve_voice_provider_config() -> VoiceProviderConfig:
         tts_model=os.getenv("HAVE_SOME_AI_TTS_MODEL", "gpt-4o-mini-tts"),
         tts_voice=os.getenv("HAVE_SOME_AI_TTS_VOICE", "alloy"),
         stt_language=language,
-        conversation_realtime_available=(
-            provider == "doubao" and stt_mode == "realtime_dialogue"
-        ),
-        realtime_transport=(
-            "backend_websocket"
-            if provider == "doubao" and stt_mode == "realtime_dialogue"
-            else None
-        ),
+        conversation_stream_available=(provider == "doubao" and stt_mode == "asr_tts_stream"),
         input_audio_format=(
-            "pcm_s16le" if provider == "doubao" and stt_mode == "realtime_dialogue" else None
+            "pcm_s16le" if provider == "doubao" and stt_mode == "asr_tts_stream" else None
         ),
         input_sample_rate=(
-            _doubao_sample_rate() if provider == "doubao" and stt_mode == "realtime_dialogue" else None
+            _doubao_asr_sample_rate() if provider == "doubao" and stt_mode == "asr_tts_stream" else None
         ),
         output_audio_format=(
-            "pcm_s16le" if provider == "doubao" and stt_mode == "realtime_dialogue" else None
+            "pcm_s16le" if provider == "doubao" and stt_mode == "asr_tts_stream" else None
         ),
         output_sample_rate=(
-            _doubao_output_sample_rate()
-            if provider == "doubao" and stt_mode == "realtime_dialogue"
+            _doubao_tts_sample_rate()
+            if provider == "doubao" and stt_mode == "asr_tts_stream"
             else None
         ),
         provider_capabilities=_provider_capabilities(provider, stt_mode),
@@ -97,30 +84,30 @@ def _infer_provider(base_url: str | None) -> str:
 
 def _default_stt_mode(provider: str) -> str:
     if provider == "doubao":
-        return "realtime_dialogue"
-    if provider == "aihubmix":
+        return "asr_tts_stream"
+    if provider in {"aihubmix", "openai"}:
         return "file"
-    return "realtime"
+    return "file"
 
 
 def _default_stt_model(provider: str, stt_mode: str) -> str:
     if provider == "doubao":
-        return "doubao-realtime-dialogue"
+        return "doubao-asr-bigmodel-async"
     if provider == "aihubmix" or stt_mode == "file":
         return "whisper-large-v3"
     return "gpt-4o-mini-transcribe"
 
 
-def _doubao_sample_rate() -> int:
-    value = os.getenv("HAVE_SOME_AI_DOUBAO_SAMPLE_RATE", "16000")
+def _doubao_asr_sample_rate() -> int:
+    value = os.getenv("DOUBAO_ASR_SAMPLE_RATE", "16000")
     try:
         return int(value)
     except ValueError:
         return 16000
 
 
-def _doubao_output_sample_rate() -> int:
-    value = os.getenv("HAVE_SOME_AI_DOUBAO_OUTPUT_SAMPLE_RATE", "24000")
+def _doubao_tts_sample_rate() -> int:
+    value = os.getenv("DOUBAO_TTS_SAMPLE_RATE", "24000")
     try:
         return int(value)
     except ValueError:
@@ -128,27 +115,37 @@ def _doubao_output_sample_rate() -> int:
 
 
 def _provider_capabilities(provider: str, stt_mode: str) -> dict[str, Any]:
-    if provider == "doubao" and stt_mode == "realtime_dialogue":
+    if provider == "doubao" and stt_mode == "asr_tts_stream":
+        asr_ready = _doubao_asr_credentials_configured()
+        tts_ready = _doubao_tts_credentials_configured()
         return {
             "audio_input": True,
             "audio_output": True,
             "structured_answer": False,
-            "credentials_configured": _doubao_credentials_configured(),
-            "dialog_model": os.getenv("HAVE_SOME_AI_DOUBAO_MODEL", "1.2.1.1"),
-            "speaker": os.getenv(
-                "HAVE_SOME_AI_DOUBAO_SPEAKER",
-                "zh_female_vv_jupiter_bigtts",
+            "credentials_configured": asr_ready and tts_ready,
+            "asr_credentials_configured": asr_ready,
+            "tts_credentials_configured": tts_ready,
+            "asr_endpoint": os.getenv(
+                "DOUBAO_ASR_ENDPOINT",
+                "wss://openspeech.bytedance.com/api/v3/sauc/bigmodel_async",
             ),
+            "asr_resource_id": os.getenv(
+                "DOUBAO_ASR_RESOURCE_ID",
+                "volc.seedasr.sauc.duration",
+            ),
+            "tts_endpoint": os.getenv(
+                "DOUBAO_TTS_ENDPOINT",
+                "wss://openspeech.bytedance.com/api/v3/tts/bidirection",
+            ),
+            "tts_resource_id": os.getenv("DOUBAO_TTS_RESOURCE_ID", "seed-tts-2.0"),
+            "speaker": "zh_female_yingyujiaoxue_uranus_bigtts",
         }
     return {}
 
 
-def _doubao_credentials_configured() -> bool:
-    app_key = os.getenv("HAVE_SOME_AI_DOUBAO_APP_KEY", _DEFAULT_DOUBAO_APP_KEY)
-    return all(
-        (
-            os.getenv("HAVE_SOME_AI_DOUBAO_APP_ID"),
-            app_key,
-            os.getenv("HAVE_SOME_AI_DOUBAO_ACCESS_TOKEN"),
-        )
-    )
+def _doubao_asr_credentials_configured() -> bool:
+    return bool(os.getenv("DOUBAO_ASR_API_KEY") or os.getenv("DOUBAO_API_KEY"))
+
+
+def _doubao_tts_credentials_configured() -> bool:
+    return bool(os.getenv("DOUBAO_TTS_API_KEY") or os.getenv("DOUBAO_API_KEY"))

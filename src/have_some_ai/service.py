@@ -27,7 +27,7 @@ class MealService:
         question_bank: QuestionBank,
         scoring_engine: ScoringEngine,
         rubric_interpreter: RubricInterpreter | None = None,
-        rubric_confidence_threshold: float = 0.65,
+        rubric_confidence_threshold: float = 0.55,
     ) -> None:
         self._repo = repository
         self._question_bank = question_bank
@@ -266,14 +266,22 @@ class MealService:
 
         draws = self._repo.get_draws(participant_id)
         answers = self._repo.get_answers(participant_id)
-        if len(answers) < len(draws):
-            raise ValueError("Cannot assign food before all drawn questions are answered")
+        if len(draws) != 2 or len(answers) != 2:
+            raise ValueError("Cannot assign food before the two formal questions are answered")
 
         observations = self._repo.get_observation_events(participant_id)
         assignment = self._scoring_engine.assign(participant_id, answers, observations)
         stored = self._repo.store_assignment(assignment)
         self._repo.update_participant_status(participant_id, ParticipantStatus.ASSIGNED)
         return stored
+
+    def delete_transient_participant(self, participant_id: str) -> None:
+        self._repo.get_participant(participant_id)
+        if self._repo.get_answers(participant_id):
+            raise ValueError("Cannot delete participant after formal answers are recorded")
+        if self.get_assignment_if_exists(participant_id) is not None:
+            raise ValueError("Cannot delete participant after assignment")
+        self._repo.delete_participant(participant_id)
 
     def get_assignment_if_exists(self, participant_id: str) -> Assignment | None:
         try:

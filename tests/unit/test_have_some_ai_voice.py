@@ -1,28 +1,43 @@
 from __future__ import annotations
 
-import asyncio
-import base64
+import gzip
 import json
 from pathlib import Path
 
+import pytest
+
 from have_some_ai.config import load_have_some_ai_config
+from have_some_ai.doubao.asr_client import DoubaoASRConfig
+from have_some_ai.doubao.asr_protocol import (
+    ASR_AUDIO_REQUEST_HEADER,
+    ASR_FINAL_AUDIO_REQUEST_HEADER,
+    ASR_FULL_CLIENT_REQUEST_HEADER,
+    DoubaoASRProtocolError,
+    encode_audio_request,
+    encode_full_client_request,
+    parse_server_response,
+    transcript_events_from_payload,
+)
+from have_some_ai.doubao.tts_bidirectional_client import DoubaoTTSConfig
+from have_some_ai.doubao.tts_protocol import (
+    TTS_CANCEL_SESSION,
+    TTS_CONNECTION_STARTED,
+    TTS_FINISH_SESSION,
+    TTS_RESPONSE,
+    TTS_SENTENCE_END,
+    TTS_SENTENCE_START,
+    TTS_SESSION_CANCELED,
+    TTS_SESSION_FINISHED,
+    TTS_SESSION_STARTED,
+    TTS_START_CONNECTION,
+    TTS_START_SESSION,
+    TTS_TASK_REQUEST,
+    encode_event_payload,
+    parse_tts_response,
+)
+from have_some_ai.doubao.tts_bidirectional_client import DoubaoTTSBidirectionalClient
 from have_some_ai.questionnaire import QuestionBank
 from have_some_ai.voice import ClaudeRubricInterpreter
-from have_some_ai.voice_realtime import (
-    DOUBAO_CHAT_TTS_TEXT,
-    DOUBAO_CLIENT_INTERRUPT,
-    DOUBAO_CONNECTION_STARTED,
-    DOUBAO_END_ASR,
-    DOUBAO_SAY_HELLO,
-    DOUBAO_SESSION_STARTED,
-    DOUBAO_START_SESSION,
-    DOUBAO_TASK_REQUEST,
-    DoubaoProtocol,
-    DoubaoRealtimeConfig,
-    DoubaoRealtimeVoiceAdapter,
-    RealtimeVoiceAdapter,
-    build_realtime_system_prompt,
-)
 
 
 class FakeLLM:
@@ -35,522 +50,305 @@ class FakeLLM:
         return self.responses.pop(0)
 
 
-def test_claude_rubric_interpreter_accepts_direct_a_choice():
-    question = _question()
+def test_claude_rubric_judge_accepts_direct_a_choice():
     llm = FakeLLM(
-        '{"option_id":"A","confidence":0.95,"reason_zh":"选择A。",'
-        '"reason_en":"Chose A.","detected_language":"zh","spoken_choice":"A"}'
+        '{"label":"A","confidence":0.95,"rationale":"The visitor clearly said A.",'
+        '"detected_language":"zh"}'
     )
-    interpreter = ClaudeRubricInterpreter(llm)
-
-    result = interpreter.interpret(
-        question=question,
+    result = ClaudeRubricInterpreter(llm).interpret(
+        question=_question(),
         transcript="我选 A",
         detected_language="zh",
     )
 
     assert result.option_id == "A"
     assert result.confidence == 0.95
-    assert result.raw_json["spoken_choice"] == "A"
+    assert result.raw_json["label"] == "A"
 
 
-def test_claude_rubric_interpreter_accepts_direct_b_choice():
-    question = _question()
+def test_claude_rubric_judge_accepts_direct_b_choice():
     llm = FakeLLM(
-        '{"option_id":"B","confidence":0.93,"reason_zh":"选择B。",'
-        '"reason_en":"Chose B.","detected_language":"en","spoken_choice":"B"}'
+        '{"label":"B","confidence":0.93,"rationale":"The visitor clearly said B.",'
+        '"detected_language":"en"}'
     )
-    interpreter = ClaudeRubricInterpreter(llm)
-
-    result = interpreter.interpret(
-        question=question,
+    result = ClaudeRubricInterpreter(llm).interpret(
+        question=_question(),
         transcript="I choose B",
         detected_language="en",
     )
 
     assert result.option_id == "B"
     assert result.confidence == 0.93
-    assert result.raw_json["spoken_choice"] == "B"
+    assert result.raw_json["label"] == "B"
 
 
-def test_claude_rubric_interpreter_keeps_c_as_spoken_choice_but_maps_to_ab():
-    question = _question()
+def test_claude_rubric_judge_accepts_confidence_at_055_threshold():
     llm = FakeLLM(
-        '{"option_id":"A","confidence":0.81,"reason_zh":"自由回答更接近A。",'
-        '"reason_en":"The free answer is closer to A.",'
-        '"detected_language":"mixed","spoken_choice":"C"}'
+        '{"label":"A","confidence":0.56,"rationale":"The visitor clearly said A.",'
+        '"detected_language":"zh"}'
     )
-    interpreter = ClaudeRubricInterpreter(llm)
+    result = ClaudeRubricInterpreter(llm).interpret(
+        question=_question(),
+        transcript="我选 A",
+        detected_language="zh",
+    )
 
-    result = interpreter.interpret(
-        question=question,
+    assert result.option_id == "A"
+    assert result.confidence == 0.56
+    assert result.raw_json["status"] == "accepted"
+
+
+def test_claude_rubric_judge_keeps_c_and_freeform_unclear():
+    llm = FakeLLM(
+        '{"label":"unclear","confidence":0.2,'
+        '"rationale":"The visitor gave a free-form answer instead of choosing A or B.",'
+        '"detected_language":"mixed"}'
+    )
+    result = ClaudeRubricInterpreter(llm).interpret(
+        question=_question(),
         transcript="C，我想说其实我真的会谢谢 AI",
         detected_language="mixed",
     )
 
-    assert result.option_id == "A"
-    assert result.raw_json["spoken_choice"] == "C"
-
-
-def test_claude_rubric_interpreter_allows_low_confidence_for_bare_c():
-    question = _question()
-    llm = FakeLLM(
-        '{"option_id":null,"confidence":0.2,"reason_zh":"只有C，没有具体内容。",'
-        '"reason_en":"Only C was spoken, with no content.",'
-        '"detected_language":"zh","spoken_choice":"C","status":"unclear"}'
-    )
-    interpreter = ClaudeRubricInterpreter(llm)
-
-    result = interpreter.interpret(
-        question=question,
-        transcript="其他",
-        detected_language="zh",
-    )
-
     assert result.option_id is None
-    assert result.confidence < 0.65
-    assert result.raw_json["spoken_choice"] == "C"
-
-
-def test_claude_rubric_interpreter_accepts_unclear_output():
-    question = _question()
-    llm = FakeLLM(
-        '{"option_id":null,"confidence":0.1,"reason_zh":"没太听清。",'
-        '"reason_en":"The transcript is unclear.",'
-        '"detected_language":"unknown","spoken_choice":"unclear","status":"unclear"}'
-    )
-    interpreter = ClaudeRubricInterpreter(llm)
-
-    result = interpreter.interpret(
-        question=question,
-        transcript="嗯",
-        detected_language="unknown",
-    )
-
-    assert result.option_id is None
+    assert result.raw_json["label"] == "unclear"
     assert result.raw_json["status"] == "unclear"
 
 
-def test_claude_prompt_includes_visible_c_choice():
-    question = _question()
+def test_claude_prompt_forbids_flow_and_food_decisions():
     llm = FakeLLM(
-        '{"option_id":"A","confidence":0.9,"reason_zh":"",'
-        '"reason_en":"","detected_language":"en","spoken_choice":"freeform"}'
+        '{"label":"A","confidence":0.9,"rationale":"The visitor clearly said A."}'
     )
-    interpreter = ClaudeRubricInterpreter(llm)
+    ClaudeRubricInterpreter(llm).interpret(question=_question(), transcript="A")
 
-    interpreter.interpret(question=question, transcript="free answer")
-
-    prompt = llm.calls[0]["messages"][0]["content"]
-    assert '"C"' in prompt
-    assert "Other. Say anything." in prompt
-    assert "scoring_options" in prompt
-    assert "compact valid JSON only" in llm.calls[0]["system"]
-    assert '"option_id":"A|null"' not in llm.calls[0]["system"]
+    system = llm.calls[0]["system"]
+    assert "Do not chat" in system
+    assert "score, or assign food" in system
+    assert "FormalTurnRouter" in system
+    assert '"label":"A"' in system
 
 
-def test_claude_rubric_interpreter_repairs_malformed_json():
-    question = _question()
+def test_claude_rubric_judge_repairs_malformed_json():
     llm = FakeLLM([
-        (
-            '{"status":"accepted","option_id":"A"\n'
-            '"confidence":0.86,"reason":"The user has had this experience before."}'
-        ),
-        (
-            '{"status":"accepted","option_id":"A","confidence":0.86,'
-            '"reason":"The user has had this experience before.",'
-            '"detected_language":"zh","spoken_choice":"freeform"}'
-        ),
+        '{"label":"A"\n"confidence":0.86,"rationale":"The visitor clearly said A."}',
+        '{"label":"A","confidence":0.86,"rationale":"The visitor clearly said A."}',
     ])
-    interpreter = ClaudeRubricInterpreter(llm)
-
-    result = interpreter.interpret(
-        question=question,
-        transcript="嗯...有过吧",
-        detected_language="zh",
+    result = ClaudeRubricInterpreter(llm).interpret(
+        question=_question(),
+        transcript="A",
     )
 
     assert result.option_id == "A"
-    assert result.confidence == 0.86
     assert result.raw_json["_json_repaired"] is True
     assert len(llm.calls) == 2
-    assert "Do not reinterpret" in llm.calls[1]["system"]
 
 
-def test_claude_rubric_interpreter_accepts_json_code_fence():
-    question = _question()
-    llm = FakeLLM(
-        '```json\n'
-        '{"status":"accepted","option_id":"A","confidence":0.91,'
-        '"reason":"The answer is yes.","detected_language":"zh"}\n'
-        '```'
-    )
-    interpreter = ClaudeRubricInterpreter(llm)
-
-    result = interpreter.interpret(question=question, transcript="有过")
-
-    assert result.option_id == "A"
-    assert len(llm.calls) == 1
-
-
-def test_claude_rubric_interpreter_extracts_balanced_json_from_text():
-    question = _question()
-    llm = FakeLLM(
-        'Here is the mapping:\n'
-        '{"status":"accepted","option_id":"A","confidence":0.9,'
-        '"reason":"The answer is yes.","detected_language":"zh"}\n'
-        'Done.'
-    )
-    interpreter = ClaudeRubricInterpreter(llm)
-
-    result = interpreter.interpret(question=question, transcript="有")
-
-    assert result.option_id == "A"
-    assert len(llm.calls) == 1
-
-
-def test_claude_rubric_interpreter_handles_trailing_commas():
-    question = _question()
-    llm = FakeLLM(
-        '{"status":"accepted","option_id":"A","confidence":0.88,'
-        '"reason":"The answer is yes.",}'
-    )
-    interpreter = ClaudeRubricInterpreter(llm)
-
-    result = interpreter.interpret(question=question, transcript="有")
-
-    assert result.option_id == "A"
-
-
-def test_claude_rubric_interpreter_normalizes_string_null_option():
-    question = _question()
-    llm = FakeLLM(
-        '{"status":"unclear","option_id":"null","confidence":0.2,'
-        '"reason":"The answer is too ambiguous."}'
-    )
-    interpreter = ClaudeRubricInterpreter(llm)
-
-    result = interpreter.interpret(question=question, transcript="可能吧")
-
-    assert result.option_id is None
-    assert result.raw_json["option_id"] is None
-    assert result.raw_json["status"] == "unclear"
-
-
-def test_claude_rubric_interpreter_returns_unclear_when_repair_fails():
-    question = _question()
-    llm = FakeLLM(["not json", "still not json"])
-    interpreter = ClaudeRubricInterpreter(llm)
-
-    result = interpreter.interpret(question=question, transcript="嗯...有过吧")
-
-    assert result.option_id is None
-    assert result.confidence == 0.0
-    assert result.raw_json["status"] == "unclear"
-    assert "parse_error" in result.raw_json
-    assert "repair_error" in result.raw_json
-
-
-def test_realtime_voice_adapter_placeholder_is_importable():
-    adapter = RealtimeVoiceAdapter()
-
-    assert isinstance(adapter, RealtimeVoiceAdapter)
-
-
-def test_realtime_system_prompt_forbids_autonomous_doubao_decisions():
-    prompt = build_realtime_system_prompt({
-        "assignment": {"food_code": "soup", "food_label": "Soup"},
-    })
-
-    assert "不要自主回答用户问题" in prompt
-    assert "不要决定食物" in prompt
-    assert "ChatTTSText" in prompt
-    assert "food_code" in prompt
-
-
-def test_doubao_config_uses_fixed_gateway_app_key_by_default(monkeypatch):
-    monkeypatch.setenv("HAVE_SOME_AI_DOUBAO_APP_ID", "app-id")
-    monkeypatch.delenv("HAVE_SOME_AI_DOUBAO_APP_KEY", raising=False)
-    monkeypatch.setenv("HAVE_SOME_AI_DOUBAO_ACCESS_TOKEN", "access-token")
-
-    config = DoubaoRealtimeConfig.from_env()
-
-    assert config.app_key == "PlgvMymc7f3tQnJ6"
-
-
-def test_doubao_start_session_requests_pcm_formats():
-    fake_ws = _FakeWebSocket()
-    adapter = DoubaoRealtimeVoiceAdapter(
-        _doubao_config(),
-        connect=_fake_connect(fake_ws),
-    )
-
-    asyncio.run(adapter.start_session(session_id="sess-1", system_prompt="hello"))
-
-    start_session = _sent_payload(fake_ws, DOUBAO_START_SESSION)
-    payload = start_session["payload_msg"]
-    assert start_session["session_id"] == "sess-1"
-    assert payload["dialog"]["system_role"] == "hello"
-    assert "input_mod" not in payload["dialog"]["extra"]
-    assert payload["dialog"]["extra"]["model"] == "1.2.1.1"
-    assert payload["asr"]["audio_info"] == {
-        "format": "pcm_s16le",
-        "sample_rate": 16000,
-        "channel": 1,
+def test_asr_full_client_request_frame_uses_gzip_json_size():
+    payload = {
+        "user": {"uid": "tester"},
+        "audio": {"format": "pcm", "codec": "raw", "rate": 16000, "bits": 16, "channel": 1},
+        "request": {"model_name": "bigmodel", "enable_nonstream": True},
     }
-    assert payload["tts"]["audio_config"] == {
-        "channel": 1,
-        "format": "pcm_s16le",
-        "sample_rate": 24000,
-    }
-    assert payload["tts"]["speaker"] == "zh_female_vv_jupiter_bigtts"
+    frame = encode_full_client_request(payload)
+
+    assert frame[:4] == ASR_FULL_CLIENT_REQUEST_HEADER
+    payload_size = int.from_bytes(frame[4:8], "big")
+    compressed = frame[8:]
+    assert payload_size == len(compressed)
+    assert json.loads(gzip.decompress(compressed).decode("utf-8")) == payload
 
 
-def test_doubao_end_asr_sends_event_400():
-    fake_ws = _FakeWebSocket()
-    adapter = DoubaoRealtimeVoiceAdapter(
-        _doubao_config(),
-        connect=_fake_connect(fake_ws),
-    )
+def test_asr_regular_audio_frame_uses_no_sequence_and_gzip_audio():
+    frame = encode_audio_request(b"pcm")
 
-    asyncio.run(adapter.start_session(session_id="sess-1"))
-    asyncio.run(adapter.end_asr())
-
-    assert DOUBAO_END_ASR in adapter.sent_event_ids
-    end_asr = _sent_payload(fake_ws, DOUBAO_END_ASR)
-    assert end_asr["session_id"] == "sess-1"
-    assert end_asr["payload_msg"] == {}
+    assert frame[:4] == ASR_AUDIO_REQUEST_HEADER
+    payload_size = int.from_bytes(frame[4:8], "big")
+    assert payload_size == len(frame[8:])
+    assert gzip.decompress(frame[8:]) == b"pcm"
 
 
-def test_doubao_audio_append_sends_task_request_200():
-    fake_ws = _FakeWebSocket()
-    adapter = DoubaoRealtimeVoiceAdapter(
-        _doubao_config(),
-        connect=_fake_connect(fake_ws),
-    )
+def test_asr_final_audio_frame_uses_no_sequence_and_last_packet_flag():
+    frame = encode_audio_request(b"", final=True)
 
-    asyncio.run(adapter.start_session(session_id="sess-1"))
-    asyncio.run(adapter.append_audio(b"pcm"))
-
-    assert DOUBAO_TASK_REQUEST in adapter.sent_event_ids
-    audio = _sent_payload(fake_ws, DOUBAO_TASK_REQUEST)
-    assert audio["session_id"] == "sess-1"
-    assert audio["payload_audio"] == base64.b64encode(b"pcm").decode("ascii")
+    assert frame[:4] == ASR_FINAL_AUDIO_REQUEST_HEADER
+    assert gzip.decompress(frame[8:]) == b""
 
 
-def test_doubao_interrupt_sends_client_interrupt_515():
-    fake_ws = _FakeWebSocket()
-    adapter = DoubaoRealtimeVoiceAdapter(
-        _doubao_config(),
-        connect=_fake_connect(fake_ws),
-    )
+def test_asr_response_parser_decodes_sequence_and_gzip_json():
+    body = {"result": {"text": "我", "utterances": []}}
+    frame = _asr_server_json_frame(body, sequence=7)
 
-    asyncio.run(adapter.start_session(session_id="sess-1"))
-    asyncio.run(adapter.interrupt())
+    response = parse_server_response(frame)
 
-    interrupt = _sent_payload(fake_ws, DOUBAO_CLIENT_INTERRUPT)
-    assert interrupt["session_id"] == "sess-1"
-    assert interrupt["payload_msg"] == {}
+    assert response.sequence == 7
+    assert response.payload == body
 
 
-def test_doubao_speak_text_uses_chat_tts_text_500_stream_shape():
-    fake_ws = _FakeWebSocket()
-    adapter = DoubaoRealtimeVoiceAdapter(
-        _doubao_config(),
-        connect=_fake_connect(fake_ws),
-    )
+def test_asr_response_parser_decodes_error_frame():
+    payload = b'{"message":"bad gzip"}'
+    frame = bytes([0x11, 0xF0, 0x10, 0x00])
+    frame += (42000001).to_bytes(4, "big", signed=True)
+    frame += len(payload).to_bytes(4, "big")
+    frame += payload
 
-    asyncio.run(adapter.start_session(session_id="sess-1"))
-    asyncio.run(adapter.speak_text("你好"))
-
-    tts_frames = _sent_payloads(fake_ws, DOUBAO_CHAT_TTS_TEXT)
-    assert len(tts_frames) == 2
-    assert tts_frames[0]["session_id"] == "sess-1"
-    assert tts_frames[0]["payload_msg"] == {
-        "start": True,
-        "content": "你好",
-        "end": False,
-    }
-    assert tts_frames[1]["payload_msg"] == {
-        "start": False,
-        "content": "",
-        "end": True,
-    }
+    with pytest.raises(DoubaoASRProtocolError, match="bad gzip"):
+        parse_server_response(frame, request_id="req-1", log_id="log-1")
 
 
-def test_doubao_say_hello_uses_event_300():
-    fake_ws = _FakeWebSocket()
-    adapter = DoubaoRealtimeVoiceAdapter(
-        _doubao_config(),
-        connect=_fake_connect(fake_ws),
-    )
-
-    asyncio.run(adapter.start_session(session_id="sess-1"))
-    asyncio.run(adapter.say_hello("你好"))
-
-    hello = _sent_payload(fake_ws, DOUBAO_SAY_HELLO)
-    assert hello["session_id"] == "sess-1"
-    assert hello["payload_msg"] == {"content": "你好"}
-
-
-def test_doubao_protocol_decodes_transcript_and_pcm_audio_events():
-    transcript = DoubaoProtocol.decode(DoubaoProtocol.encode_json(
-        451,
-        {
-            "results": [
-                {
-                    "text": "我选 A",
-                    "is_interim": False,
-                },
+def test_asr_transcript_events_handle_result_dict_list_missing_and_dedupe():
+    seen: set[tuple[object, object, str]] = set()
+    dict_payload = {
+        "result": {
+            "text": "partial",
+            "utterances": [
+                {"text": "我选 A", "start_time": 1, "end_time": 2, "definite": True},
+                {"text": "还没定", "start_time": 2, "end_time": 3, "definite": False},
             ],
-        },
-        session_id="sess-1",
-    ))
-    interim = DoubaoProtocol.decode(DoubaoProtocol.encode_json(
-        451,
-        {
-            "results": [
-                {
-                    "text": "我",
-                    "is_interim": True,
-                },
-            ],
-        },
-        session_id="sess-1",
-    ))
-    audio = DoubaoProtocol.decode(DoubaoProtocol.encode_audio(
-        352,
-        b"pcm-bytes",
-        session_id="sess-1",
-    ))
-
-    assert transcript.type == "transcript.final"
-    assert transcript.data["transcript"] == "我选 A"
-    assert interim.type == "transcript.delta"
-    assert interim.data["transcript"] == "我"
-    assert audio.type == "audio.delta"
-    assert audio.data["audio_base64"] == base64.b64encode(b"pcm-bytes").decode("ascii")
-    assert audio.data["audio_format"] == "pcm_s16le"
-    assert audio.data["sample_rate"] == 24000
-
-
-def test_doubao_protocol_keeps_legacy_json_transcript_test_compatibility():
-    transcript = DoubaoProtocol.decode(json.dumps({
-        "event": 451,
-        "payload_msg": {
-            "transcript": "我选 A",
-            "final": True,
-        },
-    }))
-    audio_payload = base64.b64encode(b"pcm-bytes").decode("ascii")
-    audio = DoubaoProtocol.decode(json.dumps({
-        "event": 500,
-        "payload_audio": audio_payload,
-    }))
-
-    assert transcript.type == "transcript.final"
-    assert transcript.data["transcript"] == "我选 A"
-    assert audio.type == "audio.delta"
-    assert audio.data["audio_base64"] == audio_payload
-    assert audio.data["audio_format"] == "pcm_s16le"
-    assert audio.data["sample_rate"] == 24000
-
-
-def test_doubao_protocol_does_not_treat_non_asr_text_as_transcript():
-    event = DoubaoProtocol.decode(DoubaoProtocol.encode_json(
-        150,
-        {"text": "b7c6cad3-d331-4a90-96a5-28eb75e25a8e"},
-        session_id="sess-1",
-    ))
-
-    assert event.type == "state"
-    assert event.data["event"] == 150
-
-
-def test_doubao_protocol_decodes_connection_response_session_id():
-    frame = DoubaoProtocol.decode_frame(DoubaoProtocol.encode_json(
-        DOUBAO_CONNECTION_STARTED,
-        {},
-        session_id="connect-id",
-    ))
-
-    assert frame["event"] == DOUBAO_CONNECTION_STARTED
-    assert frame["session_id"] == "connect-id"
-    assert frame["payload_msg"] == {}
-
-
-def test_doubao_protocol_decodes_error_code_before_payload():
-    payload = b'{"error":"StartSession failed"}'
-    frame_bytes = (
-        bytes([0x11, 0xF0, 0x10, 0x00])
-        + (42000020).to_bytes(4, "big", signed=True)
-        + len(payload).to_bytes(4, "big", signed=True)
-        + payload
-    )
-
-    frame = DoubaoProtocol.decode_frame(frame_bytes)
-    event = DoubaoProtocol.decode(frame_bytes)
-
-    assert frame["message_type"] == 15
-    assert frame["error_code"] == 42000020
-    assert frame["error"] == "StartSession failed"
-    assert event.type == "error"
-    assert "StartSession failed" in event.data["detail"]
-
-
-class _FakeWebSocket:
-    def __init__(self):
-        self.sent: list[bytes] = []
-        self.recv_events: list[bytes] = [
-            DoubaoProtocol.encode_json(
-                DOUBAO_CONNECTION_STARTED,
-                {},
-                session_id="fake-connect-id",
-            ),
-            DoubaoProtocol.encode_json(DOUBAO_SESSION_STARTED, {}, session_id="sess-1"),
+        }
+    }
+    list_payload = {
+        "result": [
+            {
+                "text": "full text",
+                "utterances": [
+                    {"text": "我选 A", "start_time": 1, "end_time": 2, "definite": True},
+                    {"text": "我选 B", "start_time": 3, "end_time": 4, "definite": True},
+                ],
+            }
         ]
+    }
 
-    async def send(self, payload: bytes):
-        self.sent.append(payload)
+    first = transcript_events_from_payload(dict_payload, seen_final_keys=seen)
+    second = transcript_events_from_payload(list_payload, seen_final_keys=seen)
+    missing = transcript_events_from_payload({"status": "ok"}, seen_final_keys=seen)
 
-    async def recv(self):
-        if self.recv_events:
-            return self.recv_events.pop(0)
-        raise RuntimeError("no fake events")
-
-    async def close(self):
-        return None
-
-
-def _fake_connect(fake_ws: _FakeWebSocket):
-    async def connect(_url, _headers):
-        return fake_ws
-
-    return connect
+    assert [event.type for event in first] == ["partial", "final"]
+    assert first[1].text == "我选 A"
+    assert [event.text for event in second if event.type == "final"] == ["我选 B"]
+    assert missing == []
 
 
-def _doubao_config() -> DoubaoRealtimeConfig:
-    return DoubaoRealtimeConfig(
-        app_id="app-id",
-        app_key="app-key",
-        access_token="access-token",
-    )
+def test_asr_config_defaults_to_bigmodel_async_and_duration_resource(monkeypatch):
+    monkeypatch.setenv("DOUBAO_ASR_API_KEY", "asr-key")
+
+    config = DoubaoASRConfig.from_env()
+
+    assert config.endpoint.endswith("/sauc/bigmodel_async")
+    assert config.resource_id == "volc.seedasr.sauc.duration"
+    assert config.enable_nonstream is True
+    assert config.sample_rate == 16000
 
 
-def _sent_payload(fake_ws: _FakeWebSocket, event_id: int) -> dict:
-    for payload in fake_ws.sent:
-        data = DoubaoProtocol.decode_frame(payload)
-        if data["event"] == event_id:
-            return data
-    raise AssertionError(f"event {event_id} was not sent")
+def test_tts_start_connection_frame_shape():
+    frame = encode_event_payload(TTS_START_CONNECTION, {})
+
+    assert frame[:4] == bytes([0x11, 0x14, 0x10, 0x00])
+    assert int.from_bytes(frame[4:8], "big", signed=True) == 1
+    payload_size = int.from_bytes(frame[8:12], "big")
+    assert frame[12:12 + payload_size] == b"{}"
 
 
-def _sent_payloads(fake_ws: _FakeWebSocket, event_id: int) -> list[dict]:
-    return [
-        data
-        for payload in fake_ws.sent
-        if (data := DoubaoProtocol.decode_frame(payload))["event"] == event_id
+def test_tts_start_session_payload_fixes_speaker_and_resource_id():
+    client = DoubaoTTSBidirectionalClient(DoubaoTTSConfig(api_key="tts-key"))
+    payload = client.start_session_payload()
+    frame = encode_event_payload(TTS_START_SESSION, payload, session_id="session-long-id")
+
+    offset = 8
+    session_len = int.from_bytes(frame[offset:offset + 4], "big")
+    offset += 4
+    assert session_len == len("session-long-id".encode("utf-8"))
+    assert DoubaoTTSConfig(api_key="tts-key").resource_id == "seed-tts-2.0"
+    assert payload["req_params"]["speaker"] == "zh_female_yingyujiaoxue_uranus_bigtts"
+    assert payload["req_params"]["audio_params"]["format"] == "pcm"
+    assert payload["req_params"]["audio_params"]["sample_rate"] == 24000
+    assert payload["req_params"]["text"] == ""
+
+
+def test_tts_headers_use_new_console_api_key_auth():
+    client = DoubaoTTSBidirectionalClient(DoubaoTTSConfig(api_key="tenant-api-key"))
+
+    headers = client.headers()
+
+    assert headers["X-Api-Key"] == "tenant-api-key"
+    assert headers["X-Api-Resource-Id"] == "seed-tts-2.0"
+    assert headers["X-Api-Connect-Id"] == client.connect_id
+    assert "X-Api-App-Id" not in headers
+    assert "X-Api-App-Key" not in headers
+    assert "X-Api-Access-Key" not in headers
+
+
+def test_tts_task_request_puts_text_in_req_params():
+    client = DoubaoTTSBidirectionalClient(DoubaoTTSConfig(api_key="tts-key"))
+    payload = client.task_request_payload("你好")
+    frame = encode_event_payload(TTS_TASK_REQUEST, payload, session_id="sess")
+
+    assert int.from_bytes(frame[4:8], "big", signed=True) == 200
+    assert payload["req_params"]["text"] == "你好"
+
+
+def test_tts_finish_and_cancel_session_payloads_are_empty():
+    finish = encode_event_payload(TTS_FINISH_SESSION, {}, session_id="sess")
+    cancel = encode_event_payload(TTS_CANCEL_SESSION, {}, session_id="sess")
+
+    assert int.from_bytes(finish[4:8], "big", signed=True) == 102
+    assert finish[-2:] == b"{}"
+    assert int.from_bytes(cancel[4:8], "big", signed=True) == 101
+    assert cancel[-2:] == b"{}"
+
+
+def test_tts_response_parser_handles_state_and_audio_events():
+    events = [
+        parse_tts_response(_tts_server_json(TTS_CONNECTION_STARTED, {}, connection_id="conn")),
+        parse_tts_response(_tts_server_json(TTS_SESSION_STARTED, {}, session_id="sess")),
+        parse_tts_response(_tts_server_json(TTS_SENTENCE_START, {"text": "你"}, session_id="sess")),
+        parse_tts_response(_tts_server_json(TTS_SENTENCE_END, {"text": "你"}, session_id="sess")),
+        parse_tts_response(_tts_server_audio(TTS_RESPONSE, b"pcm", session_id="sess")),
+        parse_tts_response(_tts_server_json(TTS_SESSION_CANCELED, {}, session_id="sess")),
+        parse_tts_response(_tts_server_json(TTS_SESSION_FINISHED, {"usage": {}}, session_id="sess")),
     ]
+
+    assert [event.event for event in events] == [50, 150, 350, 351, 352, 151, 152]
+    assert events[0].connection_id == "conn"
+    assert events[4].audio == b"pcm"
+
+
+def _asr_server_json_frame(payload: dict, *, sequence: int | None = None) -> bytes:
+    compressed = gzip.compress(json.dumps(payload, ensure_ascii=False).encode("utf-8"))
+    flags = 0b0001 if sequence is not None else 0b0000
+    frame = bytes([0x11, (0x9 << 4) | flags, 0x11, 0x00])
+    if sequence is not None:
+        frame += sequence.to_bytes(4, "big", signed=True)
+    frame += len(compressed).to_bytes(4, "big")
+    frame += compressed
+    return frame
+
+
+def _tts_server_json(
+    event: int,
+    payload: dict,
+    *,
+    connection_id: str | None = None,
+    session_id: str | None = None,
+) -> bytes:
+    payload_bytes = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+    body = event.to_bytes(4, "big", signed=True)
+    identity = connection_id if connection_id is not None else session_id or ""
+    identity_bytes = identity.encode("utf-8")
+    body += len(identity_bytes).to_bytes(4, "big")
+    body += identity_bytes
+    body += len(payload_bytes).to_bytes(4, "big")
+    body += payload_bytes
+    return bytes([0x11, 0x94, 0x10, 0x00]) + body
+
+
+def _tts_server_audio(event: int, payload: bytes, *, session_id: str) -> bytes:
+    session_bytes = session_id.encode("utf-8")
+    body = event.to_bytes(4, "big", signed=True)
+    body += len(session_bytes).to_bytes(4, "big")
+    body += session_bytes
+    body += len(payload).to_bytes(4, "big")
+    body += payload
+    return bytes([0x11, 0xB4, 0x00, 0x00]) + body
 
 
 def _question():

@@ -17,9 +17,10 @@ src/
     ├── repository.py          # 数据库读写
     ├── scoring.py             # 两轴正式答案到四种食物的规则映射
     ├── service.py             # 观众流程应用服务
-    ├── voice.py               # Claude 将语音转写映射到 A/B
+    ├── chat.py                # 店主话术层；闲聊可用 Claude 生成 reply_text，模板兜底
+    ├── voice.py               # Claude 只判断正式 answer_attempt 的 A/B/unclear
     ├── voice_provider.py      # 语音 provider / STT mode 配置
-    ├── voice_realtime.py      # 豆包 realtime dialogue 后端 WebSocket 适配器
+    ├── doubao/                # 豆包 ASR/TTS 二进制 WebSocket 协议与客户端
     └── interfaces/
         ├── api.py             # FastAPI app
         └── static/index.html  # 单文件观众/工作人员界面
@@ -41,13 +42,13 @@ config/have_some_ai/
 
 1. 新建匿名观众，生成 `A001` 形式的 public code
 2. Food Gate 先问“想来点吃的吗？”
-3. `NO_FOOD` 进入普通闲聊，不抽正式题、不分配食物
+3. `NO_FOOD` 进入 `not_eating_chat`，最多闲聊 3 回合后送客并删除 transient participant，不抽正式题、不分配食物
 4. `WANT_FOOD` 后从两个正式模块各随机抽一题
 5. 屏幕显示 A / B / C；C 表示 Other / 其他
-6. AIHubMix/OpenAI-compatible TTS 或豆包 realtime 只读题，答案 accepted 后致谢
-7. 浏览器麦克风采集语音，AIHubMix file STT 或豆包 realtime dialogue 生成 transcript
-8. Claude 只在正式题阶段将 transcript 映射到隐藏 A/B rubric，并保存置信度和理由
-9. 低置信度、无效选项、打岔或 Claude JSON repair 失败时要求回到当前题
+6. AIHubMix/OpenAI-compatible TTS 或豆包 TTS V3 只读 Orchestrator 生成的话术
+7. 浏览器麦克风采集语音，AIHubMix file STT 或豆包 ASR `bigmodel_async` 生成 transcript
+8. 正式题 ASR final 先经过 `FormalTurnRouter`；只有 `answer_attempt` 才进入 Claude A/B/unclear judge
+9. chitchat 由店主话术接住，不进入 Claude judge、不评分、不推进；前 1-2 回合可由 `ShopkeeperReplyService` 调 Claude 生成自由 `reply_text`，失败则模板兜底
 10. 根据两道正式题映射到四种食物：
    - `soup`
    - `salad`
@@ -56,6 +57,42 @@ config/have_some_ai/
 11. 将分配结果写入工作人员队列
 12. 工作人员将队列项更新为 `preparing` 或 `served`
 13. 导出所有 Have Some "Ai" 数据
+
+## 现场主链路
+
+当前现场语音主链路只有一条：
+
+```text
+Browser PCM s16le 16k mono
+  → FastAPI WebSocket /api/v1/participants/{participant_id}/conversation-stream
+  → Doubao ASR 2.0 bigmodel_async
+  → ConversationOrchestrator
+  → [formal answer_attempt: ClaudeRubricJudge → ScoringEngine]
+  → ShopkeeperReplyService（chitchat reply_text 可走 Claude，流程不交给 Claude）
+  → Doubao TTS 2.0 tts/bidirection
+  → Browser PCM s16le 24k mono
+```
+
+豆包在本项目中只负责 ASR 和 TTS，不生成店主回复、不判断 A/B、不推进题目、不打分、不分配食物。旧的端到端 realtime dialogue 主链路已移出运行时代码，不应恢复为 fallback。
+
+兼容端点仍用于调试或非豆包 fallback：
+
+- `/conversation-turn`：文本 transcript 进入同一个 `ConversationOrchestrator`。
+- `/conversation-audio`：AIHubMix/OpenAI-compatible file STT fallback，之后仍进入同一个 `ConversationOrchestrator`。
+- `/voice-answers` / `/questions/{question_id}/voice-audio`：旧式正式答案提交兼容入口，不是现场豆包语音主链路。
+
+## 职责边界
+
+| 组件 | 职责 |
+| --- | --- |
+| `FoodGateRouter` | 只判断 Food Gate 中的想吃、不吃、闲聊、听不懂、取消等入口意图 |
+| `FormalTurnRouter` | 在正式题阶段先判断 transcript 是 answer_attempt、chitchat、unclear_speech、system_command 还是 noise |
+| `ConversationOrchestrator` | 唯一主状态机，维护 Food Gate、not_eating_chat、两道正式题、scoring、farewell、session cleanup |
+| `ShopkeeperReplyService` / ConversationHost | 只根据 Orchestrator 已决定的 context 生成店主话术；闲聊前 1-2 回合可调用 Claude 自由回应，但不改变流程、不写答案、不分配食物 |
+| `ClaudeRubricJudge` | 只在 `FormalTurnRouter` 判为 answer_attempt 后输出 A / B / unclear |
+| `ScoringEngine` | 只接收两道正式题 accepted A/B，输出四种食物之一 |
+
+`chitchat` 不是 `unclear`。闲聊、侧问、评论由店主接住，不进入 Claude judge，不写 `meal_answers`，不触发 `ScoringEngine`。Claude 可以在话术层生成 `reply_text`，但返回值只被当作可听见文本，不能决定 `stage`、`next_action`、题目、A/B 或食物。
 
 ## 运行
 
@@ -68,6 +105,16 @@ python scripts/start_have_some_ai.py
 ```text
 http://127.0.0.1:8010/
 ```
+
+本地语音联调先确认服务真的在跑：
+
+```bash
+lsof -nP -iTCP:8010 -sTCP:LISTEN
+curl -s http://127.0.0.1:8010/health
+curl -s http://127.0.0.1:8010/api/v1/voice-config
+```
+
+如果 8010 未监听，网页不会有声音，麦克风音频也不会进入后端。
 
 默认数据库：
 
@@ -82,32 +129,35 @@ HAVE_SOME_AI_DB_PATH=data/have_some_ai.db
 HAVE_SOME_AI_CONFIG_DIR=config/have_some_ai
 HAVE_SOME_AI_VOICE_API_KEY=your_voice_provider_key_here
 HAVE_SOME_AI_VOICE_BASE_URL=https://your-voice-provider.example/v1
-HAVE_SOME_AI_STT_MODEL=gpt-4o-mini-transcribe
+HAVE_SOME_AI_STT_MODEL=whisper-large-v3
+HAVE_SOME_AI_STT_LANGUAGE=zh
 HAVE_SOME_AI_TTS_MODEL=gpt-4o-mini-tts
 HAVE_SOME_AI_TTS_VOICE=alloy
+HAVE_SOME_AI_RUBRIC_CONFIDENCE_THRESHOLD=0.55
 
-# Doubao realtime dialogue
+# Doubao ASR/TTS split streaming
 HAVE_SOME_AI_VOICE_PROVIDER=doubao
-HAVE_SOME_AI_STT_MODE=realtime_dialogue
-HAVE_SOME_AI_DOUBAO_APP_ID=your_volcengine_app_id_here
-HAVE_SOME_AI_DOUBAO_APP_KEY=PlgvMymc7f3tQnJ6
-HAVE_SOME_AI_DOUBAO_ACCESS_TOKEN=your_volcengine_access_token_here
-HAVE_SOME_AI_DOUBAO_RESOURCE_ID=volc.speech.dialog
-HAVE_SOME_AI_DOUBAO_WS_URL=wss://openspeech.bytedance.com/api/v3/realtime/dialogue
-HAVE_SOME_AI_DOUBAO_MODEL=1.2.1.1
-HAVE_SOME_AI_DOUBAO_SPEAKER=zh_female_vv_jupiter_bigtts
-HAVE_SOME_AI_DOUBAO_BOT_NAME=Have Some Ai
-HAVE_SOME_AI_DOUBAO_SPEAKING_STYLE=用简短、温和、带一点展览店主感的中文或英文回答。
+HAVE_SOME_AI_STT_MODE=asr_tts_stream
+DOUBAO_API_KEY=your_volcengine_api_key_here
+DOUBAO_ASR_ENDPOINT=wss://openspeech.bytedance.com/api/v3/sauc/bigmodel_async
+DOUBAO_ASR_RESOURCE_ID=volc.seedasr.sauc.duration
+DOUBAO_ASR_ENABLE_NONSTREAM=true
+DOUBAO_ASR_RESULT_TYPE=single
+DOUBAO_TTS_ENDPOINT=wss://openspeech.bytedance.com/api/v3/tts/bidirection
+DOUBAO_TTS_RESOURCE_ID=seed-tts-2.0
+DOUBAO_TTS_AUDIO_FORMAT=pcm
+DOUBAO_TTS_SAMPLE_RATE=24000
 ```
 
 ## 当前语音链路状态
 
 - `aihubmix + file`：使用 MediaRecorder 录音并上传真实 MIME，默认 `whisper-large-v3`，适合作为稳定 fallback。
-- `doubao + realtime_dialogue`：浏览器通过本地 `/conversation-realtime` WebSocket 发送 PCM16 16k mono 音频块，后端转发豆包 `TaskRequest=200`；豆包返回 PCM16 24k `TTSResponse=352` 给浏览器播放。
-- 豆包 StartSession 使用 server VAD/default 麦克风模式，不再默认 `push_to_talk`；新建观众开场和主语音按钮进入同一个长连接通话，active capture 时不再按单轮播放自动释放麦克风；手动停止按钮仍会发送 `audio.end`，由后端映射为 `EndASR=400`。
-- 店主开场和独立播报使用 `SayHello=300`；用户说完后的本地回复等待 provider `ASREnded=459` 后再发送 `ChatTTSText=500`。
-- 电话式打断 v1 已接入：播放中前端默认上传静音帧抑制扬声器回声，只有检测到较明显真人说话才恢复真实麦克风流；本地 RMS 不再直接打断播放，收到 `ASRInfo=450` 后前端停止 WebAudio 队列，并通过本地 WebSocket 请求后端发送 `ClientInterrupt=515`。
-- 真实诊断已通过：豆包握手、TTS-only 桥接、interrupt 通道冒烟。仍需现场浏览器麦克风验收 ASR 稳定性、回声门限、真实插话手感和完整答题流程。
+- `doubao + asr_tts_stream`：浏览器通过本地 `/conversation-stream` WebSocket 发送 binary PCM s16le 16k mono 音频块；后端保持一个 ASR `bigmodel_async` session，只消费新增 `utterances[].definite=true` 分句。
+- TTS 使用豆包 V3 双向流式 `/tts/bidirection`，固定音色 `zh_female_yingyujiaoxue_uranus_bigtts`，默认输出 PCM s16le 24k mono。
+- 新版控制台鉴权只使用 `X-Api-Key` 和 `X-Api-Resource-Id`；本项目读取共享 `DOUBAO_API_KEY`，或分别读取 `DOUBAO_ASR_API_KEY` / `DOUBAO_TTS_API_KEY` 作为 `X-Api-Key`。
+- TTS session 串行复用连接：每段 Orchestrator 文本 StartSession → TaskRequest → FinishSession，必须等 `SessionFinished=152` 后才开下一段。
+- 播放 TTS 时启用 half-duplex：后端发送 `mic.muted_for_tts` / `mic.resumed_after_tts`，TTS 期间不把麦克风音频继续上行到 ASR，避免店主声音被识别成用户回答。
+- `barge_in` 会取消当前 TTS session；被取消的播报不算完整播放完成。
 
 ## API
 
@@ -116,16 +166,21 @@ HAVE_SOME_AI_DOUBAO_SPEAKING_STYLE=用简短、温和、带一点展览店主感
 ```text
 GET  /health
 GET  /api/v1/config
+GET  /api/v1/voice-config
 POST /api/v1/participants
 GET  /api/v1/participants
 GET  /api/v1/participants/{id}
 POST /api/v1/participants/{id}/questionnaire/start
+POST /api/v1/participants/{id}/conversation-turn
+POST /api/v1/participants/{id}/conversation-audio
 POST /api/v1/participants/{id}/questions/{question_id}/speech
+POST /api/v1/speech/thanks
 POST /api/v1/participants/{id}/answers
 POST /api/v1/participants/{id}/voice-answers
+POST /api/v1/participants/{id}/questions/{question_id}/voice-audio
 POST /api/v1/participants/{id}/observations
 POST /api/v1/participants/{id}/assign
-WS   /api/v1/participants/{id}/conversation-realtime
+WS   /api/v1/participants/{id}/conversation-stream
 GET  /api/v1/staff-queue
 PATCH /api/v1/staff-queue/{queue_item_id}
 GET  /api/v1/export
@@ -136,7 +191,7 @@ GET  /api/v1/export
 建议按这个顺序继续做：
 
 1. 细化 `questions.yaml` 与 `scoring.yaml`，确定最终分配机制
-2. 用真实豆包 / AIHubMix 凭证做浏览器端到端联调
+2. 用真实豆包 ASR/TTS / AIHubMix 凭证做浏览器端到端联调
 3. 打磨低置信度重新录音机制
 4. 给观众端和工作人员端拆成两个页面
 5. 增加安全/忌口覆盖逻辑，确保发餐前由工作人员确认
@@ -146,7 +201,7 @@ GET  /api/v1/export
 
 ## 设计原则
 
-- 食物分配由规则引擎决定；豆包只负责实时听说与 transcript，Claude 只负责把 transcript 映射到隐藏 A/B rubric，两者都不直接决定食物。
+- 食物分配由规则引擎决定；豆包只负责 ASR 和 TTS；Claude 只用于正式题 A/B/unclear judge 与受限闲聊话术生成，两者都不直接决定食物。
 - 摄像头/动作识别只生成抽象观察事件，不直接决定食物。
 - 安全与忌口必须优先于艺术算法。
 - Have Some "Ai" 与 Stranger 可以共享代码仓库，但不共享状态、记忆、题库、评分和分配结果。

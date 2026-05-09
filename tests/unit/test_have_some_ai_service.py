@@ -180,6 +180,49 @@ def test_voice_answer_accepts_chinese_transcript_and_stores_answer():
     conn.close()
 
 
+def test_voice_answer_accepts_confidence_at_055_threshold():
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    run_migrations(conn)
+
+    configs = load_have_some_ai_config(Path("config/have_some_ai"))
+    bank = QuestionBank(configs["questions"], rng=random.Random(7))
+    repo = MealRepository(conn)
+    service = MealService(
+        repo,
+        bank,
+        ScoringEngine(configs["scoring"], bank),
+        rubric_interpreter=FakeRubricInterpreter([
+            RubricInterpretation(
+                option_id="A",
+                confidence=0.56,
+                reason_zh="回答明确表示 A。",
+                reason_en="The answer clearly maps to A.",
+                detected_language="zh",
+                raw_json={"option_id": "A", "confidence": 0.56},
+            )
+        ]),
+    )
+
+    participant = service.create_participant()
+    draws = service.start_questionnaire(participant.id)
+    result = service.submit_voice_answer(
+        participant.id,
+        question_id=draws[0]["question_id"],
+        transcript="我选 A。",
+        detected_language="zh",
+    )
+
+    answers = repo.get_answers(participant.id)
+
+    assert result["status"] == "accepted"
+    assert result["option_id"] == "A"
+    assert len(answers) == 1
+    assert answers[0].option_id == "A"
+
+    conn.close()
+
+
 def test_voice_answer_low_confidence_is_unclear_without_answer():
     conn = sqlite3.connect(":memory:")
     conn.row_factory = sqlite3.Row
