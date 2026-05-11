@@ -45,6 +45,9 @@ Status values: `in_progress`, `done`
 
 | File | Agent | Status | Started |
 |------|-------|--------|---------|
+| scripts/export_latency_snapshot.py | Codex | done | 2026-05-11 20:22 CST |
+| docs/progress.md | Codex | done | 2026-05-11 20:22 CST |
+| agents/task-registry.md | Codex | done | 2026-05-11 20:22 CST |
 | src/conscious_entity/interfaces/static/dashboard.js | Codex | done | 2026-05-11 20:06 CST |
 | src/conscious_entity/interfaces/static/dashboard.css | Codex | done | 2026-05-11 20:06 CST |
 | src/conscious_entity/interfaces/static/visitor.html | Codex | done | 2026-05-11 20:06 CST |

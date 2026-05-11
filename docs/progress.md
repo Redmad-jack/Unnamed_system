@@ -29,6 +29,16 @@
 
 ## Changelog
 
+### 2026-05-11：Latency snapshot 导出工具
+
+- [x] 确认当前 latency tracker 仍是进程内存态：
+  - `/api/v1/stats/latency` 与 `/api/v1/stats/audio-latency` 可读 summary / recent
+  - API 进程停止后，dashboard 中看到的历史 latency 平均值不可恢复
+- [x] 新增 `scripts/export_latency_snapshot.py`：
+  - 从本地 API 抓取 health、turn latency、audio latency、LLM stats
+  - 输出 JSON 原始快照与 Markdown 汇总到 `data/latency_logs/`
+  - 不写 SQLite，不保存原始音频或对话文本
+
 ### 2026-05-11：语音 Dialog 同步与浏览器播放链路再加固
 
 - [x] 修正主 Dialog reload 后看不到最新语音回合的问题：
