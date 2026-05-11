@@ -135,13 +135,18 @@ async def lifespan(app: Any):
         conn.close()
 
 
-async def _run_dialog_turn(request: Request, text: str):
+async def _run_dialog_turn(request: Request, text: str, *, source: str = "dialog"):
     loop = request.app.state.loop
     if loop is None:
         raise HTTPException(status_code=503, detail="Loop not initialised")
 
     async with request.app.state.loop_lock:
-        output = await asyncio.get_running_loop().run_in_executor(None, loop.run_turn, text)
+        output = await asyncio.get_running_loop().run_in_executor(
+            None,
+            loop.run_turn,
+            text,
+            source,
+        )
 
     manager = getattr(request.app.state, "vision_manager", None)
     if manager is not None:

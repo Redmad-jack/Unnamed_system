@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
+import time
 from collections.abc import AsyncIterator
 from typing import Any
 
@@ -12,6 +13,7 @@ from fastapi.responses import StreamingResponse
 from conscious_entity.audio import AudioManager, AudioRuntimeError
 from conscious_entity.interfaces.api_models import AudioDialogRequest
 from conscious_entity.interfaces.api_runtime import _run_dialog_turn
+from conscious_entity.telemetry.latency import record_audio_latency
 
 
 audio_router = APIRouter(prefix="/api/v1/audio")
@@ -29,14 +31,24 @@ async def audio_dialog(body: AudioDialogRequest, request: Request):
         raise HTTPException(status_code=400, detail="transcript is required")
 
     try:
-        output = await _run_dialog_turn(request, transcript)
+        output = await _run_dialog_turn(request, transcript, source="audio_dialog")
     except HTTPException:
         raise
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc))
 
     manager = _audio_manager(request)
+    start = time.perf_counter()
     stream, should_speak = manager.create_tts_stream(output)
+    record_audio_latency(
+        "audio_dialog.tts_stream_create",
+        (time.perf_counter() - start) * 1000,
+        metadata={
+            "should_speak": should_speak,
+            "has_stream": stream is not None,
+            "audio_session_id": body.audio_session_id,
+        },
+    )
     disabled_reason = manager.config.disabled_reason() if should_speak and stream is None else None
     return {
         "input_text": transcript,

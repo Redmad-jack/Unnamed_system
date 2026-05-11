@@ -623,16 +623,22 @@
     const [llm, setLlm] = useState(null);
     const [embedding, setEmbedding] = useState(null);
     const [stats, setStats] = useState(null);
+    const [latency, setLatency] = useState(null);
+    const [audioLatency, setAudioLatency] = useState(null);
 
     const load = useCallback(async () => {
-      const [llmConfig, embeddingConfig, llmStats] = await Promise.all([
+      const [llmConfig, embeddingConfig, llmStats, latencyStats, audioLatencyStats] = await Promise.all([
         fetchJSON("/api/v1/config/llm").catch(() => null),
         fetchJSON("/api/v1/config/embedding").catch(() => null),
         fetchJSON("/api/v1/stats/llm").catch(() => null),
+        fetchJSON("/api/v1/stats/latency?n=1").catch(() => null),
+        fetchJSON("/api/v1/stats/audio-latency?n=8").catch(() => null),
       ]);
       setLlm(llmConfig);
       setEmbedding(embeddingConfig);
       setStats(llmStats && llmStats.summary);
+      setLatency(latencyStats);
+      setAudioLatency(audioLatencyStats);
     }, []);
 
     useEffect(() => { load(); }, [load]);
@@ -652,6 +658,33 @@
           h("tr", null, h("td", null, "Tokens"), h("td", null, `${stats.total_prompt_tokens} / ${stats.total_completion_tokens}`)),
         )) : h("div", { className: "dim" }, "Loading diagnostics…"),
       ),
+      h(LatencySection, { latency, audioLatency }),
+    );
+  }
+
+  function LatencySection({ latency, audioLatency }) {
+    const latest = latency && latency.recent && latency.recent.length ? latency.recent[latency.recent.length - 1] : null;
+    const turnSummary = latency && latency.summary;
+    const steps = latest && latest.steps ? latest.steps.slice().sort((a, b) => b.duration_ms - a.duration_ms).slice(0, 8) : [];
+    const audioKinds = audioLatency && audioLatency.summary && audioLatency.summary.kinds
+      ? Object.entries(audioLatency.summary.kinds).sort((a, b) => b[1].avg_ms - a[1].avg_ms).slice(0, 6)
+      : [];
+    return h("div", { className: "section" },
+      h("div", { className: "section-title" }, "Latency Breakdown"),
+      latest ? h("table", null, h("tbody", null,
+        h("tr", null, h("td", null, "Last turn"), h("td", null, `${latest.source} · ${latest.total_ms} ms`)),
+        h("tr", null, h("td", null, "Avg turn"), h("td", null, turnSummary ? `${turnSummary.avg_total_ms} ms` : "—")),
+        steps.map((step) => h("tr", { key: `${step.name}-${step.duration_ms}` },
+          h("td", null, step.name),
+          h("td", null, `${step.duration_ms} ms${step.blocking ? "" : " bg"}`),
+        )),
+      )) : h("div", { className: "dim" }, "No turn latency yet."),
+      audioKinds.length ? h("table", null, h("tbody", null,
+        audioKinds.map(([kind, data]) => h("tr", { key: kind },
+          h("td", null, kind),
+          h("td", null, `${data.avg_ms} ms · ${data.count}`),
+        )),
+      )) : h("div", { className: "dim" }, "No audio latency yet."),
     );
   }
 

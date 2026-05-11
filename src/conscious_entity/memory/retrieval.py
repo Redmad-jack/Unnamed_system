@@ -12,6 +12,7 @@ from conscious_entity.memory.managed import MemoryProvider
 from conscious_entity.memory.models import RetrievedMemory
 from conscious_entity.memory.vector import cosine_similarity, decode_embedding
 from conscious_entity.perception.event_types import PerceptionEvent
+from conscious_entity.telemetry.latency import turn_step
 
 logger = logging.getLogger(__name__)
 
@@ -47,9 +48,12 @@ class MemoryRetriever:
         limit: int = 9,
     ) -> list[RetrievedMemory]:
         query_text = (query or "").strip()
-        deterministic = self._deterministic_retrieve(query_text, events or [], limit=limit)
-        semantic = self._semantic_retrieve(query_text, events or [], limit=limit)
-        managed = self._managed_provider.search(query_text, limit=limit, explain=True) if self._managed_provider else []
+        with turn_step("memory_retrieval.deterministic"):
+            deterministic = self._deterministic_retrieve(query_text, events or [], limit=limit)
+        with turn_step("memory_retrieval.semantic"):
+            semantic = self._semantic_retrieve(query_text, events or [], limit=limit)
+        with turn_step("memory_retrieval.managed"):
+            managed = self._managed_provider.search(query_text, limit=limit, explain=True) if self._managed_provider else []
         if managed:
             deterministic = managed + deterministic
         if not semantic:
@@ -83,7 +87,8 @@ class MemoryRetriever:
             return []
 
         try:
-            query_embedding = self._embedding_client.embed(query)
+            with turn_step("embedding.memory_retrieval_query"):
+                query_embedding = self._embedding_client.embed(query)
         except Exception as exc:
             logger.warning("Embedding retrieval unavailable; using deterministic memory retrieval: %s", exc)
             return []

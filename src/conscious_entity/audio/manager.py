@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import uuid
+import time
 from collections.abc import AsyncIterator
 from datetime import timedelta
 from typing import Any
@@ -19,6 +20,7 @@ from conscious_entity.audio.volcengine_protocol import media_type_for_format
 from conscious_entity.audio.volcengine_stt import VolcengineSTTClient
 from conscious_entity.audio.volcengine_tts import VolcengineTTSClient
 from conscious_entity.expression.output_model import ExpressionOutput
+from conscious_entity.telemetry.latency import record_audio_latency
 
 
 class AudioManager:
@@ -148,15 +150,45 @@ class AudioManager:
         self._ensure_enabled("tts_unavailable")
         stream = self.get_tts_stream(stream_id)
         client = self._tts_client or VolcengineTTSClient(self.config)
+        start = time.perf_counter()
+        first_byte_recorded = False
         try:
             async for chunk in client.synthesize_stream(stream.text_segments):
+                if not first_byte_recorded:
+                    first_byte_recorded = True
+                    record_audio_latency(
+                        "tts.first_byte",
+                        (time.perf_counter() - start) * 1000,
+                        metadata={
+                            "stream_id": stream_id,
+                            "segment_count": len(stream.text_segments),
+                            "output_format": stream.output_format,
+                        },
+                    )
                 yield chunk
             stream.consumed = True
             stream.last_logid = getattr(client, "last_logid", None)
             if stream.last_logid:
                 self.last_tts_logid = stream.last_logid
+            record_audio_latency(
+                "tts.complete",
+                (time.perf_counter() - start) * 1000,
+                metadata={
+                    "stream_id": stream_id,
+                    "segment_count": len(stream.text_segments),
+                    "output_format": stream.output_format,
+                    "logid": stream.last_logid,
+                },
+            )
         except AudioRuntimeError as exc:
             self.set_error(exc.code, exc.message, logid=exc.logid)
+            record_audio_latency(
+                "tts.error",
+                (time.perf_counter() - start) * 1000,
+                success=False,
+                error=exc.code,
+                metadata={"stream_id": stream_id, "logid": exc.logid},
+            )
             raise
 
     async def stream_stt_events(
@@ -167,12 +199,44 @@ class AudioManager:
     ) -> AsyncIterator[TranscriptEvent]:
         self._ensure_enabled("stt_unavailable")
         client = self._stt_client or VolcengineSTTClient(self.config)
+        start = time.perf_counter()
+        first_partial_recorded = False
+        final_recorded = False
         try:
             async for event in client.stream_pcm(audio_chunks, session_id=session_id):
                 self.record_transcript_event(event)
+                if event.is_final and not final_recorded:
+                    final_recorded = True
+                    record_audio_latency(
+                        "stt.final",
+                        (time.perf_counter() - start) * 1000,
+                        metadata={
+                            "session_id": session_id,
+                            "text_chars": len(event.text),
+                            "logid": event.logid,
+                        },
+                    )
+                elif not event.is_final and not first_partial_recorded:
+                    first_partial_recorded = True
+                    record_audio_latency(
+                        "stt.first_partial",
+                        (time.perf_counter() - start) * 1000,
+                        metadata={
+                            "session_id": session_id,
+                            "text_chars": len(event.text),
+                            "logid": event.logid,
+                        },
+                    )
                 yield event
         except AudioRuntimeError as exc:
             self.set_error(exc.code, exc.message, logid=exc.logid)
+            record_audio_latency(
+                "stt.error",
+                (time.perf_counter() - start) * 1000,
+                success=False,
+                error=exc.code,
+                metadata={"session_id": session_id, "logid": exc.logid},
+            )
             raise
 
     def media_type(self) -> str:

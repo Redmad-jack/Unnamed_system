@@ -59,6 +59,7 @@ from conscious_entity.llm.stats_tracker import get_tracker
 from conscious_entity.memory.models import MemoryOperationProposal
 from conscious_entity.memory.retrieval import MemoryRetriever
 from conscious_entity.memory.vector import encode_embedding
+from conscious_entity.telemetry.latency import get_latency_tracker
 from conscious_entity.vision import VisionConfigurationError
 
 
@@ -977,4 +978,22 @@ async def stats_llm(n: int = 50):
             }
             for r in recent
         ],
+    }
+
+
+@router.get("/api/v1/stats/latency")
+async def stats_latency(n: int = 20):
+    tracker = get_latency_tracker()
+    return {
+        "summary": tracker.turn_summary(),
+        "recent": [record.to_public_dict() for record in tracker.recent_turns(n)],
+    }
+
+
+@router.get("/api/v1/stats/audio-latency")
+async def stats_audio_latency(n: int = 50):
+    tracker = get_latency_tracker()
+    return {
+        "summary": tracker.audio_summary(),
+        "recent": [record.to_public_dict() for record in tracker.recent_audio(n)],
     }

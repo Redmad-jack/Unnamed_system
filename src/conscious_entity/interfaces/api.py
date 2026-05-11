@@ -80,6 +80,8 @@ from conscious_entity.interfaces.api_routes import (
     sessions_reset,
     state_current,
     state_history,
+    stats_audio_latency,
+    stats_latency,
     stats_llm,
     visitor_surface,
     vision_start,

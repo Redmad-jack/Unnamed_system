@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import uuid
 import asyncio
+import time
 from collections.abc import AsyncIterator
 from typing import Any
 
@@ -13,6 +14,7 @@ from conscious_entity.audio.volcengine_protocol import (
     EVENT_SESSION_STARTED,
     VolcengineProtocol,
 )
+from conscious_entity.telemetry.latency import record_audio_latency
 
 
 class VolcengineTTSClient:
@@ -29,16 +31,32 @@ class VolcengineTTSClient:
             service="tts",
         )
         session_id = uuid.uuid4().hex
+        start = time.perf_counter()
         try:
             async with _connect(websockets, self.config.tts_endpoint, headers) as websocket:
                 self.last_logid = _response_header(websocket, "X-Tt-Logid")
+                record_audio_latency(
+                    "tts.connect",
+                    (time.perf_counter() - start) * 1000,
+                    metadata={"logid": self.last_logid},
+                )
                 await websocket.send(self.protocol.build_tts_start_connection())
                 await self._expect_event(websocket, {EVENT_CONNECTION_STARTED})
+                record_audio_latency(
+                    "tts.connection_ready",
+                    (time.perf_counter() - start) * 1000,
+                    metadata={"logid": self.last_logid},
+                )
 
                 await websocket.send(
                     self.protocol.build_tts_start_session(self.config, session_id=session_id)
                 )
                 await self._expect_event(websocket, {EVENT_SESSION_STARTED})
+                record_audio_latency(
+                    "tts.session_ready",
+                    (time.perf_counter() - start) * 1000,
+                    metadata={"session_id": session_id, "logid": self.last_logid},
+                )
 
                 for segment in text_segments:
                     await websocket.send(
@@ -56,6 +74,12 @@ class VolcengineTTSClient:
         except AudioRuntimeError:
             raise
         except Exception as exc:
+            record_audio_latency(
+                "tts.connect_or_protocol_error",
+                (time.perf_counter() - start) * 1000,
+                success=False,
+                error=exc.__class__.__name__,
+            )
             raise AudioRuntimeError("tts_connect_failed", str(exc)) from exc
 
     async def _receive_audio(self, websocket: Any) -> AsyncIterator[bytes]:

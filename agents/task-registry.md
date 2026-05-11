@@ -45,6 +45,24 @@ Status values: `in_progress`, `done`
 
 | File | Agent | Status | Started |
 |------|-------|--------|---------|
+| src/conscious_entity/telemetry/latency.py | Codex | done | 2026-05-11 18:20 CST |
+| src/conscious_entity/core/loop.py | Codex | done | 2026-05-11 18:20 CST |
+| src/conscious_entity/expression/expression_engine.py | Codex | done | 2026-05-11 18:20 CST |
+| src/conscious_entity/memory/managed.py | Codex | done | 2026-05-11 18:20 CST |
+| src/conscious_entity/memory/retrieval.py | Codex | done | 2026-05-11 18:20 CST |
+| src/conscious_entity/audio/manager.py | Codex | done | 2026-05-11 18:20 CST |
+| src/conscious_entity/audio/volcengine_stt.py | Codex | done | 2026-05-11 18:20 CST |
+| src/conscious_entity/audio/volcengine_tts.py | Codex | done | 2026-05-11 18:20 CST |
+| src/conscious_entity/interfaces/api_runtime.py | Codex | done | 2026-05-11 18:20 CST |
+| src/conscious_entity/interfaces/api_routes.py | Codex | done | 2026-05-11 18:20 CST |
+| src/conscious_entity/interfaces/api_audio.py | Codex | done | 2026-05-11 18:20 CST |
+| src/conscious_entity/interfaces/static/dashboard.js | Codex | done | 2026-05-11 18:20 CST |
+| tests/unit/test_latency_tracker.py | Codex | done | 2026-05-11 18:20 CST |
+| tests/unit/test_api_audio.py | Codex | done | 2026-05-11 18:20 CST |
+| tests/unit/test_api_export.py | Codex | done | 2026-05-11 18:20 CST |
+| docs/BACKEND_STRUCTURE.md | Codex | done | 2026-05-11 18:20 CST |
+| docs/progress.md | Codex | done | 2026-05-11 18:20 CST |
+| agents/task-registry.md | Codex | done | 2026-05-11 18:20 CST |
 | src/conscious_entity/interfaces/static/dashboard.js | Codex | done | 2026-05-11 17:30 CST |
 | docs/progress.md | Codex | done | 2026-05-11 17:30 CST |
 | agents/task-registry.md | Codex | done | 2026-05-11 17:30 CST |

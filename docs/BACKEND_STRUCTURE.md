@@ -298,6 +298,8 @@ CREATE TABLE schema_version (
 | `POST` | `/api/v1/managed-memory/commit` | commit pending proposal 或手动 operation | 本地开发面板，当前无认证 |
 | `GET` | `/api/v1/curation/memories` | 查看可整理记忆 | 本地开发面板，当前无认证 |
 | `GET` | `/api/v1/conversation/export` | 导出当前或指定 session 对话 JSON | 本地开发面板，当前无认证 |
+| `GET` | `/api/v1/stats/latency` | 查看内存态 turn step latency summary 与最近记录，不写入 SQLite | 本地开发面板，当前无认证 |
+| `GET` | `/api/v1/stats/audio-latency` | 查看内存态 STT/TTS latency summary 与最近记录，不保存原始音频 | 本地开发面板，当前无认证 |
 | `GET` | `/api/v1/vision/status` | 查看可选视觉 runtime 状态、依赖、模型路径和最新 detections | 本地开发面板，当前无认证 |
 | `POST` | `/api/v1/vision/start` | 启动 Mac 摄像头和 YOLO worker | 本地开发面板，当前无认证 |
 | `POST` | `/api/v1/vision/stop` | 停止 vision worker 并释放摄像头 | 本地开发面板，当前无认证 |

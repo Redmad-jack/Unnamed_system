@@ -10,6 +10,7 @@ from conscious_entity.memory.models import EpisodicMemory, ReflectiveSummary
 from conscious_entity.memory.reflective_store import ReflectiveStore
 from conscious_entity.reflection.compression_rules import should_reflect
 from conscious_entity.state.state_core import EntityState
+from conscious_entity.telemetry.latency import turn_step
 
 logger = logging.getLogger(__name__)
 
@@ -82,11 +83,15 @@ class ReflectionEngine:
         )
 
         # Reflection uses a single user turn (no conversation history needed).
-        raw_text = self._client.complete(
-            system="",
-            messages=[{"role": "user", "content": user_message}],
-            max_tokens=300,
-        )
+        with turn_step(
+            "reflection.llm",
+            metadata={"event_count": len(source_events), "max_tokens": 300},
+        ):
+            raw_text = self._client.complete(
+                system="",
+                messages=[{"role": "user", "content": user_message}],
+                max_tokens=300,
+            )
 
         if not raw_text:
             logger.error(

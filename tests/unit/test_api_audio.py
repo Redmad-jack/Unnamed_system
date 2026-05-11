@@ -16,8 +16,8 @@ class FakeLoop:
     def __init__(self):
         self.inputs = []
 
-    def run_turn(self, text):
-        self.inputs.append(text)
+    def run_turn(self, text, source="dialog"):
+        self.inputs.append((text, source))
         return ExpressionOutput(
             text="我记得一点。",
             spoken_text=None,
@@ -66,7 +66,7 @@ def test_audio_dialog_reuses_loop_and_creates_tts_stream():
         _request(loop=loop, audio_manager=manager),
     ))
 
-    assert loop.inputs == ["你还记得我吗？"]
+    assert loop.inputs == [("你还记得我吗？", "audio_dialog")]
     assert manager.created is True
     assert result["tts_stream_id"] == "tts_test"
     assert result["should_speak"] is True

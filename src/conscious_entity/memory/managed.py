@@ -14,6 +14,7 @@ from conscious_entity.llm.claude_client import ClaudeClient
 from conscious_entity.llm.embedding_client import EmbeddingClient
 from conscious_entity.memory.models import MemoryOperationProposal, RetrievedMemory
 from conscious_entity.memory.vector import cosine_similarity, decode_embedding, encode_embedding
+from conscious_entity.telemetry.latency import turn_step
 
 logger = logging.getLogger(__name__)
 
@@ -251,7 +252,8 @@ class LocalManagedMemoryProvider:
 
     def preview_influence(self, query: str, context: dict[str, Any] | None = None) -> dict[str, Any]:
         context = context or {}
-        results = self.search(query, context.get("filters") if isinstance(context.get("filters"), dict) else None)
+        with turn_step("managed_memory.search_preview"):
+            results = self.search(query, context.get("filters") if isinstance(context.get("filters"), dict) else None)
         expression_context = [item.to_public_dict() for item in results[:5]]
         policy_influence = {
             "enabled": self._config.policy_influence_enabled,
@@ -380,11 +382,15 @@ class LocalManagedMemoryProvider:
             "context": _json_safe(context),
         }
         try:
-            return self._llm_client.complete(
-                system=system,
-                messages=[{"role": "user", "content": json.dumps(payload, ensure_ascii=False)}],
-                max_tokens=800,
-            )
+            with turn_step(
+                "memory_proposal.llm",
+                metadata={"message_count": len(payload["messages"]), "max_tokens": 800},
+            ):
+                return self._llm_client.complete(
+                    system=system,
+                    messages=[{"role": "user", "content": json.dumps(payload, ensure_ascii=False)}],
+                    max_tokens=800,
+                )
         except Exception as exc:
             logger.warning("managed memory proposal LLM failed: %s", exc)
             return ""
@@ -574,7 +580,8 @@ class LocalManagedMemoryProvider:
         if client is None or not getattr(client, "enabled", False) or not getattr(client, "model", None):
             return None, None
         try:
-            return encode_embedding(client.embed(text)), client.model
+            with turn_step("embedding.managed_memory_write"):
+                return encode_embedding(client.embed(text)), client.model
         except Exception as exc:
             logger.warning("managed memory embedding failed: %s", exc)
             return None, None
@@ -584,7 +591,8 @@ class LocalManagedMemoryProvider:
         if not text or client is None or not getattr(client, "enabled", False):
             return None
         try:
-            return client.embed(text)
+            with turn_step("embedding.managed_memory_query"):
+                return client.embed(text)
         except Exception:
             return None
 

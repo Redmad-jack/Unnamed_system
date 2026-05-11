@@ -11,6 +11,7 @@ from conscious_entity.memory.short_term import ShortTermMemory
 from conscious_entity.policy.constitution import Constitution
 from conscious_entity.policy.policy_types import PolicyAction, PolicyDecision
 from conscious_entity.state.state_core import EntityState
+from conscious_entity.telemetry.latency import turn_step
 
 logger = logging.getLogger(__name__)
 
@@ -131,11 +132,15 @@ class ExpressionEngine:
 
         ctx = self._context_builder.build(state, policy, style, short_term, retrieved_memories)
 
-        completion = self._client.complete_with_metadata(
-            ctx.system_prompt,
-            ctx.messages,
-            ctx.max_tokens,
-        )
+        with turn_step(
+            "expression.llm",
+            metadata={"max_tokens": ctx.max_tokens, "message_count": len(ctx.messages)},
+        ):
+            completion = self._client.complete_with_metadata(
+                ctx.system_prompt,
+                ctx.messages,
+                ctx.max_tokens,
+            )
         raw_text = completion.text
         truncated = completion.stop_reason in _TRUNCATED_STOP_REASONS
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import time
 from collections.abc import AsyncIterator
 from typing import Any
 
@@ -8,6 +9,7 @@ from conscious_entity.audio.config import AudioConfig
 from conscious_entity.audio.types import AudioError, AudioRuntimeError, TranscriptEvent
 from conscious_entity.audio.volcengine_protocol import VolcengineProtocol
 from conscious_entity.audio.volcengine_tts import _connect, _import_websockets
+from conscious_entity.telemetry.latency import record_audio_latency
 
 
 class VolcengineSTTClient:
@@ -28,9 +30,15 @@ class VolcengineSTTClient:
             resource_id=self.config.stt_resource_id,
             service="asr",
         )
+        start = time.perf_counter()
         try:
             async with _connect(websockets, self.config.stt_endpoint, headers) as websocket:
                 self.last_logid = _response_header(websocket, "X-Tt-Logid")
+                record_audio_latency(
+                    "stt.connect",
+                    (time.perf_counter() - start) * 1000,
+                    metadata={"session_id": session_id, "logid": self.last_logid},
+                )
                 await websocket.send(
                     self.protocol.build_stt_start_packet(self.config, session_id=session_id)
                 )
@@ -48,6 +56,13 @@ class VolcengineSTTClient:
         except AudioRuntimeError:
             raise
         except Exception as exc:
+            record_audio_latency(
+                "stt.connect_or_protocol_error",
+                (time.perf_counter() - start) * 1000,
+                success=False,
+                error=exc.__class__.__name__,
+                metadata={"session_id": session_id, "logid": self.last_logid},
+            )
             raise AudioRuntimeError("stt_connect_failed", str(exc)) from exc
 
     async def _drain_available(

@@ -28,6 +28,29 @@
 
 ## Changelog
 
+### 2026-05-11：Turn / Audio latency 观测层
+
+- [x] 新增内存态 latency tracker，不写入 SQLite，不改变对话执行顺序：
+  - turn step breakdown：perception、state、managed memory preview、policy、memory retrieval、expression、memory proposal、reflection、embedding、日志写入
+  - audio breakdown：STT connect / first partial / final、TTS connect / session ready / first byte / complete、audio dialog TTS stream 创建
+- [x] 新增只读统计端点：
+  - `GET /api/v1/stats/latency`
+  - `GET /api/v1/stats/audio-latency`
+- [x] 开发者面板 Runtime 区显示最近 turn latency 与 audio latency 摘要
+- [x] 当前确认：
+  - state update 仍是规则驱动，不存在单独“状态层 LLM”
+  - LLM 同步调用点为 expression、managed memory proposal、达到阈值时的 reflection
+  - 本地 8000 旧进程尚未加载新端点；进程内 fake LLM smoke 已确认 step breakdown 正常生成
+- [x] 验证：
+  - `python3 -m py_compile src/conscious_entity/telemetry/*.py src/conscious_entity/core/loop.py src/conscious_entity/expression/expression_engine.py src/conscious_entity/reflection/reflection_engine.py src/conscious_entity/memory/managed.py src/conscious_entity/memory/retrieval.py src/conscious_entity/audio/manager.py src/conscious_entity/audio/volcengine_stt.py src/conscious_entity/audio/volcengine_tts.py src/conscious_entity/interfaces/api_runtime.py src/conscious_entity/interfaces/api_routes.py src/conscious_entity/interfaces/api_audio.py src/conscious_entity/interfaces/api.py`
+  - `node --check src/conscious_entity/interfaces/static/dashboard.js`
+  - `PYTHONPATH=src python3 -m pytest -p no:debugging tests/unit/test_latency_tracker.py tests/unit/test_api_audio.py tests/unit/test_audio_manager.py tests/unit/test_expression_engine.py tests/unit/test_api_export.py`
+  - `29 passed`
+  - `PYTHONPATH=src python3 -m pytest -p no:debugging tests/unit/test_volcengine_audio.py tests/unit/test_memory_retrieval.py tests/unit/test_managed_memory.py tests/integration/test_full_loop.py`
+  - `53 passed`
+  - `PYTHONPATH=src python3 -m pytest -p no:debugging`
+  - `329 passed`
+
 ### 2026-05-11：开发者面板语音交互模式
 
 - [x] 将 Audio Adapter 开发者工作流从“STT 转文字后手动 Send Final”升级为语音交互模式：

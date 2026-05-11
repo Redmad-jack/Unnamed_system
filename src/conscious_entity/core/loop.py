@@ -33,6 +33,12 @@ from conscious_entity.reflection.reflection_engine import ReflectionEngine
 from conscious_entity.state.state_core import EntityState
 from conscious_entity.state.state_engine import StateEngine
 from conscious_entity.state.state_store import StateStore
+from conscious_entity.telemetry.latency import (
+    TurnLatencyRecorder,
+    activate_turn_recorder,
+    get_latency_tracker,
+    turn_step,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -150,127 +156,160 @@ class InteractionLoop:
         """Expose current state for CLI display and debug tools."""
         return self._current_state or self._initial_state
 
-    def run_turn(self, raw_input: str) -> ExpressionOutput:
+    def run_turn(self, raw_input: str, source: str = "dialog") -> ExpressionOutput:
         """Run one user input through the managed-memory-aware turn pipeline."""
-
-        # Parse input into perception events.
-        state = self._current_state or self._initial_state
-        events = self._text_parser.parse(raw_input, state, self._short_term)
-
-        # Add user turn to short-term memory (before policy so repetition detection is accurate).
-        self._short_term.add(ShortTermEntry(
-            role="user",
-            content=raw_input,
-            timestamp=datetime.now(timezone.utc),
-            event_type=events[0].event_type if events else None,
-        ))
-
-        # Apply events and per-turn decay before memory influence is previewed.
-        new_state = state
-        for event in events:
-            new_state = self._state_engine.apply_event(new_state, event)
-        new_state = self._state_engine.apply_decay(new_state, _DECAY_SECONDS_PER_TURN)
-
-        memory_influence = self._managed_memory.preview_influence(
-            raw_input,
-            context={
-                "events": [event.event_type.value for event in events],
-                "state": new_state.to_dict(),
-                "filters": {"session_type": self._session_type()},
+        recorder = TurnLatencyRecorder(
+            source=source,
+            metadata={
+                "session_id": self._session_id,
+                "input_chars": len(raw_input),
             },
         )
-        new_state = _apply_memory_state_influence(new_state, memory_influence)
+        success = False
+        error: str | None = None
+        with activate_turn_recorder(recorder):
+            try:
+                # Parse input into perception events.
+                state = self._current_state or self._initial_state
+                with recorder.step("perception.parse"):
+                    events = self._text_parser.parse(raw_input, state, self._short_term)
 
-        # Save the state that will drive this turn's policy and expression.
-        trigger_types = ",".join(e.event_type.value for e in events)
-        snapshot_id = self._state_store.save_snapshot(
-            new_state,
-            trigger_event_type=trigger_types or None,
-        )
-        self._current_state = new_state
+                # Add user turn to short-term memory before policy so repetition detection is accurate.
+                with recorder.step("short_term.add_user"):
+                    self._short_term.add(ShortTermEntry(
+                        role="user",
+                        content=raw_input,
+                        timestamp=datetime.now(timezone.utc),
+                        event_type=events[0].event_type if events else None,
+                    ))
 
-        # Store significant events in episodic memory.
-        for event in events:
-            if event.salience >= self._significant_salience:
-                content = _event_summary(event)
-                mem = EpisodicMemory(
-                    session_id=self._session_id,
-                    event_type=event.event_type.value,
-                    content=content,
-                    raw_text=event.raw_text,
-                    salience=event.salience,
-                    state_snapshot_id=snapshot_id,
-                    metadata=event.metadata,
+                # Apply events and per-turn decay before memory influence is previewed.
+                with recorder.step("state.apply_events_and_decay"):
+                    new_state = state
+                    for event in events:
+                        new_state = self._state_engine.apply_event(new_state, event)
+                    new_state = self._state_engine.apply_decay(new_state, _DECAY_SECONDS_PER_TURN)
+
+                with recorder.step("managed_memory.preview_influence"):
+                    memory_influence = self._managed_memory.preview_influence(
+                        raw_input,
+                        context={
+                            "events": [event.event_type.value for event in events],
+                            "state": new_state.to_dict(),
+                            "filters": {"session_type": self._session_type()},
+                        },
+                    )
+                    new_state = _apply_memory_state_influence(new_state, memory_influence)
+
+                # Save the state that will drive this turn's policy and expression.
+                trigger_types = ",".join(e.event_type.value for e in events)
+                with recorder.step("state.save_snapshot"):
+                    snapshot_id = self._state_store.save_snapshot(
+                        new_state,
+                        trigger_event_type=trigger_types or None,
+                    )
+                    self._current_state = new_state
+
+                # Store significant events in episodic memory.
+                with recorder.step("episodic_memory.store_significant"):
+                    for event in events:
+                        if event.salience >= self._significant_salience:
+                            content = _event_summary(event)
+                            mem = EpisodicMemory(
+                                session_id=self._session_id,
+                                event_type=event.event_type.value,
+                                content=content,
+                                raw_text=event.raw_text,
+                                salience=event.salience,
+                                state_snapshot_id=snapshot_id,
+                                metadata=event.metadata,
+                            )
+                            try:
+                                memory_id = self._episodic_store.store(mem)
+                                self._store_episodic_embedding(memory_id, content)
+                            except Exception as exc:
+                                logger.error("Failed to store episodic memory: %s", exc)
+
+                # Select policy, then apply bounded managed-memory policy influence.
+                with recorder.step("policy.select"):
+                    decision = self._select_policy_with_managed_memory_influence(
+                        new_state, events, memory_influence
+                    )
+
+                # Retrieve memory when policy or managed memory asks for it.
+                with recorder.step("memory.retrieve_for_decision"):
+                    decision, retrieved_memories = self._retrieve_memories_for_decision(
+                        decision, raw_input, events, memory_influence
+                    )
+
+                # Generate expression.
+                with recorder.step("expression.generate"):
+                    output = self._expression_engine.generate(
+                        policy=decision,
+                        state=new_state,
+                        short_term=self._short_term,
+                        retrieved_memories=retrieved_memories,
+                    )
+
+                # Add entity turn to short-term memory.
+                with recorder.step("short_term.add_entity"):
+                    self._short_term.add(ShortTermEntry(
+                        role="entity",
+                        content=output.text,
+                        timestamp=datetime.now(timezone.utc),
+                    ))
+
+                # Log interaction and managed memory influence.
+                with recorder.step("interaction_log.write"):
+                    turn_id = self._log_interaction(
+                        role="user",
+                        raw_text=raw_input,
+                        events=events,
+                        decision=decision,
+                        output=output,
+                        snapshot_id=snapshot_id,
+                    )
+                with recorder.step("managed_memory.log_influence"):
+                    self._managed_memory.log_influence(
+                        turn_id=turn_id,
+                        query=raw_input,
+                        influence=memory_influence,
+                        state_snapshot_id=snapshot_id,
+                        policy_action=decision.action.value,
+                    )
+
+                with recorder.step("managed_memory.propose_and_commit"):
+                    self._propose_and_commit_managed_memory(turn_id, events, decision)
+
+                # Maybe trigger reflection.
+                with recorder.step("reflection.maybe_reflect"):
+                    try:
+                        summary = self._reflection_engine.maybe_reflect(
+                            new_state, self._episodic_store, self._reflective_store
+                        )
+                        if summary is not None and summary.id is not None:
+                            self._store_reflective_embedding(summary.id, summary.content)
+                    except Exception as exc:
+                        logger.error("Reflection failed: %s", exc)
+
+                # Emit to event bus for optional instrumentation.
+                with recorder.step("event_bus.emit_turn_complete"):
+                    self._event_bus.emit(
+                        "turn_complete",
+                        state=new_state,
+                        decision=decision,
+                        output=output,
+                    )
+
+                success = True
+                return output
+            except Exception as exc:
+                error = str(exc)
+                raise
+            finally:
+                get_latency_tracker().record_turn(
+                    recorder.finish(success=success, error=error)
                 )
-                try:
-                    memory_id = self._episodic_store.store(mem)
-                    self._store_episodic_embedding(memory_id, content)
-                except Exception as exc:
-                    logger.error("Failed to store episodic memory: %s", exc)
-
-        # Select policy, then apply bounded managed-memory policy influence.
-        decision = self._select_policy_with_managed_memory_influence(
-            new_state, events, memory_influence
-        )
-
-        # Retrieve memory when policy or managed memory asks for it.
-        decision, retrieved_memories = self._retrieve_memories_for_decision(
-            decision, raw_input, events, memory_influence
-        )
-
-        # Generate expression.
-        output = self._expression_engine.generate(
-            policy=decision,
-            state=new_state,
-            short_term=self._short_term,
-            retrieved_memories=retrieved_memories,
-        )
-
-        # Add entity turn to short-term memory.
-        self._short_term.add(ShortTermEntry(
-            role="entity",
-            content=output.text,
-            timestamp=datetime.now(timezone.utc),
-        ))
-
-        # Log interaction and managed memory influence.
-        turn_id = self._log_interaction(
-            role="user",
-            raw_text=raw_input,
-            events=events,
-            decision=decision,
-            output=output,
-            snapshot_id=snapshot_id,
-        )
-        self._managed_memory.log_influence(
-            turn_id=turn_id,
-            query=raw_input,
-            influence=memory_influence,
-            state_snapshot_id=snapshot_id,
-            policy_action=decision.action.value,
-        )
-
-        self._propose_and_commit_managed_memory(turn_id, events, decision)
-
-        # Maybe trigger reflection.
-        try:
-            summary = self._reflection_engine.maybe_reflect(
-                new_state, self._episodic_store, self._reflective_store
-            )
-            if summary is not None and summary.id is not None:
-                self._store_reflective_embedding(summary.id, summary.content)
-        except Exception as exc:
-            logger.error("Reflection failed: %s", exc)
-
-        # Emit to event bus for optional instrumentation
-        self._event_bus.emit(
-            "turn_complete",
-            state=new_state,
-            decision=decision,
-            output=output,
-        )
-
-        return output
 
     def handle_system_event(
         self, event_type: EventType
@@ -381,7 +420,8 @@ class InteractionLoop:
             )
             if proposals and self._managed_memory.auto_commit:
                 proposal_ids = [proposal.id for proposal in proposals if proposal.id is not None]
-                self._managed_memory.commit(proposal_ids=proposal_ids)
+                with turn_step("managed_memory.commit"):
+                    self._managed_memory.commit(proposal_ids=proposal_ids)
         except Exception as exc:
             logger.error("Managed memory proposal/commit failed: %s", exc)
 
@@ -457,7 +497,8 @@ class InteractionLoop:
         if not model:
             return
         try:
-            embedding = encode_embedding(self._embedding_client.embed(text))
+            with turn_step("embedding.episodic_store"):
+                embedding = encode_embedding(self._embedding_client.embed(text))
             self._episodic_store.update_embedding(memory_id, embedding, model)
         except Exception as exc:
             logger.warning("Failed to attach episodic embedding; continuing without it: %s", exc)
@@ -469,7 +510,8 @@ class InteractionLoop:
         if not model:
             return
         try:
-            embedding = encode_embedding(self._embedding_client.embed(text))
+            with turn_step("embedding.reflective_store"):
+                embedding = encode_embedding(self._embedding_client.embed(text))
             self._reflective_store.update_embedding(summary_id, embedding, model)
         except Exception as exc:
             logger.warning("Failed to attach reflective embedding; continuing without it: %s", exc)
