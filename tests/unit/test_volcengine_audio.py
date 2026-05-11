@@ -8,6 +8,7 @@ import struct
 import conscious_entity.audio.volcengine_tts as tts_module
 from conscious_entity.audio.config import AudioConfig
 from conscious_entity.audio.types import AudioError, TranscriptEvent
+from conscious_entity.audio.volcengine_stt import VolcengineSTTClient
 from conscious_entity.audio.volcengine_tts import VolcengineTTSClient
 from conscious_entity.audio.volcengine_protocol import (
     COMPRESSION_GZIP,
@@ -219,6 +220,15 @@ def test_tts_client_runs_bidirectional_session(monkeypatch):
     assert struct.unpack(">i", fake.sent[4][4:8])[0] == EVENT_FINISH_SESSION
 
 
+def test_stt_client_ignores_normal_server_close_after_final_packet():
+    client = VolcengineSTTClient(AudioConfig(api_key="key", tts_voice_type="voice"))
+    fake = _ClosingWebSocket()
+
+    events = asyncio.run(_collect(client._drain_until_timeout(fake, session_id="aud")))
+
+    assert events == []
+
+
 def test_media_type_for_format():
     assert media_type_for_format("mp3") == "audio/mpeg"
     assert media_type_for_format("ogg_opus") == "audio/ogg"
@@ -317,3 +327,12 @@ class _FakeWebSocket:
 
     async def recv(self):
         return self.responses.pop(0)
+
+
+class ConnectionClosedOK(Exception):
+    pass
+
+
+class _ClosingWebSocket:
+    async def recv(self):
+        raise ConnectionClosedOK("received 1000 OK")

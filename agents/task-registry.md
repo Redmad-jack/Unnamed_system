@@ -45,6 +45,11 @@ Status values: `in_progress`, `done`
 
 | File | Agent | Status | Started |
 |------|-------|--------|---------|
+| .env | Codex | done | 2026-05-11 17:15 CST |
+| src/conscious_entity/audio/volcengine_stt.py | Codex | done | 2026-05-11 17:15 CST |
+| tests/unit/test_volcengine_audio.py | Codex | done | 2026-05-11 17:15 CST |
+| docs/progress.md | Codex | done | 2026-05-11 17:15 CST |
+| agents/task-registry.md | Codex | done | 2026-05-11 17:15 CST |
 | src/conscious_entity/audio/config.py | Codex | done | 2026-05-11 16:38 CST |
 | src/conscious_entity/audio/types.py | Codex | done | 2026-05-11 16:38 CST |
 | src/conscious_entity/audio/volcengine_protocol.py | Codex | done | 2026-05-11 16:38 CST |

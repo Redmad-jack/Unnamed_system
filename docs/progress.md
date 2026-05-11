@@ -9,7 +9,7 @@
 - 当前进行中：无
 - 当前可运行形态：CLI + 本地 FastAPI 开发者 API + Web 看板 + 可选 Vision 面板 + 可选 Audio Adapter + `/visitor` 临时身体表面；观众侧最终呈现方向是身体，不是传统 UI
 - 当前核心能力：Stranger 文本协议、状态机、短期/情节/反思记忆、可解释/可选 embedding 召回、Memory Preview、managed memory proposal → commit、influence log / curation、可选 YOLO person presence detection、可选火山 ASR 2.0 / TTS 2.0 双向流式 Audio Adapter
-- 当前验证基线：`PYTHONPATH=src python3 -m pytest -p no:debugging`，最近一次结果为 `325 passed`
+- 当前验证基线：`PYTHONPATH=src python3 -m pytest -p no:debugging`，最近一次结果为 `326 passed`
 - 当前注意事项：`AGENTS.md` 与 `CLAUDE.md` 有用户侧未提交差异；除非明确要求，不应在常规任务中触碰
 
 ---
@@ -27,6 +27,23 @@
 ---
 
 ## Changelog
+
+### 2026-05-11：火山 Audio Adapter 真实闭环烟测
+
+- [x] 使用本地 `.env` 中的新版控制台 API Key 与 TTS 2.0 音色完成真实网络烟测：
+  - TTS 2.0 bidirection 成功合成 PCM 音频，返回 logid
+  - ASR 2.0 `bigmodel_async` 成功识别 TTS 生成的测试音频，partial / final 均返回 logid
+  - final transcript：`你好，陌生人。`
+- [x] 当前账号的 ASR 2.0 可用资源为小时版：
+  - `volc.seedasr.sauc.concurrent` 返回 `quota exceeded for types: concurrency`
+  - 本地 `.env` 已改为 `volc.seedasr.sauc.duration`
+- [x] 修复 STT client：火山服务端在 final packet 后以 WebSocket `1000 OK` 正常关闭时，不再被误报为 `stt_connect_failed`
+- [x] 验证：
+  - `PYTHONPATH=src python3 -m py_compile src/conscious_entity/audio/*.py`
+  - `PYTHONPATH=src python3 -m pytest -p no:debugging tests/unit/test_volcengine_audio.py tests/unit/test_audio_config.py tests/unit/test_audio_manager.py tests/unit/test_api_audio.py`
+  - `28 passed`
+  - `PYTHONPATH=src python3 -m pytest -p no:debugging`
+  - `326 passed`
 
 ### 2026-05-11：火山 ASR 2.0 / TTS 2.0 双向流式协议升级
 

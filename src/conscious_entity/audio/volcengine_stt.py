@@ -61,6 +61,10 @@ class VolcengineSTTClient:
                 message = await asyncio.wait_for(websocket.recv(), timeout=0.01)
             except asyncio.TimeoutError:
                 return
+            except Exception as exc:
+                if _is_normal_websocket_close(exc):
+                    return
+                raise
             event = self.protocol.parse_stt_response(message, session_id=session_id)
             yielded = self._event_or_raise(event)
             if yielded is not None:
@@ -77,6 +81,10 @@ class VolcengineSTTClient:
                 message = await asyncio.wait_for(websocket.recv(), timeout=2.0)
             except asyncio.TimeoutError:
                 return
+            except Exception as exc:
+                if _is_normal_websocket_close(exc):
+                    return
+                raise
             event = self.protocol.parse_stt_response(message, session_id=session_id)
             yielded = self._event_or_raise(event)
             if yielded is not None:
@@ -126,3 +134,7 @@ def _headers_get(headers: Any, name: str) -> str | None:
         if value:
             return str(value)
     return None
+
+
+def _is_normal_websocket_close(exc: Exception) -> bool:
+    return exc.__class__.__name__ == "ConnectionClosedOK"
