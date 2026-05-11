@@ -76,6 +76,11 @@
 - 原因：否则一个访客说过的事实会在另一个访客处泄漏，或者像“K 是谁”这类旧会话事实在新 session 中无法稳定召回
 - 如何应用：session 可为空 visitor；一旦设置 `visitor_id`，interaction / episodic / reflective / managed memory 路径都要记录该 scope，检索时优先同一 visitor 的旧 session
 
+**L18：SQLite 旧库迁移不能在 ALTER 前创建新列索引**
+- 规则：`SCHEMA_SQL` 可以描述新库表结构，但涉及新增列的索引必须放在 ensure/migration 阶段，等旧表 `ALTER TABLE ADD COLUMN` 后再创建
+- 原因：`CREATE TABLE IF NOT EXISTS` 不会更新旧表结构，若随后直接 `CREATE INDEX ... (new_column)`，旧库会在启动时失败
+- 如何应用：新增持久化列时必须添加旧库回归测试，覆盖“已有表缺少新列”的迁移路径
+
 **L07：不要跳过 `clamp_all()`**
 - 规则：每次状态更新调用链末尾必须调用 `clamp_all()`
 - 原因：连续事件的累积增量可能使状态值越出 `[0.0, 1.0]`

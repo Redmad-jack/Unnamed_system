@@ -9,7 +9,7 @@
 - 当前进行中：无
 - 当前可运行形态：CLI + 本地 FastAPI 开发者 API + Web 看板 + 可选 Vision 面板 + 可选 Audio Adapter + `/visitor` 临时身体表面；观众侧最终呈现方向是身体，不是传统 UI
 - 当前核心能力：Stranger 文本协议、状态机、短期/情节/反思记忆、匿名 visitor profile 与跨 session visitor 记忆召回、可解释/可选 embedding 召回、Memory Preview、managed memory proposal → commit、influence log / curation、Runtime Harness Trace、可选 YOLO person presence detection、可选火山 ASR 2.0 / TTS 2.0 双向流式 Audio Adapter
-- 当前验证基线：`PYTHONPATH=src python3 -m pytest -p no:debugging`，最近一次完整结果为 `354 passed`
+- 当前验证基线：`PYTHONPATH=src python3 -m pytest -p no:debugging`，最近一次完整结果为 `355 passed`
 - 当前注意事项：`AGENTS.md` 与 `CLAUDE.md` 有用户侧未提交差异；除非明确要求，不应在常规任务中触碰
 
 ---
@@ -28,6 +28,24 @@
 ---
 
 ## Changelog
+
+### 2026-05-12：Visitor migration 启动错误与 STT close race 修复
+
+- [x] 修复旧 SQLite 库启动时报 `sqlite3.OperationalError: no such column: visitor_id`：
+  - 新增列相关索引不再由 `SCHEMA_SQL` 在旧表 ALTER 前创建
+  - `run_migrations()` 先补齐 visitor columns，再创建 visitor indexes
+  - 增加旧库迁移回归测试
+- [x] 修复 STT WebSocket 已关闭后仍 `send_json` 导致 ASGI exception：
+  - 对 `websocket.send after websocket.close / response completed` 作为关闭竞态处理
+  - 不再把前端断开升级成后端错误日志
+- [x] 验证：
+  - `python3 -m py_compile src/conscious_entity/db/migrations.py src/conscious_entity/interfaces/api_audio.py`
+  - `PYTHONPATH=src python3 -m pytest -p no:debugging tests/unit/test_db_connection.py tests/unit/test_api_audio.py`
+  - `6 passed`
+  - `PYTHONPATH=src python3 -c "... run_migrations(_db_path()) ..."`
+  - `migration_ok data/memory.db`
+  - `PYTHONPATH=src python3 -m pytest -p no:debugging`
+  - `355 passed`
 
 ### 2026-05-12：匿名 Visitor Identity 与跨 session 记忆连续性
 

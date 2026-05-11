@@ -84,8 +84,6 @@ CREATE TABLE IF NOT EXISTS interaction_log (
 
 CREATE INDEX IF NOT EXISTS idx_log_session
     ON interaction_log(session_id, turn_at DESC);
-CREATE INDEX IF NOT EXISTS idx_log_visitor
-    ON interaction_log(visitor_id, turn_at DESC);
 
 CREATE TABLE IF NOT EXISTS episodic_memories (
     id                INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -110,8 +108,6 @@ CREATE TABLE IF NOT EXISTS episodic_memories (
 
 CREATE INDEX IF NOT EXISTS idx_episodic_session
     ON episodic_memories(session_id, created_at DESC);
-CREATE INDEX IF NOT EXISTS idx_episodic_visitor
-    ON episodic_memories(visitor_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_episodic_reflected
     ON episodic_memories(reflected, created_at);
 
@@ -134,8 +130,6 @@ CREATE TABLE IF NOT EXISTS reflective_summaries (
 
 CREATE INDEX IF NOT EXISTS idx_reflective_session
     ON reflective_summaries(session_id, created_at DESC);
-CREATE INDEX IF NOT EXISTS idx_reflective_visitor
-    ON reflective_summaries(visitor_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_reflective_active
     ON reflective_summaries(active, created_at DESC);
 
@@ -172,8 +166,6 @@ CREATE TABLE IF NOT EXISTS managed_memories (
 
 CREATE INDEX IF NOT EXISTS idx_managed_session_status
     ON managed_memories(session_id, status, updated_at DESC);
-CREATE INDEX IF NOT EXISTS idx_managed_visitor_status
-    ON managed_memories(visitor_id, status, updated_at DESC);
 CREATE INDEX IF NOT EXISTS idx_managed_session_type_status
     ON managed_memories(session_type, status, updated_at DESC);
 
@@ -192,8 +184,6 @@ CREATE TABLE IF NOT EXISTS memory_operation_proposals (
 
 CREATE INDEX IF NOT EXISTS idx_memory_proposals_session_status
     ON memory_operation_proposals(session_id, status, created_at DESC);
-CREATE INDEX IF NOT EXISTS idx_memory_proposals_visitor_status
-    ON memory_operation_proposals(visitor_id, status, created_at DESC);
 
 CREATE TABLE IF NOT EXISTS memory_operation_log (
     id                    INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -227,8 +217,6 @@ CREATE TABLE IF NOT EXISTS memory_influence_log (
 
 CREATE INDEX IF NOT EXISTS idx_memory_influence_session
     ON memory_influence_log(session_id, influenced_at DESC);
-CREATE INDEX IF NOT EXISTS idx_memory_influence_visitor
-    ON memory_influence_log(visitor_id, influenced_at DESC);
 
 INSERT OR IGNORE INTO schema_version(version) VALUES (1);
 """

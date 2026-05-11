@@ -167,7 +167,14 @@ async def audio_stt_stream(websocket: WebSocket):
         )
         if producer in done:
             producer.result()
-            await consumer
+            try:
+                await consumer
+            except WebSocketDisconnect:
+                return
+            except RuntimeError as exc:
+                if _is_websocket_send_after_close(exc):
+                    return
+                raise
         else:
             consumer.result()
             producer.cancel()
@@ -228,7 +235,14 @@ async def _send_transcript_events(
     session_id: str,
 ) -> None:
     async for event in manager.stream_stt_events(_audio_chunks(audio_queue), session_id=session_id):
-        await websocket.send_json(event.to_public_dict())
+        try:
+            await websocket.send_json(event.to_public_dict())
+        except WebSocketDisconnect:
+            return
+        except RuntimeError as exc:
+            if _is_websocket_send_after_close(exc):
+                return
+            raise
 
 
 async def _audio_chunks(audio_queue: asyncio.Queue[bytes | None]) -> AsyncIterator[bytes]:
@@ -254,6 +268,13 @@ def _parse_json(text: str) -> dict[str, Any]:
     except json.JSONDecodeError:
         return {}
     return value if isinstance(value, dict) else {}
+
+
+def _is_websocket_send_after_close(exc: RuntimeError) -> bool:
+    message = str(exc)
+    return "websocket.send" in message and (
+        "websocket.close" in message or "response already completed" in message
+    )
 
 
 def _audio_manager(request_or_websocket: Request | WebSocket) -> AudioManager:

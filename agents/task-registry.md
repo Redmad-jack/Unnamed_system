@@ -45,6 +45,12 @@ Status values: `in_progress`, `done`
 
 | File | Agent | Status | Started |
 |------|-------|--------|---------|
+| src/conscious_entity/db/migrations.py | Codex | done | 2026-05-12 06:50 CST |
+| src/conscious_entity/interfaces/api_audio.py | Codex | done | 2026-05-12 06:50 CST |
+| tests/unit/test_db_connection.py | Codex | done | 2026-05-12 06:50 CST |
+| docs/progress.md | Codex | done | 2026-05-12 06:50 CST |
+| docs/lessons.md | Codex | done | 2026-05-12 06:50 CST |
+| agents/task-registry.md | Codex | done | 2026-05-12 06:50 CST |
 | src/conscious_entity/db/migrations.py | Codex | done | 2026-05-12 05:21 CST |
 | src/conscious_entity/core/loop.py | Codex | done | 2026-05-12 05:21 CST |
 | src/conscious_entity/memory/episodic_store.py | Codex | done | 2026-05-12 05:21 CST |
