@@ -45,6 +45,13 @@ Status values: `in_progress`, `done`
 
 | File | Agent | Status | Started |
 |------|-------|--------|---------|
+| src/conscious_entity/core/loop.py | Codex | done | 2026-05-12 01:38 CST |
+| src/conscious_entity/interfaces/api_runtime.py | Codex | done | 2026-05-12 01:38 CST |
+| src/conscious_entity/audio/volcengine_tts.py | Codex | done | 2026-05-12 01:38 CST |
+| tests/unit/test_volcengine_audio.py | Codex | done | 2026-05-12 01:38 CST |
+| tests/integration/test_full_loop.py | Codex | done | 2026-05-12 01:38 CST |
+| docs/progress.md | Codex | done | 2026-05-12 01:38 CST |
+| agents/task-registry.md | Codex | done | 2026-05-12 01:38 CST |
 | scripts/export_latency_snapshot.py | Codex | done | 2026-05-11 20:22 CST |
 | docs/progress.md | Codex | done | 2026-05-11 20:22 CST |
 | agents/task-registry.md | Codex | done | 2026-05-11 20:22 CST |

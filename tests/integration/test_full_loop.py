@@ -215,6 +215,45 @@ class TestEpisodicMemory:
         assert managed_count >= 1
         assert log_count >= 1
 
+    def test_file_db_managed_memory_maintenance_can_finish_in_background(
+        self,
+        tmp_path,
+        config_dir,
+        prompts_dir,
+        mock_client,
+    ):
+        from conscious_entity.core.config_loader import load_all_configs
+        from conscious_entity.db.connection import get_connection
+
+        db_path = tmp_path / "memory.db"
+        conn = get_connection(db_path, check_same_thread=False)
+        run_migrations(conn)
+        conn.execute("INSERT INTO sessions (id) VALUES ('test-session')")
+        conn.commit()
+        loop = InteractionLoop(
+            conn=conn,
+            session_id="test-session",
+            config=load_all_configs(config_dir),
+            prompts_dir=prompts_dir,
+            llm_client=mock_client,
+        )
+
+        try:
+            loop.run_turn("我想知道你会不会把这次对话留下来。")
+            loop.flush_background_tasks()
+            proposal_count = conn.execute(
+                "SELECT COUNT(*) AS cnt FROM memory_operation_proposals WHERE session_id='test-session'"
+            ).fetchone()["cnt"]
+            managed_count = conn.execute(
+                "SELECT COUNT(*) AS cnt FROM managed_memories WHERE session_id='test-session'"
+            ).fetchone()["cnt"]
+        finally:
+            loop.close(wait_for_background=True)
+            conn.close()
+
+        assert proposal_count >= 1
+        assert managed_count >= 1
+
     def test_managed_memory_influence_log_preserves_turn_trace(self, loop, db):
         loop.run_turn("我一直在问你记忆的事。")
         loop.run_turn("你还记得这件事吗？")

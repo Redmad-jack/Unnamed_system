@@ -23,7 +23,7 @@ class VolcengineTTSClient:
         self.protocol = protocol or VolcengineProtocol()
         self.last_logid: str | None = None
 
-    async def synthesize_stream(self, text_segments: list[str]) -> AsyncIterator[bytes]:
+    async def open_session(self) -> VolcengineTTSSession:
         websockets = _import_websockets()
         headers = self.protocol.build_headers(
             self.config,
@@ -32,48 +32,46 @@ class VolcengineTTSClient:
         )
         session_id = uuid.uuid4().hex
         start = time.perf_counter()
+        connector = _connect(websockets, self.config.tts_endpoint, headers)
+        websocket = None
         try:
-            async with _connect(websockets, self.config.tts_endpoint, headers) as websocket:
-                self.last_logid = _response_header(websocket, "X-Tt-Logid")
-                record_audio_latency(
-                    "tts.connect",
-                    (time.perf_counter() - start) * 1000,
-                    metadata={"logid": self.last_logid},
-                )
-                await websocket.send(self.protocol.build_tts_start_connection())
-                await self._expect_event(websocket, {EVENT_CONNECTION_STARTED})
-                record_audio_latency(
-                    "tts.connection_ready",
-                    (time.perf_counter() - start) * 1000,
-                    metadata={"logid": self.last_logid},
-                )
+            websocket = await connector.__aenter__()
+            self.last_logid = _response_header(websocket, "X-Tt-Logid")
+            record_audio_latency(
+                "tts.connect",
+                (time.perf_counter() - start) * 1000,
+                metadata={"logid": self.last_logid},
+            )
+            await websocket.send(self.protocol.build_tts_start_connection())
+            await self._expect_event(websocket, {EVENT_CONNECTION_STARTED})
+            record_audio_latency(
+                "tts.connection_ready",
+                (time.perf_counter() - start) * 1000,
+                metadata={"logid": self.last_logid},
+            )
 
-                await websocket.send(
-                    self.protocol.build_tts_start_session(self.config, session_id=session_id)
-                )
-                await self._expect_event(websocket, {EVENT_SESSION_STARTED})
-                record_audio_latency(
-                    "tts.session_ready",
-                    (time.perf_counter() - start) * 1000,
-                    metadata={"session_id": session_id, "logid": self.last_logid},
-                )
-
-                for segment in text_segments:
-                    await websocket.send(
-                        self.protocol.build_tts_task_request(
-                            session_id=session_id,
-                            text=segment,
-                        )
-                    )
-
-                await websocket.send(self.protocol.build_tts_finish_session(session_id=session_id))
-                async for chunk in self._receive_audio(websocket):
-                    yield chunk
-
-                await websocket.send(self.protocol.build_tts_finish_connection())
+            await websocket.send(
+                self.protocol.build_tts_start_session(self.config, session_id=session_id)
+            )
+            await self._expect_event(websocket, {EVENT_SESSION_STARTED})
+            record_audio_latency(
+                "tts.session_ready",
+                (time.perf_counter() - start) * 1000,
+                metadata={"session_id": session_id, "logid": self.last_logid},
+            )
+            return VolcengineTTSSession(
+                client=self,
+                connector=connector,
+                websocket=websocket,
+                session_id=session_id,
+            )
         except AudioRuntimeError:
+            if websocket is not None:
+                await connector.__aexit__(None, None, None)
             raise
         except Exception as exc:
+            if websocket is not None:
+                await connector.__aexit__(None, None, None)
             record_audio_latency(
                 "tts.connect_or_protocol_error",
                 (time.perf_counter() - start) * 1000,
@@ -81,6 +79,17 @@ class VolcengineTTSClient:
                 error=exc.__class__.__name__,
             )
             raise AudioRuntimeError("tts_connect_failed", str(exc)) from exc
+
+    async def synthesize_stream(self, text_segments: list[str]) -> AsyncIterator[bytes]:
+        session = await self.open_session()
+        try:
+            for segment in text_segments:
+                await session.send_text(segment)
+            await session.finish()
+            async for chunk in session.receive_audio():
+                yield chunk
+        finally:
+            await session.close()
 
     async def _receive_audio(self, websocket: Any) -> AsyncIterator[bytes]:
         while True:
@@ -111,6 +120,75 @@ class VolcengineTTSClient:
                 event.error.message,
                 logid=event.error.logid,
             )
+
+
+class VolcengineTTSSession:
+    def __init__(
+        self,
+        *,
+        client: VolcengineTTSClient,
+        connector: Any,
+        websocket: Any,
+        session_id: str,
+    ) -> None:
+        self.client = client
+        self.protocol = client.protocol
+        self.websocket = websocket
+        self.connector = connector
+        self.session_id = session_id
+        self.finished = False
+        self.interrupted = False
+        self.closed = False
+        self.connection_finished = False
+
+    async def send_text(self, text: str) -> None:
+        if self.finished:
+            raise AudioRuntimeError("tts_session_finished", "Cannot send text after finishing TTS session.")
+        if self.closed or self.interrupted:
+            raise AudioRuntimeError("tts_session_closed", "Cannot send text to a closed TTS session.")
+        cleaned = str(text or "").strip()
+        if not cleaned:
+            return
+        await self.websocket.send(
+            self.protocol.build_tts_task_request(
+                session_id=self.session_id,
+                text=cleaned,
+            )
+        )
+
+    async def finish(self) -> None:
+        if self.finished or self.closed:
+            return
+        self.finished = True
+        await self.websocket.send(
+            self.protocol.build_tts_finish_session(session_id=self.session_id)
+        )
+
+    async def receive_audio(self) -> AsyncIterator[bytes]:
+        while True:
+            message = await self.websocket.recv()
+            event = self.protocol.parse_tts_message(message)
+            self.client._raise_if_error(event)
+            if event.audio:
+                yield event.audio
+            if event.done or event.event_code == EVENT_SESSION_FINISHED:
+                self.finished = True
+                return
+
+    async def interrupt(self) -> None:
+        self.interrupted = True
+        await self.close(send_finish_connection=False)
+
+    async def close(self, *, send_finish_connection: bool = True) -> None:
+        if self.closed:
+            return
+        self.closed = True
+        try:
+            if send_finish_connection and not self.connection_finished and not self.interrupted:
+                await self.websocket.send(self.protocol.build_tts_finish_connection())
+                self.connection_finished = True
+        finally:
+            await self.connector.__aexit__(None, None, None)
 
 
 def _import_websockets() -> Any:

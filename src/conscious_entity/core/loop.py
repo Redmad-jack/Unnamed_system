@@ -3,11 +3,14 @@ from __future__ import annotations
 import json
 import logging
 import sqlite3
+import threading
+from concurrent.futures import Future, ThreadPoolExecutor, wait
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
 
 from conscious_entity.core.event_bus import EventBus
+from conscious_entity.db.connection import get_connection
 from conscious_entity.expression.context_builder import ContextBuilder
 from conscious_entity.expression.expression_engine import ExpressionEngine
 from conscious_entity.expression.output_model import ExpressionOutput
@@ -85,6 +88,8 @@ class InteractionLoop:
         self._conn = conn
         self._session_id = session_id
         self._event_bus = event_bus or EventBus()
+        self._config = config
+        self._prompts_dir = prompts_dir
 
         # --- Config extraction ---
         profile = config["entity_profile"]
@@ -97,6 +102,7 @@ class InteractionLoop:
 
         # --- Component assembly ---
         client = llm_client or ClaudeClient()
+        self._llm_client = client
 
         self._state_engine = StateEngine(config["state_rules"])
         self._state_store = StateStore(conn, session_id)
@@ -108,6 +114,14 @@ class InteractionLoop:
         self._episodic_store = EpisodicStore(conn, session_id)
         self._reflective_store = ReflectiveStore(conn, session_id)
         self._embedding_client = embedding_client if embedding_client is not None else _optional_embedding_client()
+        self._background_db_path = _database_path_for_background(conn)
+        self._background_executor: ThreadPoolExecutor | None = (
+            ThreadPoolExecutor(max_workers=1, thread_name_prefix="entity-memory-bg")
+            if self._background_db_path is not None
+            else None
+        )
+        self._background_futures: list[Future] = []
+        self._background_lock = threading.Lock()
         self._managed_memory: MemoryProvider = build_memory_provider(
             conn,
             session_id,
@@ -278,8 +292,8 @@ class InteractionLoop:
                         policy_action=decision.action.value,
                     )
 
-                with recorder.step("managed_memory.propose_and_commit"):
-                    self._propose_and_commit_managed_memory(turn_id, events, decision)
+                with recorder.step("managed_memory.background_enqueue", blocking=False):
+                    self._enqueue_managed_memory_maintenance(turn_id, events, decision)
 
                 # Maybe trigger reflection.
                 with recorder.step("reflection.maybe_reflect"):
@@ -310,6 +324,27 @@ class InteractionLoop:
                 get_latency_tracker().record_turn(
                     recorder.finish(success=success, error=error)
                 )
+
+    def flush_background_tasks(self) -> None:
+        """Wait for queued post-turn maintenance tasks; intended for tests and shutdown."""
+        with self._background_lock:
+            futures = list(self._background_futures)
+            self._background_futures.clear()
+        if not futures:
+            return
+        wait(futures)
+        for future in futures:
+            future.result()
+
+    def close(self, *, wait_for_background: bool = True) -> None:
+        if wait_for_background:
+            self.flush_background_tasks()
+        if self._background_executor is not None:
+            self._background_executor.shutdown(
+                wait=wait_for_background,
+                cancel_futures=not wait_for_background,
+            )
+            self._background_executor = None
 
     def handle_system_event(
         self, event_type: EventType
@@ -424,6 +459,39 @@ class InteractionLoop:
                     self._managed_memory.commit(proposal_ids=proposal_ids)
         except Exception as exc:
             logger.error("Managed memory proposal/commit failed: %s", exc)
+
+    def _enqueue_managed_memory_maintenance(
+        self,
+        turn_id: int | None,
+        events: list[PerceptionEvent],
+        decision: PolicyDecision,
+    ) -> None:
+        if self._background_executor is None or self._background_db_path is None:
+            self._propose_and_commit_managed_memory(turn_id, events, decision)
+            return
+        messages = _recent_messages_for_memory(self._short_term)
+        context = {
+            "turn_id": turn_id,
+            "source_turn_ids": [turn_id] if turn_id is not None else [],
+            "events": [event.event_type.value for event in events],
+            "policy_action": decision.action.value,
+        }
+        future = self._background_executor.submit(
+            _run_managed_memory_maintenance,
+            db_path=self._background_db_path,
+            session_id=self._session_id,
+            llm_client=self._llm_client,
+            embedding_client=self._embedding_client,
+            prompts_dir=self._prompts_dir,
+            messages=messages,
+            context=context,
+        )
+        future.add_done_callback(_log_background_task_result)
+        with self._background_lock:
+            self._background_futures = [
+                item for item in self._background_futures if not item.done()
+            ]
+            self._background_futures.append(future)
 
     def _hydrate_short_term_from_log(self) -> None:
         """Restore the recent dialog window for prompt continuity after restart."""
@@ -556,6 +624,53 @@ def _public_memory_to_retrieved(item: dict[str, Any]) -> RetrievedMemory:
         source=str(item.get("source", "managed")),
         metadata=item.get("metadata") if isinstance(item.get("metadata"), dict) else {},
     )
+
+
+def _database_path_for_background(conn: sqlite3.Connection) -> Path | None:
+    try:
+        rows = conn.execute("PRAGMA database_list").fetchall()
+    except sqlite3.Error:
+        return None
+    for row in rows:
+        name = row["name"] if isinstance(row, sqlite3.Row) else row[1]
+        file_path = row["file"] if isinstance(row, sqlite3.Row) else row[2]
+        if name == "main" and file_path:
+            return Path(str(file_path))
+    return None
+
+
+def _run_managed_memory_maintenance(
+    *,
+    db_path: Path,
+    session_id: str,
+    llm_client: ClaudeClient | None,
+    embedding_client: EmbeddingClient | None,
+    prompts_dir: Path,
+    messages: list[dict],
+    context: dict[str, Any],
+) -> None:
+    conn = get_connection(db_path, check_same_thread=False)
+    try:
+        provider = build_memory_provider(
+            conn,
+            session_id,
+            llm_client=llm_client,
+            embedding_client=embedding_client,
+            prompts_dir=prompts_dir,
+        )
+        proposals = provider.propose(messages, context)
+        if proposals and provider.auto_commit:
+            proposal_ids = [proposal.id for proposal in proposals if proposal.id is not None]
+            provider.commit(proposal_ids=proposal_ids)
+    finally:
+        conn.close()
+
+
+def _log_background_task_result(future: Future) -> None:
+    try:
+        future.result()
+    except Exception as exc:
+        logger.error("Managed memory background task failed: %s", exc)
 
 
 def _recent_messages_for_memory(short_term: ShortTermMemory) -> list[dict[str, str]]:

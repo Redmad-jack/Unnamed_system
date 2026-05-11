@@ -220,6 +220,48 @@ def test_tts_client_runs_bidirectional_session(monkeypatch):
     assert struct.unpack(">i", fake.sent[4][4:8])[0] == EVENT_FINISH_SESSION
 
 
+def test_tts_client_exposes_incremental_session_api(monkeypatch):
+    responses = [
+        _tts_server_frame(MSG_FULL_SERVER_RESPONSE, EVENT_CONNECTION_STARTED, {}),
+        _tts_server_frame(MSG_FULL_SERVER_RESPONSE, EVENT_SESSION_STARTED, {}),
+        _tts_server_frame(
+            MSG_AUDIO_ONLY_RESPONSE,
+            EVENT_TTS_RESPONSE,
+            b"audio-1",
+            serialization=SERIALIZATION_NONE,
+        ),
+        _tts_server_frame(
+            MSG_AUDIO_ONLY_RESPONSE,
+            EVENT_TTS_RESPONSE,
+            b"audio-2",
+            serialization=SERIALIZATION_NONE,
+        ),
+        _tts_server_frame(MSG_FULL_SERVER_RESPONSE, EVENT_SESSION_FINISHED, {"status_code": 20000000}),
+    ]
+    fake = _FakeWebSocket(responses)
+    monkeypatch.setattr(tts_module, "_import_websockets", lambda: object())
+    monkeypatch.setattr(tts_module, "_connect", lambda _websockets, _endpoint, _headers: fake)
+    client = VolcengineTTSClient(AudioConfig(api_key="key", tts_voice_type="voice"))
+
+    async def run_session():
+        session = await client.open_session()
+        try:
+            await session.send_text("第一段。")
+            await session.send_text("第二段。")
+            await session.finish()
+            return [chunk async for chunk in session.receive_audio()]
+        finally:
+            await session.close()
+
+    chunks = asyncio.run(run_session())
+
+    assert chunks == [b"audio-1", b"audio-2"]
+    assert len(fake.sent) == 6
+    assert struct.unpack(">i", fake.sent[2][4:8])[0] == EVENT_TASK_REQUEST
+    assert struct.unpack(">i", fake.sent[3][4:8])[0] == EVENT_TASK_REQUEST
+    assert struct.unpack(">i", fake.sent[4][4:8])[0] == EVENT_FINISH_SESSION
+
+
 def test_stt_client_ignores_normal_server_close_after_final_packet():
     client = VolcengineSTTClient(AudioConfig(api_key="key", tts_voice_type="voice"))
     fake = _ClosingWebSocket()

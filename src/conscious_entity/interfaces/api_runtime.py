@@ -128,6 +128,8 @@ async def lifespan(app: Any):
     try:
         yield
     finally:
+        if getattr(app.state, "loop", None) is not None:
+            app.state.loop.close(wait_for_background=True)
         app.state.vision_event_task.cancel()
         with suppress(asyncio.CancelledError):
             await app.state.vision_event_task
@@ -401,6 +403,9 @@ def _rebuild_loop(
     llm_client: Optional[ClaudeClient],
     embedding_client: Optional[EmbeddingClient] = None,
 ) -> None:
+    old_loop = getattr(request.app.state, "loop", None)
+    if old_loop is not None:
+        old_loop.close(wait_for_background=True)
     request.app.state.loop = InteractionLoop(
         request.app.state.conn,
         request.app.state.session_id,

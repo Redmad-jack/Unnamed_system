@@ -9,7 +9,7 @@
 - 当前进行中：无
 - 当前可运行形态：CLI + 本地 FastAPI 开发者 API + Web 看板 + 可选 Vision 面板 + 可选 Audio Adapter + `/visitor` 临时身体表面；观众侧最终呈现方向是身体，不是传统 UI
 - 当前核心能力：Stranger 文本协议、状态机、短期/情节/反思记忆、可解释/可选 embedding 召回、Memory Preview、managed memory proposal → commit、influence log / curation、可选 YOLO person presence detection、可选火山 ASR 2.0 / TTS 2.0 双向流式 Audio Adapter
-- 当前验证基线：`PYTHONPATH=src python3 -m pytest -p no:debugging`，最近一次完整结果为 `329 passed`；最近相关验证为 `17 passed`
+- 当前验证基线：`PYTHONPATH=src python3 -m pytest -p no:debugging`，最近一次完整结果为 `331 passed`
 - 当前注意事项：`AGENTS.md` 与 `CLAUDE.md` 有用户侧未提交差异；除非明确要求，不应在常规任务中触碰
 
 ---
@@ -28,6 +28,24 @@
 ---
 
 ## Changelog
+
+### 2026-05-12：回合后记忆后台化与 TTS Bidirectional Session API
+
+- [x] 将文件型 SQLite 运行时的回合后 managed memory 维护移出主阻塞链路：
+  - `managed_memory.propose_and_commit` 不再在 `run_turn()` 返回前同步等待
+  - 后台 worker 使用独立 SQLite connection 串行执行 memory proposal / commit / managed memory embedding write
+  - `:memory:` 测试库保持同步路径，避免内存数据库跨线程不可见
+  - API shutdown / runtime loop rebuild 会等待后台任务收尾
+- [x] 重构火山 TTS client 为真正可增量投喂的 Bidirectional Session API：
+  - 新增 `open_session()`，返回可 `send_text()` / `finish()` / `receive_audio()` / `interrupt()` / `close()` 的 session
+  - 现有 `synthesize_stream()` 保持兼容，并改为调用 session API
+  - 后续 LLM streaming + constitution guard 可直接把 safe text segment 增量送入同一 TTS session
+- [x] 验证：
+  - `python3 -m py_compile src/conscious_entity/core/loop.py src/conscious_entity/interfaces/api_runtime.py src/conscious_entity/audio/volcengine_tts.py`
+  - `PYTHONPATH=src python3 -m pytest -p no:debugging tests/unit/test_volcengine_audio.py tests/unit/test_audio_manager.py`
+  - `PYTHONPATH=src python3 -m pytest -p no:debugging tests/integration/test_full_loop.py::TestEpisodicMemory::test_file_db_managed_memory_maintenance_can_finish_in_background tests/integration/test_full_loop.py::TestEpisodicMemory::test_managed_memory_auto_commit_still_records_proposal_first`
+  - `PYTHONPATH=src python3 -m pytest -p no:debugging`
+  - `331 passed`
 
 ### 2026-05-11：Latency snapshot 导出工具
 
