@@ -9,6 +9,7 @@ import conscious_entity.audio.volcengine_tts as tts_module
 from conscious_entity.audio.config import AudioConfig
 from conscious_entity.audio.types import AudioError, TranscriptEvent
 from conscious_entity.audio.volcengine_stt import VolcengineSTTClient
+from conscious_entity.audio.volcengine_stt import _is_normal_websocket_close
 from conscious_entity.audio.volcengine_tts import VolcengineTTSClient
 from conscious_entity.audio.volcengine_protocol import (
     COMPRESSION_GZIP,
@@ -262,6 +263,29 @@ def test_tts_client_exposes_incremental_session_api(monkeypatch):
     assert struct.unpack(">i", fake.sent[4][4:8])[0] == EVENT_FINISH_SESSION
 
 
+def test_tts_session_interrupt_sends_cancel_without_finish_connection(monkeypatch):
+    responses = [
+        _tts_server_frame(MSG_FULL_SERVER_RESPONSE, EVENT_CONNECTION_STARTED, {}),
+        _tts_server_frame(MSG_FULL_SERVER_RESPONSE, EVENT_SESSION_STARTED, {}),
+    ]
+    fake = _FakeWebSocket(responses)
+    monkeypatch.setattr(tts_module, "_import_websockets", lambda: object())
+    monkeypatch.setattr(tts_module, "_connect", lambda _websockets, _endpoint, _headers: fake)
+    client = VolcengineTTSClient(AudioConfig(api_key="key", tts_voice_type="voice"))
+
+    async def run_session():
+        session = await client.open_session()
+        await session.send_text("第一段。")
+        await session.interrupt()
+
+    asyncio.run(run_session())
+
+    events = [struct.unpack(">i", frame[4:8])[0] for frame in fake.sent]
+    assert EVENT_TASK_REQUEST in events
+    assert 101 in events
+    assert 2 not in events
+
+
 def test_stt_client_ignores_normal_server_close_after_final_packet():
     client = VolcengineSTTClient(AudioConfig(api_key="key", tts_voice_type="voice"))
     fake = _ClosingWebSocket()
@@ -269,6 +293,15 @@ def test_stt_client_ignores_normal_server_close_after_final_packet():
     events = asyncio.run(_collect(client._drain_until_timeout(fake, session_id="aud")))
 
     assert events == []
+
+
+def test_stt_treats_rst_stream_no_error_as_normal_close():
+    exc = RuntimeError(
+        "stt_protocol_error: [Server-side generic error] result: rpc error: "
+        "code = 13 desc = stream terminated by RST_STREAM with error code: NO_ERROR"
+    )
+
+    assert _is_normal_websocket_close(exc) is True
 
 
 def test_media_type_for_format():

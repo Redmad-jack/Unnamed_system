@@ -3,6 +3,7 @@ from __future__ import annotations
 import uuid
 import asyncio
 import time
+import contextlib
 from collections.abc import AsyncIterator
 from typing import Any
 
@@ -88,6 +89,9 @@ class VolcengineTTSClient:
             await session.finish()
             async for chunk in session.receive_audio():
                 yield chunk
+        except asyncio.CancelledError:
+            await session.interrupt()
+            raise
         finally:
             await session.close()
 
@@ -177,6 +181,10 @@ class VolcengineTTSSession:
 
     async def interrupt(self) -> None:
         self.interrupted = True
+        with contextlib.suppress(Exception):
+            await self.websocket.send(
+                self.protocol.build_tts_cancel_session(session_id=self.session_id)
+            )
         await self.close(send_finish_connection=False)
 
     async def close(self, *, send_finish_connection: bool = True) -> None:

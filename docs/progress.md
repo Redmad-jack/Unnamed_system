@@ -9,7 +9,7 @@
 - 当前进行中：无
 - 当前可运行形态：CLI + 本地 FastAPI 开发者 API + Web 看板 + 可选 Vision 面板 + 可选 Audio Adapter + `/visitor` 临时身体表面；观众侧最终呈现方向是身体，不是传统 UI
 - 当前核心能力：Stranger 文本协议、状态机、短期/情节/反思记忆、可解释/可选 embedding 召回、Memory Preview、managed memory proposal → commit、influence log / curation、可选 YOLO person presence detection、可选火山 ASR 2.0 / TTS 2.0 双向流式 Audio Adapter
-- 当前验证基线：`PYTHONPATH=src python3 -m pytest -p no:debugging`，最近一次完整结果为 `331 passed`
+- 当前验证基线：`PYTHONPATH=src python3 -m pytest -p no:debugging`，最近一次完整结果为 `333 passed`
 - 当前注意事项：`AGENTS.md` 与 `CLAUDE.md` 有用户侧未提交差异；除非明确要求，不应在常规任务中触碰
 
 ---
@@ -28,6 +28,24 @@
 ---
 
 ## Changelog
+
+### 2026-05-12：语音断线恢复与 TTS 中断路径
+
+- [x] 修复火山 STT 服务端 `RST_STREAM ... NO_ERROR` 被误报为协议错误的问题：
+  - 将该类正常关闭视为 normal close，不再向开发者面板显示红色 `stt_protocol_error`
+  - 浏览器 STT WebSocket 如果非手动关闭且 Voice Auto 仍开启，会自动重建麦克风/STT 连接
+- [x] 增加 TTS 输出中断路径：
+  - Dashboard Audio Adapter 新增 `Stop Speaking`
+  - 停止当前 `<audio>` 播放并清空 `src`，让浏览器中止 HTTP 音频流请求
+  - 火山 TTS Bidirectional session 在 cancellation 时发送 cancel session，不再只等待自然结束
+  - Audio latency 增加 `tts.interrupted` 记录
+- [x] 验证：
+  - `python3 -m py_compile src/conscious_entity/audio/volcengine_stt.py src/conscious_entity/audio/volcengine_tts.py src/conscious_entity/audio/manager.py`
+  - `node --check src/conscious_entity/interfaces/static/dashboard.js`
+  - `PYTHONPATH=src python3 -m pytest -p no:debugging tests/unit/test_volcengine_audio.py tests/unit/test_audio_manager.py tests/unit/test_api_audio.py`
+  - `26 passed`
+  - `PYTHONPATH=src python3 -m pytest -p no:debugging`
+  - `333 passed`
 
 ### 2026-05-12：回合后记忆后台化与 TTS Bidirectional Session API
 

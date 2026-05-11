@@ -955,6 +955,9 @@
     const dialogPendingRef = useRef(false);
     const suppressMicRef = useRef(false);
     const playbackUnlockedRef = useRef(false);
+    const playbackStreamRef = useRef("");
+    const manualStopRef = useRef(false);
+    const reconnectTimerRef = useRef(null);
 
     useEffect(() => { voiceModeRef.current = voiceMode; }, [voiceMode]);
     useEffect(() => { recordingRef.current = recording; }, [recording]);
@@ -972,13 +975,11 @@
     useEffect(() => { loadStatus(); }, [loadStatus]);
     useInterval(loadStatus, 5000);
 
-    const stopMic = useCallback(() => {
-      const socket = socketRef.current;
-      if (socket && socket.readyState === WebSocket.OPEN) {
-        socket.send(JSON.stringify({ type: "stop" }));
+    const cleanupMicInput = useCallback(() => {
+      if (reconnectTimerRef.current) {
+        window.clearTimeout(reconnectTimerRef.current);
+        reconnectTimerRef.current = null;
       }
-      if (socket) socket.close();
-      socketRef.current = null;
       if (processorRef.current) processorRef.current.disconnect();
       if (sourceRef.current) sourceRef.current.disconnect();
       if (muteRef.current) muteRef.current.disconnect();
@@ -989,10 +990,21 @@
       muteRef.current = null;
       mediaRef.current = null;
       audioContextRef.current = null;
+    }, []);
+
+    const stopMic = useCallback(() => {
+      manualStopRef.current = true;
+      const socket = socketRef.current;
+      if (socket && socket.readyState === WebSocket.OPEN) {
+        socket.send(JSON.stringify({ type: "stop" }));
+      }
+      if (socket) socket.close();
+      socketRef.current = null;
+      cleanupMicInput();
       setRecording(false);
       setVoiceActivity("idle");
       suppressMicRef.current = false;
-    }, []);
+    }, [cleanupMicInput]);
 
     useEffect(() => stopMic, [stopMic]);
 
@@ -1031,12 +1043,28 @@
       }
     }, []);
 
+    const stopPlayback = useCallback(() => {
+      const player = playerRef.current;
+      const hadPlayback = Boolean(playbackStreamRef.current || (player && player.getAttribute("src")));
+      if (player) {
+        player.pause();
+        player.removeAttribute("src");
+        player.load();
+      }
+      playbackStreamRef.current = "";
+      suppressMicRef.current = false;
+      setPlaybackBlocked(false);
+      setVoiceActivity(recordingRef.current ? "listening" : "idle");
+      if (hadPlayback) setPlaybackDetail("interrupted");
+    }, []);
+
     const playStream = useCallback(async (streamId) => {
       if (!streamId || !playerRef.current) return false;
       suppressMicRef.current = true;
       setVoiceActivity("speaking");
       setPlaybackBlocked(false);
       const player = playerRef.current;
+      playbackStreamRef.current = streamId;
       player.muted = false;
       player.volume = 1;
       player.src = `/api/v1/audio/tts/stream/${encodeURIComponent(streamId)}?t=${Date.now()}`;
@@ -1105,6 +1133,8 @@
       try {
         setError("");
         setPartial("");
+        manualStopRef.current = false;
+        stopPlayback();
         await unlockPlayback();
         const stream = await navigator.mediaDevices.getUserMedia({
           audio: { echoCancellation: true, noiseSuppression: true, channelCount: 1 },
@@ -1142,8 +1172,17 @@
         };
         socket.onerror = () => setError("Audio STT stream connection failed.");
         socket.onclose = () => {
+          const shouldReconnect = !manualStopRef.current && voiceModeRef.current;
+          socketRef.current = null;
+          cleanupMicInput();
           setRecording(false);
-          setVoiceActivity("idle");
+          setVoiceActivity(shouldReconnect ? "reconnecting" : "idle");
+          if (shouldReconnect) {
+            reconnectTimerRef.current = window.setTimeout(() => {
+              reconnectTimerRef.current = null;
+              if (!manualStopRef.current) startMic();
+            }, 450);
+          }
         };
 
         const source = context.createMediaStreamSource(stream);
@@ -1177,7 +1216,7 @@
         stopMic();
         setError(err.message || String(err));
       }
-    }, [recording, status, stopMic, submitTranscript, unlockPlayback]);
+    }, [cleanupMicInput, recording, status, stopMic, stopPlayback, submitTranscript, unlockPlayback]);
 
     const sendFinal = useCallback(async () => {
       submitTranscript(finalText);
@@ -1203,6 +1242,7 @@
         }, voiceMode ? "Voice Auto On" : "Voice Auto Off"),
         h("button", { className: "btn-sm", onClick: sendFinal, disabled: dialogPending }, dialogPending ? "Thinking" : "Send Final"),
         h("button", { className: "btn-sm", onClick: speakLatest }, "Speak Latest"),
+        h("button", { className: "btn-sm", onClick: stopPlayback }, "Stop Speaking"),
         h("button", { className: "btn-sm", onClick: loadStatus }, "Refresh Status"),
       ),
       h("div", { className: "kv-grid audio-kv" },
@@ -1239,11 +1279,13 @@
         preload: "auto",
         playsInline: true,
         onEnded: () => {
+          playbackStreamRef.current = "";
           suppressMicRef.current = false;
           setVoiceActivity(recordingRef.current ? "listening" : "idle");
           setPlaybackDetail("ended");
         },
         onError: () => {
+          playbackStreamRef.current = "";
           suppressMicRef.current = false;
           setVoiceActivity(recordingRef.current ? "listening" : "idle");
           setPlaybackBlocked(true);

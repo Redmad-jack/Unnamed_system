@@ -152,4 +152,7 @@ def _headers_get(headers: Any, name: str) -> str | None:
 
 
 def _is_normal_websocket_close(exc: Exception) -> bool:
-    return exc.__class__.__name__ == "ConnectionClosedOK"
+    if exc.__class__.__name__ == "ConnectionClosedOK":
+        return True
+    message = str(exc)
+    return "RST_STREAM" in message and "NO_ERROR" in message

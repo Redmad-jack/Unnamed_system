@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import uuid
+import asyncio
 import time
 from collections.abc import AsyncIterator
 from datetime import timedelta
@@ -188,6 +189,18 @@ class AudioManager:
                 success=False,
                 error=exc.code,
                 metadata={"stream_id": stream_id, "logid": exc.logid},
+            )
+            raise
+        except asyncio.CancelledError:
+            record_audio_latency(
+                "tts.interrupted",
+                (time.perf_counter() - start) * 1000,
+                success=True,
+                metadata={
+                    "stream_id": stream_id,
+                    "segment_count": len(stream.text_segments),
+                    "output_format": stream.output_format,
+                },
             )
             raise
 
