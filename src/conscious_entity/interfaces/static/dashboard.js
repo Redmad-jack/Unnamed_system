@@ -674,20 +674,23 @@
     const [stats, setStats] = useState(null);
     const [latency, setLatency] = useState(null);
     const [audioLatency, setAudioLatency] = useState(null);
+    const [harness, setHarness] = useState(null);
 
     const load = useCallback(async () => {
-      const [llmConfig, embeddingConfig, llmStats, latencyStats, audioLatencyStats] = await Promise.all([
+      const [llmConfig, embeddingConfig, llmStats, latencyStats, audioLatencyStats, harnessStatus] = await Promise.all([
         fetchJSON("/api/v1/config/llm").catch(() => null),
         fetchJSON("/api/v1/config/embedding").catch(() => null),
         fetchJSON("/api/v1/stats/llm").catch(() => null),
         fetchJSON("/api/v1/stats/latency?n=1").catch(() => null),
         fetchJSON("/api/v1/stats/audio-latency?n=8").catch(() => null),
+        fetchJSON("/api/v1/harness/status").catch(() => null),
       ]);
       setLlm(llmConfig);
       setEmbedding(embeddingConfig);
       setStats(llmStats && llmStats.summary);
       setLatency(latencyStats);
       setAudioLatency(audioLatencyStats);
+      setHarness(harnessStatus);
     }, []);
 
     useEffect(() => { load(); }, [load]);
@@ -697,6 +700,7 @@
       h(LLMConfigSection, { data: llm, onSaved: load }),
       h(EmbeddingConfigSection, { data: embedding, onSaved: load }),
       h(AudioPane),
+      h(HarnessSection, { harness }),
       h("div", { className: "section" },
         h("div", { className: "section-title" }, "Diagnostics"),
         stats ? h("table", null, h("tbody", null,
@@ -901,6 +905,49 @@
       ),
       testResult ? h("div", { className: "ok" }, testResult) : null,
       error ? h("div", { className: "err" }, error) : null,
+    );
+  }
+
+  function HarnessSection({ harness }) {
+    const latest = harness && harness.latest;
+    const summaryLayers = latest && latest.summary && latest.summary.layers ? latest.summary.layers : {};
+    const layerNames = harness && Array.isArray(harness.layers) ? harness.layers : [
+      "input", "state", "memory", "policy", "prompt", "generation", "output", "presentation",
+    ];
+    const promptLayer = summaryLayers.prompt;
+    const promptPartials = promptLayer && promptLayer.metadata && Array.isArray(promptLayer.metadata.partials)
+      ? promptLayer.metadata.partials.join(" · ")
+      : "";
+    return h("div", { className: "section" },
+      h("div", { className: "section-title" }, "Harness"),
+      latest ? h(React.Fragment, null,
+        h("table", null, h("tbody", null,
+          h("tr", null, h("td", null, "Last trace"), h("td", null, `${latest.source} · ${latest.success ? "ok" : "error"} · ${compactId(latest.trace_id)}`)),
+          layerNames.map((layerName) => {
+            const layer = summaryLayers[layerName];
+            return h("tr", { key: layerName },
+              h("td", null, layerName),
+              h("td", null, layer
+                ? `${layer.status}${layer.decision ? ` · ${layer.decision}` : ""}`
+                : "—"),
+            );
+          }),
+        )),
+        promptPartials ? h("div", { className: "item" },
+          h("div", { className: "item-meta" }, "Prompt partials"),
+          h("div", { className: "item-text" }, promptPartials),
+        ) : null,
+        h("details", { className: "item" },
+          h("summary", { className: "item-meta" }, "Latest trace summary"),
+          layerNames.map((layerName) => {
+            const layer = summaryLayers[layerName];
+            if (!layer) return null;
+            return h("div", { className: "item-text", key: `${layerName}-summary` },
+              `${layerName}: ${layer.summary}`,
+            );
+          }),
+        ),
+      ) : h("div", { className: "dim" }, "No harness trace yet."),
     );
   }
 

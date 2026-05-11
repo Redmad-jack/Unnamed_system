@@ -45,6 +45,25 @@ Status values: `in_progress`, `done`
 
 | File | Agent | Status | Started |
 |------|-------|--------|---------|
+| src/conscious_entity/harness/__init__.py | Codex | done | 2026-05-12 04:36 CST |
+| src/conscious_entity/harness/trace.py | Codex | done | 2026-05-12 04:36 CST |
+| src/conscious_entity/core/loop.py | Codex | done | 2026-05-12 04:36 CST |
+| src/conscious_entity/policy/policy_selector.py | Codex | done | 2026-05-12 04:36 CST |
+| src/conscious_entity/expression/context_builder.py | Codex | done | 2026-05-12 04:36 CST |
+| src/conscious_entity/expression/expression_engine.py | Codex | done | 2026-05-12 04:36 CST |
+| src/conscious_entity/interfaces/api_routes.py | Codex | done | 2026-05-12 04:36 CST |
+| src/conscious_entity/interfaces/api.py | Codex | done | 2026-05-12 04:36 CST |
+| src/conscious_entity/interfaces/static/dashboard.js | Codex | done | 2026-05-12 04:36 CST |
+| tests/unit/test_harness_trace.py | Codex | done | 2026-05-12 04:36 CST |
+| tests/unit/test_context_builder.py | Codex | done | 2026-05-12 04:36 CST |
+| tests/unit/test_api_export.py | Codex | done | 2026-05-12 04:36 CST |
+| tests/unit/test_expression_engine.py | Codex | done | 2026-05-12 04:36 CST |
+| tests/integration/test_full_loop.py | Codex | done | 2026-05-12 04:36 CST |
+| docs/HARNESS_ARCHITECTURE.md | Codex | done | 2026-05-12 04:36 CST |
+| docs/APP_FLOW.md | Codex | done | 2026-05-12 04:36 CST |
+| docs/BACKEND_STRUCTURE.md | Codex | done | 2026-05-12 04:36 CST |
+| docs/progress.md | Codex | done | 2026-05-12 04:36 CST |
+| agents/task-registry.md | Codex | done | 2026-05-12 04:36 CST |
 | src/conscious_entity/memory/models.py | Codex | done | 2026-05-12 03:15 CST |
 | src/conscious_entity/core/loop.py | Codex | done | 2026-05-12 03:15 CST |
 | src/conscious_entity/interfaces/api_runtime.py | Codex | done | 2026-05-12 03:15 CST |

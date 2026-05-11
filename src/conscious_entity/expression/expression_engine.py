@@ -6,6 +6,7 @@ from typing import Any
 from conscious_entity.expression.context_builder import ContextBuilder
 from conscious_entity.expression.output_model import ExpressionOutput
 from conscious_entity.expression.style_mapper import StyleMapper
+from conscious_entity.harness import HarnessLayer, HarnessTraceRecorder
 from conscious_entity.llm.claude_client import ClaudeClient
 from conscious_entity.memory.short_term import ShortTermMemory
 from conscious_entity.policy.constitution import Constitution
@@ -109,6 +110,7 @@ class ExpressionEngine:
         state: EntityState,
         short_term: ShortTermMemory,
         retrieved_memories: list[Any] = None,  # list[RetrievedMemory]; v0.1 always []
+        harness_recorder: HarnessTraceRecorder | None = None,
     ) -> ExpressionOutput:
         if retrieved_memories is None:
             retrieved_memories = []
@@ -122,6 +124,21 @@ class ExpressionEngine:
                 policy.action.value,
                 style.max_tokens,
             )
+            if harness_recorder is not None:
+                harness_recorder.record(
+                    HarnessLayer.GENERATION,
+                    status="skipped",
+                    decision=policy.action.value,
+                    summary="LLM generation skipped by silent policy/style.",
+                    metadata={"max_tokens": style.max_tokens},
+                )
+                harness_recorder.record(
+                    HarnessLayer.OUTPUT,
+                    status="prepared",
+                    decision=policy.action.value,
+                    summary="Silent output prepared without constitution text filtering.",
+                    metadata={"changed": False, "forbidden_claim_detected": False},
+                )
             return ExpressionOutput(
                 text="",
                 delay_ms=style.delay_ms,
@@ -130,8 +147,16 @@ class ExpressionEngine:
                 raw_prompt=_SILENT_OUTPUT_SENTINEL,
             )
 
-        ctx = self._context_builder.build(state, policy, style, short_term, retrieved_memories)
+        ctx = self._context_builder.build(
+            state,
+            policy,
+            style,
+            short_term,
+            retrieved_memories,
+            harness_recorder=harness_recorder,
+        )
 
+        completion = None
         with turn_step(
             "expression.llm",
             metadata={"max_tokens": ctx.max_tokens, "message_count": len(ctx.messages)},
@@ -148,21 +173,60 @@ class ExpressionEngine:
         if llm_failed:
             raw_text = _fallback_text(policy.action, short_term)
             truncated = False
+            if harness_recorder is not None:
+                harness_recorder.record(
+                    HarnessLayer.GENERATION,
+                    status="fallback",
+                    decision=policy.action.value,
+                    summary="LLM returned no text; fallback expression used.",
+                    metadata={"max_tokens": ctx.max_tokens},
+                )
             logger.error(
                 "ExpressionEngine: LLM call failed, using fallback text for action=%s",
                 policy.action.value,
             )
         elif truncated:
+            if harness_recorder is not None:
+                harness_recorder.record(
+                    HarnessLayer.GENERATION,
+                    status="truncated",
+                    decision=policy.action.value,
+                    summary="LLM response reached the token limit.",
+                    metadata={"stop_reason": completion.stop_reason, "max_tokens": ctx.max_tokens},
+                )
             logger.warning(
                 "ExpressionEngine: response hit token limit (action=%s, stop_reason=%s, max_tokens=%d)",
                 policy.action.value,
                 completion.stop_reason,
                 ctx.max_tokens,
             )
+        elif harness_recorder is not None:
+            harness_recorder.record(
+                HarnessLayer.GENERATION,
+                status="completed",
+                decision=policy.action.value,
+                summary="LLM expression generation completed.",
+                metadata={"stop_reason": completion.stop_reason, "max_tokens": ctx.max_tokens},
+            )
 
         filtered_text = self._constitution.apply_expression_constraints(raw_text)
 
         detected, claim_action = self._constitution.forbidden_claim_detected(filtered_text)
+        if harness_recorder is not None:
+            harness_recorder.record(
+                HarnessLayer.OUTPUT,
+                status="filtered" if filtered_text != raw_text or detected else "passed",
+                decision=claim_action or None,
+                summary=(
+                    "Constitution output filters changed or flagged the response."
+                    if filtered_text != raw_text or detected
+                    else "Constitution output filters passed the response."
+                ),
+                metadata={
+                    "changed": filtered_text != raw_text,
+                    "forbidden_claim_detected": detected,
+                },
+            )
         if detected:
             logger.warning(
                 "ExpressionEngine: forbidden claim survived expression filter "

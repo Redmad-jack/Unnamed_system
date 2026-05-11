@@ -8,6 +8,7 @@ from unittest.mock import MagicMock
 
 from conscious_entity.core.config_loader import load_all_configs
 from conscious_entity.db.migrations import run_migrations
+from conscious_entity.harness import HarnessLayer, HarnessTraceRecorder, get_harness_trace_store
 from conscious_entity.interfaces import api, api_routes
 from conscious_entity.interfaces.api import (
     EmbeddingConfigRequest,
@@ -305,6 +306,37 @@ def test_embedding_test_endpoint_rejects_disabled(monkeypatch):
         assert exc.status_code == 400
     else:
         raise AssertionError("disabled embedding client should fail")
+
+
+def test_harness_status_returns_empty_recent_trace():
+    store = get_harness_trace_store()
+    store.clear()
+
+    result = asyncio.run(api.harness_status())
+
+    assert result["enabled"] is True
+    assert result["latest"] is None
+    assert result["recent_count"] == 0
+    assert "input" in result["layers"]
+
+
+def test_harness_recent_trace_endpoint_returns_public_trace():
+    store = get_harness_trace_store()
+    store.clear()
+    recorder = HarnessTraceRecorder(
+        session_id="session-1",
+        source="audio_dialog",
+        metadata={"input_mode": "voice_transcript"},
+    )
+    recorder.record(HarnessLayer.INPUT, status="tagged", summary="Input tagged.")
+    store.record(recorder.finish(success=True))
+
+    result = asyncio.run(api.harness_trace_recent(limit=20))
+
+    assert result["count"] == 1
+    assert result["recent"][0]["source"] == "audio_dialog"
+    assert result["recent"][0]["metadata"]["input_mode"] == "voice_transcript"
+    assert result["recent"][0]["summary"]["layers"]["input"]["status"] == "tagged"
 
 
 def test_memory_preview_returns_current_session_material(tmp_path):

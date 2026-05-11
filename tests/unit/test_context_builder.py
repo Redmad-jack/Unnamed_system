@@ -11,6 +11,7 @@ from pathlib import Path
 import pytest
 
 from conscious_entity.expression.style_mapper import StyleHints
+from conscious_entity.harness import HarnessLayer, HarnessTraceRecorder
 from conscious_entity.memory.models import ShortTermEntry
 from conscious_entity.memory.short_term import ShortTermMemory
 from conscious_entity.policy.policy_types import PolicyAction, PolicyDecision
@@ -150,12 +151,40 @@ class TestSystemPromptInvariants:
         assert "You do not receive the raw audio or acoustic qualities directly" in ctx.system_prompt
         assert "Do not claim to hear vocal tone" in ctx.system_prompt
 
+    def test_voice_transcript_context_is_visible_in_prompt_harness(self, builder):
+        mem = ShortTermMemory(max_turns=10)
+        mem.add(ShortTermEntry(
+            role="user",
+            content="Hello hello 能听到吗？",
+            timestamp=datetime.now(timezone.utc),
+            metadata={"input_mode": "voice_transcript", "source": "audio_dialog"},
+        ))
+        recorder = HarnessTraceRecorder(session_id="test", source="audio_dialog")
+
+        builder.build(EntityState(), _decision(), _style(), mem, [], harness_recorder=recorder)
+        trace = recorder.finish(success=True)
+        prompt_layer = next(item for item in trace.layers if item.layer == HarnessLayer.PROMPT)
+
+        assert prompt_layer.metadata["input_context_injected"] is True
+        assert "input_context" in prompt_layer.metadata["partials"]
+
     def test_text_dialog_does_not_inject_voice_context(self, builder):
         mem = _memory_with_turns(("user", "Hello hello 能听到吗？"))
 
         ctx = builder.build(EntityState(), _decision(), _style(), mem, [])
 
         assert "final STT transcript from a live spoken conversation" not in ctx.system_prompt
+
+    def test_text_dialog_prompt_harness_does_not_show_voice_injection(self, builder):
+        mem = _memory_with_turns(("user", "Hello hello 能听到吗？"))
+        recorder = HarnessTraceRecorder(session_id="test", source="dialog")
+
+        builder.build(EntityState(), _decision(), _style(), mem, [], harness_recorder=recorder)
+        trace = recorder.finish(success=True)
+        prompt_layer = next(item for item in trace.layers if item.layer == HarnessLayer.PROMPT)
+
+        assert prompt_layer.metadata["input_context_injected"] is False
+        assert "input_context" not in prompt_layer.metadata["partials"]
 
 
 # ---------------------------------------------------------------------------

@@ -15,6 +15,7 @@ from conscious_entity.expression.context_builder import ContextBuilder
 from conscious_entity.expression.expression_engine import ExpressionEngine
 from conscious_entity.expression.output_model import ExpressionOutput
 from conscious_entity.expression.style_mapper import StyleMapper
+from conscious_entity.harness import HarnessLayer, HarnessTraceRecorder, get_harness_trace_store
 from conscious_entity.llm.claude_client import ClaudeClient
 from conscious_entity.llm.embedding_client import EmbeddingClient, EmbeddingConfigurationError
 from conscious_entity.memory.episodic_store import EpisodicStore
@@ -179,6 +180,14 @@ class InteractionLoop:
         """Run one user input through the managed-memory-aware turn pipeline."""
         turn_metadata = dict(input_metadata or {})
         turn_metadata.setdefault("source", source)
+        harness_recorder = HarnessTraceRecorder(
+            session_id=self._session_id,
+            source=source,
+            metadata={
+                "input_chars": len(raw_input),
+                "input_mode": turn_metadata.get("input_mode") or "text",
+            },
+        )
         recorder = TurnLatencyRecorder(
             source=source,
             metadata={
@@ -195,6 +204,17 @@ class InteractionLoop:
                 state = self._current_state or self._initial_state
                 with recorder.step("perception.parse"):
                     events = self._text_parser.parse(raw_input, state, self._short_term)
+                harness_recorder.record(
+                    HarnessLayer.INPUT,
+                    status="tagged",
+                    summary="User input accepted and parsed into perception events.",
+                    metadata={
+                        "source": source,
+                        "input_mode": turn_metadata.get("input_mode") or "text",
+                        "chars": len(raw_input),
+                        "event_types": [event.event_type.value for event in events],
+                    },
+                )
 
                 # Add user turn to short-term memory before policy so repetition detection is accurate.
                 with recorder.step("short_term.add_user"):
@@ -223,6 +243,33 @@ class InteractionLoop:
                         },
                     )
                     new_state = _apply_memory_state_influence(new_state, memory_influence)
+                policy_influence = memory_influence.get("policy_influence", {})
+                state_influence = memory_influence.get("state_influence", {})
+                harness_recorder.record(
+                    HarnessLayer.MEMORY,
+                    status="previewed",
+                    decision=(
+                        policy_influence.get("suggested_action")
+                        if isinstance(policy_influence, dict)
+                        else None
+                    ),
+                    summary="Managed memory influence previewed for this turn.",
+                    metadata={
+                        "expression_context_count": len(memory_influence.get("expression_context", [])),
+                        "policy_suggestion": (
+                            policy_influence.get("suggested_action")
+                            if isinstance(policy_influence, dict)
+                            else None
+                        ),
+                        "state_delta_keys": sorted(
+                            (
+                                state_influence.get("deltas", {})
+                                if isinstance(state_influence, dict)
+                                else {}
+                            ).keys()
+                        ),
+                    },
+                )
 
                 # Save the state that will drive this turn's policy and expression.
                 trigger_types = ",".join(e.event_type.value for e in events)
@@ -232,6 +279,16 @@ class InteractionLoop:
                         trigger_event_type=trigger_types or None,
                     )
                     self._current_state = new_state
+                harness_recorder.record(
+                    HarnessLayer.STATE,
+                    status="applied",
+                    summary="State rules, decay, and bounded memory deltas were applied.",
+                    metadata={
+                        "snapshot_id": snapshot_id,
+                        "trigger_event_types": trigger_types.split(",") if trigger_types else [],
+                        "changed_fields": _changed_state_keys(state, new_state),
+                    },
+                )
 
                 # Store significant events in episodic memory.
                 with recorder.step("episodic_memory.store_significant"):
@@ -256,14 +313,31 @@ class InteractionLoop:
                 # Select policy, then apply bounded managed-memory policy influence.
                 with recorder.step("policy.select"):
                     decision = self._select_policy_with_managed_memory_influence(
-                        new_state, events, memory_influence
-                    )
+                        new_state, events, memory_influence, harness_recorder
+                )
 
                 # Retrieve memory when policy or managed memory asks for it.
+                retrieval_requested = (
+                    decision.action in {
+                        PolicyAction.RETRIEVE_MEMORY_FIRST,
+                        PolicyAction.RETRIEVE_SELECTIVE_MEMORY,
+                    }
+                    or bool(decision.params.get("retrieve_memory"))
+                )
                 with recorder.step("memory.retrieve_for_decision"):
                     decision, retrieved_memories = self._retrieve_memories_for_decision(
                         decision, raw_input, events, memory_influence
                     )
+                harness_recorder.record(
+                    HarnessLayer.MEMORY,
+                    status="retrieved",
+                    decision=decision.action.value,
+                    summary="Memory retrieval path resolved for the selected policy.",
+                    metadata={
+                        "retrieved_count": len(retrieved_memories),
+                        "used_retriever": retrieval_requested,
+                    },
+                )
 
                 # Generate expression.
                 with recorder.step("expression.generate"):
@@ -272,7 +346,21 @@ class InteractionLoop:
                         state=new_state,
                         short_term=self._short_term,
                         retrieved_memories=retrieved_memories,
+                        harness_recorder=harness_recorder,
                     )
+                harness_recorder.record(
+                    HarnessLayer.PRESENTATION,
+                    status="prepared",
+                    decision=decision.action.value,
+                    summary="ExpressionOutput prepared for the presentation layer.",
+                    metadata={
+                        "delay_ms": output.delay_ms,
+                        "visual_mode": output.visual_mode,
+                        "has_spoken_text": output.spoken_text is not None,
+                        "text_chars": len(output.text),
+                        "source": source,
+                    },
+                )
 
                 # Add entity turn to short-term memory.
                 with recorder.step("short_term.add_entity"):
@@ -330,6 +418,9 @@ class InteractionLoop:
                 error = str(exc)
                 raise
             finally:
+                get_harness_trace_store().record(
+                    harness_recorder.finish(success=success, error=error)
+                )
                 get_latency_tracker().record_turn(
                     recorder.finish(success=success, error=error)
                 )
@@ -394,13 +485,31 @@ class InteractionLoop:
         state: EntityState,
         events: list[PerceptionEvent],
         memory_influence: dict[str, Any],
+        harness_recorder: HarnessTraceRecorder | None = None,
     ) -> PolicyDecision:
-        decision = self._policy_selector.select(state, events, self._short_term)
+        decision = self._policy_selector.select(
+            state,
+            events,
+            self._short_term,
+            harness_recorder=harness_recorder,
+        )
         suggested_action = memory_influence.get("policy_influence", {}).get("suggested_action")
         if (
             decision.action == PolicyAction.RESPOND_OPENLY
             and suggested_action == "retrieve_selective_memory"
         ):
+            if harness_recorder is not None:
+                harness_recorder.record(
+                    HarnessLayer.POLICY,
+                    status="selected",
+                    rule_ids=["managed_memory:policy_influence"],
+                    decision=PolicyAction.RETRIEVE_SELECTIVE_MEMORY.value,
+                    summary="Managed memory influence upgraded policy to selective retrieval.",
+                    metadata={
+                        "previous_action": decision.action.value,
+                        "suggested_action": suggested_action,
+                    },
+                )
             return PolicyDecision(
                 action=PolicyAction.RETRIEVE_SELECTIVE_MEMORY,
                 rationale=f"managed-memory:{decision.rationale}",
@@ -623,6 +732,16 @@ def _apply_memory_state_influence(state: EntityState, influence: dict[str, Any])
         except (TypeError, ValueError):
             continue
     return EntityState.from_dict(values).clamp_all()
+
+
+def _changed_state_keys(before: EntityState, after: EntityState) -> list[str]:
+    before_values = before.to_dict()
+    after_values = after.to_dict()
+    return sorted(
+        key
+        for key, value in after_values.items()
+        if before_values.get(key) != value
+    )
 
 
 def _public_memory_to_retrieved(item: dict[str, Any]) -> RetrievedMemory:

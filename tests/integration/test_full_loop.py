@@ -16,6 +16,7 @@ import pytest
 
 from conscious_entity.core.loop import InteractionLoop
 from conscious_entity.db.migrations import run_migrations
+from conscious_entity.harness import get_harness_trace_store
 from conscious_entity.llm.claude_client import ClaudeClient, ClaudeCompletion
 from conscious_entity.perception.event_types import EventType
 from conscious_entity.state.state_core import EntityState
@@ -122,6 +123,38 @@ class TestBasicPipeline:
             "SELECT raw_text FROM interaction_log WHERE session_id='test-session' ORDER BY id DESC LIMIT 1"
         ).fetchone()
         assert row["raw_text"] == "Hello hello 能听到吗？"
+
+    def test_audio_turn_records_harness_trace_without_polluting_interaction_log(self, loop, db):
+        store = get_harness_trace_store()
+        store.clear()
+
+        output = loop.run_turn(
+            "Hello hello 能听到吗？",
+            source="audio_dialog",
+            input_metadata={
+                "input_mode": "voice_transcript",
+                "source": "audio_dialog",
+                "audio_session_id": "aud_test",
+            },
+        )
+
+        trace = store.latest()
+        assert trace is not None
+        public = trace.to_public_dict()
+        layers = public["summary"]["layers"]
+        assert public["metadata"]["input_mode"] == "voice_transcript"
+        assert layers["input"]["metadata"]["input_mode"] == "voice_transcript"
+        assert layers["prompt"]["metadata"]["input_context_injected"] is True
+        assert layers["output"]["status"] in {"passed", "filtered", "prepared"}
+        assert layers["presentation"]["status"] == "prepared"
+        assert output.text == "Something is present here."
+
+        row = db.execute(
+            "SELECT raw_text, expression_output FROM interaction_log "
+            "WHERE session_id='test-session' ORDER BY id DESC LIMIT 1"
+        ).fetchone()
+        assert row["raw_text"] == "Hello hello 能听到吗？"
+        assert "harness_" not in row["expression_output"]
 
 
 # ---------------------------------------------------------------------------

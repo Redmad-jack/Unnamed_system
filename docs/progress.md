@@ -8,8 +8,8 @@
 
 - 当前进行中：无
 - 当前可运行形态：CLI + 本地 FastAPI 开发者 API + Web 看板 + 可选 Vision 面板 + 可选 Audio Adapter + `/visitor` 临时身体表面；观众侧最终呈现方向是身体，不是传统 UI
-- 当前核心能力：Stranger 文本协议、状态机、短期/情节/反思记忆、可解释/可选 embedding 召回、Memory Preview、managed memory proposal → commit、influence log / curation、可选 YOLO person presence detection、可选火山 ASR 2.0 / TTS 2.0 双向流式 Audio Adapter
-- 当前验证基线：`PYTHONPATH=src python3 -m pytest -p no:debugging`，最近一次完整结果为 `340 passed`
+- 当前核心能力：Stranger 文本协议、状态机、短期/情节/反思记忆、可解释/可选 embedding 召回、Memory Preview、managed memory proposal → commit、influence log / curation、Runtime Harness Trace、可选 YOLO person presence detection、可选火山 ASR 2.0 / TTS 2.0 双向流式 Audio Adapter
+- 当前验证基线：`PYTHONPATH=src python3 -m pytest -p no:debugging`，最近一次完整结果为 `350 passed`
 - 当前注意事项：`AGENTS.md` 与 `CLAUDE.md` 有用户侧未提交差异；除非明确要求，不应在常规任务中触碰
 
 ---
@@ -28,6 +28,35 @@
 ---
 
 ## Changelog
+
+### 2026-05-12：Runtime Harness System v1
+
+- [x] 新增 `src/conscious_entity/harness/`：
+  - `HarnessLayer` / `HarnessLayerTrace` / `HarnessTrace` / `HarnessTraceRecorder` / `HarnessTraceStore`
+  - 使用进程内 ring buffer，不新增 SQLite 表，不污染 `interaction_log`
+- [x] `run_turn()` 每轮记录 harness trace：
+  - input：source、input_mode、perception event types
+  - state：snapshot、trigger events、changed fields
+  - memory：managed memory preview、policy suggestion、retrieval count
+  - policy：rule id、selected / vetoed、managed memory policy influence
+  - prompt：partial 名称、message count、memory/input context 注入情况
+  - generation / output / presentation：LLM 状态、constitution filter、ExpressionOutput 呈现信息
+- [x] 新增开发者只读 API：
+  - `GET /api/v1/harness/status`
+  - `GET /api/v1/harness/trace/recent?limit=20`
+- [x] 开发者面板 Runtime 区新增 Harness section：
+  - 显示每层最近状态、decision、trace id、prompt partial 名称
+  - 不显示完整 hidden prompt
+- [x] 文档：
+  - 新增 `docs/HARNESS_ARCHITECTURE.md`
+  - 更新 `docs/APP_FLOW.md` 与 `docs/BACKEND_STRUCTURE.md`
+- [x] 验证：
+  - `python3 -m py_compile src/conscious_entity/harness/__init__.py src/conscious_entity/harness/trace.py src/conscious_entity/core/loop.py src/conscious_entity/policy/policy_selector.py src/conscious_entity/expression/context_builder.py src/conscious_entity/expression/expression_engine.py src/conscious_entity/interfaces/api_routes.py src/conscious_entity/interfaces/api.py`
+  - `node --check src/conscious_entity/interfaces/static/dashboard.js`
+  - `PYTHONPATH=src python3 -m pytest -p no:debugging tests/unit/test_harness_trace.py tests/unit/test_context_builder.py tests/unit/test_expression_engine.py tests/unit/test_api_export.py tests/integration/test_full_loop.py::TestBasicPipeline::test_audio_turn_records_harness_trace_without_polluting_interaction_log`
+  - `56 passed`
+  - `PYTHONPATH=src python3 -m pytest -p no:debugging`
+  - `350 passed`
 
 ### 2026-05-12：语音 transcript 通道上下文进入 LLM prompt
 

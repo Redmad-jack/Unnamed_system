@@ -111,6 +111,31 @@
 
 ---
 
+### 1.5 Runtime Harness Trace（运行治理观测）
+
+Harness trace 是内存态调试结构，不是新的数据库模型。每轮 `run_turn()` 创建 `HarnessTraceRecorder`，按层记录当前回合被哪些规则、上下文和输出过滤影响。
+
+当前 layer：
+
+| Layer | 记录内容 |
+|---|---|
+| `input` | source、input_mode、perception event types |
+| `state` | snapshot、trigger event types、changed state fields |
+| `memory` | managed memory preview、policy suggestion、retrieval count |
+| `policy` | policy rule id、selected/vetoed decision、constitution veto reason |
+| `prompt` | prompt partial 名称、message count、memory/input context 是否注入 |
+| `generation` | LLM completed / fallback / truncated / skipped |
+| `output` | constitution expression filter 是否改写或发现 forbidden claim |
+| `presentation` | delay、visual_mode、spoken_text 状态 |
+
+重要边界：
+
+- 不写入 SQLite，不改变 `interaction_log`、memory tables 或现有行为输出
+- 不暴露完整 hidden prompt，只暴露 partial 名称和摘要
+- `config/constitution.yaml`、prompt 文件、memory 权重仍需人工确认后才能修改
+
+---
+
 ## 2. 数据库表结构（SQLite）
 
 ### 2.1 sessions
@@ -282,6 +307,7 @@ CREATE TABLE schema_version (
 | `src/conscious_entity/interfaces/api_runtime.py` | lifespan、runtime 配置、DB helper、loop rebuild、vision/audio manager 生命周期 |
 | `src/conscious_entity/interfaces/api_routes.py` | HTTP 路由处理 |
 | `src/conscious_entity/interfaces/api_audio.py` | 可选 audio adapter 路由：STT stream、audio dialog、TTS stream |
+| `src/conscious_entity/harness/` | Runtime Harness trace 类型、recorder 和进程内 ring buffer |
 | `src/conscious_entity/vision/runtime.py` | 可选 vision runtime：摄像头采集、YOLO person detection、presence event debounce |
 | `src/conscious_entity/audio/` | 可选 audio runtime：火山 STT/TTS 配置、stream id、协议封装 |
 
@@ -300,6 +326,8 @@ CREATE TABLE schema_version (
 | `GET` | `/api/v1/conversation/export` | 导出当前或指定 session 对话 JSON | 本地开发面板，当前无认证 |
 | `GET` | `/api/v1/stats/latency` | 查看内存态 turn step latency summary 与最近记录，不写入 SQLite | 本地开发面板，当前无认证 |
 | `GET` | `/api/v1/stats/audio-latency` | 查看内存态 STT/TTS latency summary 与最近记录，不保存原始音频 | 本地开发面板，当前无认证 |
+| `GET` | `/api/v1/harness/status` | 查看 Runtime Harness 启用状态、layer 列表和最近一轮摘要 | 本地开发面板，当前无认证 |
+| `GET` | `/api/v1/harness/trace/recent` | 查看最近 N 轮 Harness trace，进程内 ring buffer，不写 SQLite | 本地开发面板，当前无认证 |
 | `GET` | `/api/v1/vision/status` | 查看可选视觉 runtime 状态、依赖、模型路径和最新 detections | 本地开发面板，当前无认证 |
 | `POST` | `/api/v1/vision/start` | 启动 Mac 摄像头和 YOLO worker | 本地开发面板，当前无认证 |
 | `POST` | `/api/v1/vision/stop` | 停止 vision worker 并释放摄像头 | 本地开发面板，当前无认证 |

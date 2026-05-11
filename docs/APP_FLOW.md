@@ -10,7 +10,8 @@
 
 ```
 访客路径：  [输入/观察] → 感知层 → 状态更新 → managed memory preview → 策略/记忆召回 → LLM 表达 → [身体呈现]
-运营者路径：[本地开发者面板] ← 实时状态 / 对话历史 / Memory Preview / Managed Memory Curation
+治理观测：  Runtime Harness Trace 旁路记录 input/state/memory/policy/prompt/generation/output/presentation
+运营者路径：[本地开发者面板] ← 实时状态 / 对话历史 / Memory Preview / Managed Memory Curation / Harness Trace
 ```
 
 访客路径最终不是传统 user interface。当前 CLI / Web 输入只是开发阶段入口；第一版 `/visitor` 只作为临时 body-facing surface。当前可选 audio adapter 已能把浏览器麦克风 final transcript 送入现有 turn loop，并把合法 `ExpressionOutput` 转成火山 TTS stream id 播放。物理移动、循路和避障是更后面的身体层，在非移动的声音/视觉/外观能力稳定前不进入主实现。
@@ -52,8 +53,12 @@
 **当前流程（见 `src/conscious_entity/core/loop.py`）：**
 
 ```
+Step 0   创建 HarnessTraceRecorder
+          └─ 只记录运行时治理 trace，不改变本轮决策结果，不写 SQLite
+
 Step 1   感知层解析输入 → 生成 PerceptionEvent 列表
           └─ 可能产生多个事件：USER_SPOKE + SHUTDOWN_KEYWORD_DETECTED 等
+          └─ Input Harness 记录 source、input_mode、event_types
 
 Step 2   将用户输入加入短期记忆
           └─ 重复追问、连续服务请求等判断可以看见当前输入
@@ -62,10 +67,12 @@ Step 3   加载当前 EntityState，并对每个事件应用状态增量（state
           └─ 返回新 EntityState（不可变更新）
 
 Step 4   应用 per-turn 时间衰减
+          └─ State Harness 记录 snapshot、trigger events、changed fields
 
 Step 5   预览 managed memory influence
           └─ preview_influence() 不写入数据库
           └─ 只应用被允许的 state deltas，并通过 clamp_all() 限制到 [0,1]
+          └─ Memory Harness 记录 expression context 数量、policy suggestion、state delta keys
 
 Step 6   持久化状态快照到 SQLite（state_snapshots 表）
 
@@ -77,18 +84,21 @@ Step 8   策略选择
           └─ Constitution 先行检查是否允许
           └─ 返回 PolicyDecision（含 action + rationale）
           └─ managed memory policy influence 可把开放回应牵引为选择性记忆召回
+          └─ Policy Harness 记录 rule id、selected / vetoed、decision
 
 Step 9   [条件] 若策略或 managed memory 要求检索记忆
           └─ 检索当前 session 的最近对话、情节记忆和反思摘要
           └─ embedding 启用时，同 `session_type` 的语义池可参与 hybrid retrieval
           └─ 默认使用可解释排序；启用 embedding 时使用 hybrid retrieval
           └─ `RETRIEVE_MEMORY_FIRST` 取回材料后进入开放表达，其它检索策略保持原 action
+          └─ Memory Harness 记录 retrieval 路径和取回数量
 
 Step 10  表达层生成输出
           └─ ContextBuilder 组装 ExpressionContext
           └─ StyleMapper 计算 StyleHints（tone, delay, fragmentation, visual_mode）
           └─ ClaudeClient 调用 LLM
           └─ Constitution 过滤输出文本
+          └─ Prompt / Generation / Output Harness 记录 prompt partial、LLM 状态、constitution filter
 
 Step 11  将实体回应加入短期记忆缓冲
 
@@ -105,6 +115,7 @@ Step 14  触发反思检查
           └─ 标记已处理的情节记忆
 
 Step 15  发送 turn_complete 到 EventBus，供调试或后续 instrumentation 使用
+          └─ Presentation Harness 记录 delay、visual_mode、spoken_text 状态
 ```
 
 **成功状态：** 返回 ExpressionOutput（text + delay_ms + visual_mode），后续由身体呈现层映射为文字、声音、光、投影、停留或其它非 UI 输出
@@ -154,6 +165,8 @@ python scripts/inspect_state.py
 
 **Audio 工作区：** 开发者 Web 看板 `Runtime` 区域显示 Audio Adapter，可启动/停止浏览器麦克风，查看 provider、disabled reason、STT partial/final transcript、TTS stream id 和错误，并将 final transcript 送入现有对话回合。
 
+**Harness 工作区：** 开发者 Web 看板 `Runtime` 区域显示最近一轮 Harness layer 状态、decision 和摘要。Prompt Harness 只显示 partial 名称与摘要，不显示完整 hidden prompt。
+
 **访客 surface：** `/visitor` 只读取最新 `ExpressionOutput` 与少量 state 映射为文字、扰动、沉默和延迟感；如已启用声音，也只播放后端已创建的 `tts_stream_id`，不显示 dashboard 控件、内部规则、memory、prompt 或调试指标。
 
 ---
@@ -184,6 +197,8 @@ python scripts/replay_session.py --session-id <id>
 
 ```
 raw user input
+  ↓
+HarnessTraceRecorder.start(...)
   ↓
 TextParser / KeywordDetector / SalienceScorer
   → [PerceptionEvent, ...]
@@ -217,6 +232,8 @@ ManagedMemory.propose(...) → optional commit(...)
 ReflectionEngine.maybe_reflect(...)
   ↓
 EventBus.emit("turn_complete")
+  ↓
+HarnessTraceStore.record(...)
 ```
 
 ---

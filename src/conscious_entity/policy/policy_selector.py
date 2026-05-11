@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from conscious_entity.harness import HarnessLayer, HarnessTraceRecorder
 from conscious_entity.memory.short_term import ShortTermMemory
 from conscious_entity.perception.event_types import EventType, PerceptionEvent
 from conscious_entity.policy.constitution import Constitution
@@ -98,6 +99,7 @@ class PolicySelector:
         state: EntityState,
         events: list[PerceptionEvent],
         short_term: ShortTermMemory,
+        harness_recorder: HarnessTraceRecorder | None = None,
     ) -> PolicyDecision:
         """
         Evaluate rules top-to-bottom. Return the first rule whose conditions
@@ -129,6 +131,15 @@ class PolicySelector:
             if rule.get("constitution_check", False):
                 permitted, reason = self._constitution.check(action, state, events)
                 if not permitted:
+                    if harness_recorder is not None:
+                        harness_recorder.record(
+                            HarnessLayer.POLICY,
+                            status="vetoed",
+                            rule_ids=[rule_id],
+                            decision=action.value,
+                            summary="Constitution vetoed a matched policy action.",
+                            metadata={"reason": reason},
+                        )
                     logger.debug(
                         "Rule %r vetoed by Constitution: %s", rule_id, reason
                     )
@@ -148,6 +159,19 @@ class PolicySelector:
 
             rationale = f"rule:{rule_id}"
             logger.debug("Policy selected: action=%s rationale=%s", action.value, rationale)
+            if harness_recorder is not None:
+                harness_recorder.record(
+                    HarnessLayer.POLICY,
+                    status="selected",
+                    rule_ids=[rule_id],
+                    decision=action.value,
+                    summary=f"Policy rule selected {action.value}.",
+                    metadata={
+                        "rationale": rationale,
+                        "retrieve_memory": bool(retrieve_query),
+                        "params": params,
+                    },
+                )
 
             return PolicyDecision(
                 action=action,
@@ -159,6 +183,15 @@ class PolicySelector:
 
         # No rule matched — use unconditional fallback.
         logger.debug("Policy fallback: %s", _FALLBACK_RATIONALE)
+        if harness_recorder is not None:
+            harness_recorder.record(
+                HarnessLayer.POLICY,
+                status="selected",
+                rule_ids=["default:fallback"],
+                decision=_FALLBACK_ACTION.value,
+                summary="Policy fallback selected.",
+                metadata={"rationale": _FALLBACK_RATIONALE},
+            )
         return PolicyDecision(
             action=_FALLBACK_ACTION,
             rationale=_FALLBACK_RATIONALE,

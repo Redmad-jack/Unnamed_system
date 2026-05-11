@@ -11,6 +11,7 @@ from fastapi import APIRouter, HTTPException, Request, WebSocket, WebSocketDisco
 from fastapi.responses import FileResponse, Response
 
 from conscious_entity.core.config_loader import load_all_configs
+from conscious_entity.harness import get_harness_trace_store
 from conscious_entity.interfaces.api_models import (
     DialogRequest,
     EmbeddingConfigRequest,
@@ -119,6 +120,20 @@ async def dialog(body: DialogRequest, request: Request):
         "visual_mode": output.visual_mode,
         "truncated": output.truncated,
         "stop_reason": output.stop_reason,
+    }
+
+
+@router.get("/api/v1/harness/status")
+async def harness_status():
+    return get_harness_trace_store().status()
+
+
+@router.get("/api/v1/harness/trace/recent")
+async def harness_trace_recent(limit: int = 20):
+    traces = get_harness_trace_store().recent(limit)
+    return {
+        "count": len(traces),
+        "recent": [trace.to_public_dict() for trace in traces],
     }
 
 

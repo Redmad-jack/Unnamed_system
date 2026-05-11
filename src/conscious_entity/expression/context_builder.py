@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from conscious_entity.expression.style_mapper import StyleHints
+from conscious_entity.harness import HarnessLayer, HarnessTraceRecorder
 from conscious_entity.memory.short_term import ShortTermMemory
 from conscious_entity.policy.policy_types import PolicyAction, PolicyDecision
 from conscious_entity.state.state_core import EntityState
@@ -73,6 +74,7 @@ class ContextBuilder:
         style: StyleHints,
         short_term: ShortTermMemory,
         retrieved_memories: list[Any],  # list[RetrievedMemory]; v0.1 always []
+        harness_recorder: HarnessTraceRecorder | None = None,
     ) -> ExpressionContext:
         state_block = self._render_state(state)
         memory_block = self._render_memories(retrieved_memories)
@@ -95,6 +97,25 @@ class ContextBuilder:
         )
 
         messages = _build_messages(short_term)
+
+        if harness_recorder is not None:
+            prompt_partials = ["expression_system", "state_context", "policy_instruction", "style_hints", "constitution_block"]
+            if memory_block:
+                prompt_partials.append("memory_context")
+            if input_context_block:
+                prompt_partials.append("input_context")
+            harness_recorder.record(
+                HarnessLayer.PROMPT,
+                status="assembled",
+                summary="Expression prompt assembled from configured partials.",
+                metadata={
+                    "partials": prompt_partials,
+                    "message_count": len(messages),
+                    "memory_context_injected": bool(memory_block),
+                    "input_context_injected": bool(input_context_block),
+                    "max_tokens": style.max_tokens,
+                },
+            )
 
         raw_prompt = (
             f"SYSTEM:\n{system_prompt}\n\n"
