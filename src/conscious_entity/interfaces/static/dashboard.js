@@ -437,8 +437,13 @@
     useEffect(() => {
       load();
       const onReset = () => load();
+      const onTurnComplete = () => load();
+      window.addEventListener("entity:turn-complete", onTurnComplete);
       window.addEventListener("entity:session-reset", onReset);
-      return () => window.removeEventListener("entity:session-reset", onReset);
+      return () => {
+        window.removeEventListener("entity:turn-complete", onTurnComplete);
+        window.removeEventListener("entity:session-reset", onReset);
+      };
     }, [load]);
 
     useEffect(() => {
@@ -645,8 +650,8 @@
     useInterval(load, 10000);
 
     return h(React.Fragment, null,
-      h(ConfigSection, { title: "LLM Provider", data: llm, fields: ["mode", "source", "ENTITY_LLM_MODEL", "ANTHROPIC_BASE_URL", "ENTITY_LLM_MESSAGES_ENDPOINT", "error"] }),
-      h(ConfigSection, { title: "Embedding Provider", data: embedding, fields: ["mode", "source", "ENTITY_EMBEDDING_MODEL", "ENTITY_EMBEDDING_BASE_URL", "ENTITY_EMBEDDING_ENDPOINT", "error"] }),
+      h(LLMConfigSection, { data: llm, onSaved: load }),
+      h(EmbeddingConfigSection, { data: embedding, onSaved: load }),
       h(AudioPane),
       h("div", { className: "section" },
         h("div", { className: "section-title" }, "Diagnostics"),
@@ -659,6 +664,199 @@
         )) : h("div", { className: "dim" }, "Loading diagnostics…"),
       ),
       h(LatencySection, { latency, audioLatency }),
+    );
+  }
+
+  function LLMConfigSection({ data, onSaved }) {
+    const [mode, setMode] = useState("official");
+    const [model, setModel] = useState("");
+    const [apiKey, setApiKey] = useState("");
+    const [authToken, setAuthToken] = useState("");
+    const [baseUrl, setBaseUrl] = useState("");
+    const [messagesEndpoint, setMessagesEndpoint] = useState("");
+    const [disableProxy, setDisableProxy] = useState(false);
+    const [saving, setSaving] = useState(false);
+    const [error, setError] = useState("");
+
+    useEffect(() => {
+      if (!data) return;
+      setMode(data.mode || "official");
+      setModel(data.ENTITY_LLM_MODEL || "");
+      setBaseUrl(data.ANTHROPIC_BASE_URL || "");
+      setMessagesEndpoint(data.ENTITY_LLM_MESSAGES_ENDPOINT || "");
+      setDisableProxy(String(data.ENTITY_LLM_DISABLE_SYSTEM_PROXY || "").toLowerCase() === "true");
+      setApiKey("");
+      setAuthToken("");
+      setError(data.error || "");
+    }, [data]);
+
+    const save = useCallback(async () => {
+      setSaving(true);
+      setError("");
+      try {
+        await fetchJSON("/api/v1/config/llm", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            mode,
+            model,
+            api_key: apiKey,
+            auth_token: authToken,
+            base_url: baseUrl,
+            messages_endpoint: messagesEndpoint,
+            disable_system_proxy: disableProxy,
+          }),
+        });
+        await onSaved();
+      } catch (err) {
+        setError(err.message);
+      } finally {
+        setSaving(false);
+      }
+    }, [apiKey, authToken, baseUrl, disableProxy, messagesEndpoint, mode, model, onSaved]);
+
+    return h("div", { className: "section" },
+      h("div", { className: "section-title" }, "LLM Provider"),
+      data ? h("table", null, h("tbody", null,
+        h("tr", null, h("td", null, "Source"), h("td", null, data.source || "—")),
+        h("tr", null, h("td", null, "Current key"), h("td", null, data.ANTHROPIC_API_KEY || data.ANTHROPIC_AUTH_TOKEN || "—")),
+      )) : h("div", { className: "dim" }, "Loading LLM config…"),
+      h("div", { className: "form-grid" },
+        h("label", null, "Mode",
+          h("select", { value: mode, onChange: (event) => setMode(event.target.value) },
+            h("option", { value: "official" }, "official"),
+            h("option", { value: "supplier" }, "supplier"),
+            h("option", { value: "custom_endpoint" }, "custom endpoint"),
+          ),
+        ),
+        h("label", null, "Model",
+          h("input", { value: model, onChange: (event) => setModel(event.target.value), placeholder: "ENTITY_LLM_MODEL" }),
+        ),
+        h("label", null, "API key",
+          h("input", { value: apiKey, onChange: (event) => setApiKey(event.target.value), placeholder: "leave blank to keep current", type: "password" }),
+        ),
+        h("label", null, "Auth token",
+          h("input", { value: authToken, onChange: (event) => setAuthToken(event.target.value), placeholder: "leave blank to keep current", type: "password" }),
+        ),
+        h("label", null, "Base URL",
+          h("input", { value: baseUrl, onChange: (event) => setBaseUrl(event.target.value), placeholder: "ANTHROPIC_BASE_URL" }),
+        ),
+        h("label", null, "Messages endpoint",
+          h("input", { value: messagesEndpoint, onChange: (event) => setMessagesEndpoint(event.target.value), placeholder: "optional custom endpoint" }),
+        ),
+        h("label", { className: "wide inline-check" },
+          h("input", { type: "checkbox", checked: disableProxy, onChange: (event) => setDisableProxy(event.target.checked) }),
+          " Disable system proxy",
+        ),
+      ),
+      h("div", { className: "toolbar" }, h("button", { className: "btn-sm", onClick: save, disabled: saving }, saving ? "Saving…" : "Apply LLM")),
+      error ? h("div", { className: "err" }, error) : null,
+    );
+  }
+
+  function EmbeddingConfigSection({ data, onSaved }) {
+    const [mode, setMode] = useState("disabled");
+    const [model, setModel] = useState("");
+    const [apiKey, setApiKey] = useState("");
+    const [baseUrl, setBaseUrl] = useState("");
+    const [endpoint, setEndpoint] = useState("");
+    const [saving, setSaving] = useState(false);
+    const [testing, setTesting] = useState(false);
+    const [error, setError] = useState("");
+    const [testResult, setTestResult] = useState("");
+
+    useEffect(() => {
+      if (!data) return;
+      setMode(data.mode || "disabled");
+      setModel(data.ENTITY_EMBEDDING_MODEL || "");
+      setBaseUrl(data.ENTITY_EMBEDDING_BASE_URL || "");
+      setEndpoint(data.ENTITY_EMBEDDING_ENDPOINT || "");
+      setApiKey("");
+      setError(data.error || "");
+      setTestResult("");
+    }, [data]);
+
+    const payload = useCallback(() => ({
+      mode,
+      model,
+      api_key: apiKey,
+      base_url: baseUrl,
+      endpoint,
+    }), [apiKey, baseUrl, endpoint, mode, model]);
+
+    const applyConfig = useCallback(async () => {
+      await fetchJSON("/api/v1/config/embedding", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload()),
+      });
+      await onSaved();
+    }, [onSaved, payload]);
+
+    const save = useCallback(async () => {
+      setSaving(true);
+      setError("");
+      setTestResult("");
+      try {
+        await applyConfig();
+      } catch (err) {
+        setError(err.message);
+      } finally {
+        setSaving(false);
+      }
+    }, [applyConfig]);
+
+    const test = useCallback(async () => {
+      setTesting(true);
+      setError("");
+      setTestResult("");
+      try {
+        await applyConfig();
+        const result = await fetchJSON("/api/v1/config/embedding/test", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ text: "memory retrieval test" }),
+        });
+        setTestResult(`${result.model} · ${result.dimension} dims · ${result.latency_ms} ms`);
+      } catch (err) {
+        setError(err.message);
+      } finally {
+        setTesting(false);
+      }
+    }, [applyConfig]);
+
+    return h("div", { className: "section" },
+      h("div", { className: "section-title" }, "Embedding Provider"),
+      data ? h("table", null, h("tbody", null,
+        h("tr", null, h("td", null, "Source"), h("td", null, data.source || "—")),
+        h("tr", null, h("td", null, "Current key"), h("td", null, data.ENTITY_EMBEDDING_API_KEY || "—")),
+      )) : h("div", { className: "dim" }, "Loading embedding config…"),
+      h("div", { className: "form-grid" },
+        h("label", null, "Mode",
+          h("select", { value: mode, onChange: (event) => setMode(event.target.value) },
+            h("option", { value: "disabled" }, "disabled"),
+            h("option", { value: "openai_compatible" }, "openai compatible"),
+          ),
+        ),
+        h("label", null, "Model",
+          h("input", { value: model, onChange: (event) => setModel(event.target.value), placeholder: "ENTITY_EMBEDDING_MODEL" }),
+        ),
+        h("label", null, "API key",
+          h("input", { value: apiKey, onChange: (event) => setApiKey(event.target.value), placeholder: "leave blank to keep current", type: "password" }),
+        ),
+        h("label", null, "Base URL",
+          h("input", { value: baseUrl, onChange: (event) => setBaseUrl(event.target.value), placeholder: "ENTITY_EMBEDDING_BASE_URL" }),
+        ),
+        h("label", { className: "wide" }, "Endpoint",
+          h("input", { value: endpoint, onChange: (event) => setEndpoint(event.target.value), placeholder: "optional full embeddings endpoint" }),
+        ),
+      ),
+      h("div", { className: "toolbar" },
+        h("button", { className: "btn-sm", onClick: save, disabled: saving || testing }, saving ? "Saving…" : "Apply Embedding"),
+        h("button", { className: "btn-sm", onClick: test, disabled: saving || testing || mode === "disabled" }, testing ? "Testing…" : "Test Embedding"),
+      ),
+      testResult ? h("div", { className: "ok" }, testResult) : null,
+      error ? h("div", { className: "err" }, error) : null,
     );
   }
 
@@ -900,7 +1098,7 @@
         }, voiceMode ? "Voice Auto On" : "Voice Auto Off"),
         h("button", { className: "btn-sm", onClick: sendFinal, disabled: dialogPending }, dialogPending ? "Thinking" : "Send Final"),
         h("button", { className: "btn-sm", onClick: speakLatest }, "Speak Latest"),
-        h("button", { className: "btn-sm", onClick: loadStatus }, "Reconnect"),
+        h("button", { className: "btn-sm", onClick: loadStatus }, "Refresh Status"),
       ),
       h("div", { className: "kv-grid audio-kv" },
         h("span", null, "Provider"), h("span", null, status ? status.provider : "—"),

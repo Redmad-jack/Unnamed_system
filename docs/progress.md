@@ -28,6 +28,22 @@
 
 ## Changelog
 
+### 2026-05-11：Dashboard Runtime 同步与配置入口修复
+
+- [x] 修复语音回合前端显示同步：
+  - `DialogPanel` 监听 `entity:turn-complete` 后重新读取 `/api/v1/interaction-log`
+  - 语音 `/api/v1/audio/dialog` 写入的同一份 `interaction_log` 会回到主 Dialog 视图
+- [x] Audio Adapter 按钮文案校正：
+  - `Reconnect` 改为 `Refresh Status`，避免误解为重连麦克风 WebSocket
+- [x] Runtime 中补回 LLM / Embedding 运行时配置表单：
+  - LLM 支持 mode、model、API key、auth token、base URL、custom messages endpoint、disable proxy
+  - Embedding 支持 disabled/openai-compatible、model、API key、base URL、endpoint，并保留 Test Embedding
+  - 密钥输入默认留空；留空表示沿用当前 env/runtime 值，不把脱敏值提交回后端
+- [x] 验证：
+  - `node --check src/conscious_entity/interfaces/static/dashboard.js`
+  - `PYTHONPATH=src python3 -m pytest -p no:debugging tests/unit/test_api_export.py tests/unit/test_api_audio.py`
+  - `17 passed`
+
 ### 2026-05-11：Turn / Audio latency 观测层
 
 - [x] 新增内存态 latency tracker，不写入 SQLite，不改变对话执行顺序：

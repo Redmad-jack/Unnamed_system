@@ -45,6 +45,9 @@ Status values: `in_progress`, `done`
 
 | File | Agent | Status | Started |
 |------|-------|--------|---------|
+| src/conscious_entity/interfaces/static/dashboard.js | Codex | done | 2026-05-11 18:55 CST |
+| docs/progress.md | Codex | done | 2026-05-11 18:55 CST |
+| agents/task-registry.md | Codex | done | 2026-05-11 18:55 CST |
 | src/conscious_entity/telemetry/latency.py | Codex | done | 2026-05-11 18:20 CST |
 | src/conscious_entity/core/loop.py | Codex | done | 2026-05-11 18:20 CST |
 | src/conscious_entity/expression/expression_engine.py | Codex | done | 2026-05-11 18:20 CST |
