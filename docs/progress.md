@@ -28,6 +28,24 @@
 
 ## Changelog
 
+### 2026-05-11：Audio Adapter 播放解锁与主对话同步加固
+
+- [x] 修正 Audio Adapter 状态显示语义：
+  - `Provider status` 表示火山 audio runtime 是否可用
+  - `Mic` 单独显示 `recording` / `stopped`
+  - `Playback` 单独显示 `locked` / `ready` / `blocked`
+- [x] 加固语音回合到主 Dialog 的前端同步：
+  - `/audio/dialog` 返回后通过 `entity:turn-complete` 携带输入和输出 payload
+  - 主 Dialog 先即时追加语音输入/实体输出，再延迟刷新 `/interaction-log`
+- [x] 增加浏览器播放解锁路径：
+  - `Mic Start` 会先尝试播放一段静音音频来解锁后续 TTS 自动播放
+  - 新增 `Enable Playback` / `Playback Ready` 按钮作为手动解锁兜底
+  - 自动播放被浏览器拦截时显示明确提示，不再直接暴露底层 `play()` 异常文本
+- [x] 验证：
+  - `node --check src/conscious_entity/interfaces/static/dashboard.js`
+  - `PYTHONPATH=src python3 -m pytest -p no:debugging tests/unit/test_api_audio.py tests/unit/test_api_export.py`
+  - `17 passed`
+
 ### 2026-05-11：Dashboard Runtime 同步与配置入口修复
 
 - [x] 修复语音回合前端显示同步：

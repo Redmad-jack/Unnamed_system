@@ -45,6 +45,10 @@ Status values: `in_progress`, `done`
 
 | File | Agent | Status | Started |
 |------|-------|--------|---------|
+| src/conscious_entity/interfaces/static/dashboard.js | Codex | done | 2026-05-11 19:15 CST |
+| src/conscious_entity/interfaces/static/dashboard.css | Codex | done | 2026-05-11 19:15 CST |
+| docs/progress.md | Codex | done | 2026-05-11 19:15 CST |
+| agents/task-registry.md | Codex | done | 2026-05-11 19:15 CST |
 | src/conscious_entity/interfaces/static/dashboard.js | Codex | done | 2026-05-11 18:55 CST |
 | docs/progress.md | Codex | done | 2026-05-11 18:55 CST |
 | agents/task-registry.md | Codex | done | 2026-05-11 18:55 CST |

@@ -17,6 +17,9 @@
     bottom: 430,
   };
 
+  const SILENT_WAV =
+    "data:audio/wav;base64,UklGRigAAABXQVZFZm10IBAAAAABAAEAESsAACJWAAACABAAZGF0YQQAAAAAAA==";
+
   function clamp(value, min, max) {
     return Math.max(min, Math.min(max, value));
   }
@@ -437,7 +440,27 @@
     useEffect(() => {
       load();
       const onReset = () => load();
-      const onTurnComplete = () => load();
+      const onTurnComplete = (event) => {
+        const detail = event.detail || {};
+        if (detail.source === "audio_dialog" && detail.output) {
+          const now = new Date().toISOString();
+          setRows((current) => [...current, {
+            id: `audio-user-${Date.now()}`,
+            role: "user",
+            raw_text: detail.input_text || "",
+            turn_at: now,
+          }, {
+            id: `audio-entity-${Date.now()}`,
+            role: "entity",
+            expression_output: detail.output.output_text || "",
+            delay_ms: detail.output.delay_ms,
+            visual_mode: detail.output.visual_mode,
+            policy_action: "audio_dialog",
+            turn_at: now,
+          }]);
+        }
+        window.setTimeout(load, 250);
+      };
       window.addEventListener("entity:turn-complete", onTurnComplete);
       window.addEventListener("entity:session-reset", onReset);
       return () => {
@@ -896,6 +919,8 @@
     const [voiceMode, setVoiceMode] = useState(true);
     const [voiceActivity, setVoiceActivity] = useState("idle");
     const [dialogPending, setDialogPending] = useState(false);
+    const [playbackUnlocked, setPlaybackUnlocked] = useState(false);
+    const [playbackBlocked, setPlaybackBlocked] = useState(false);
     const socketRef = useRef(null);
     const mediaRef = useRef(null);
     const audioContextRef = useRef(null);
@@ -907,10 +932,12 @@
     const recordingRef = useRef(false);
     const dialogPendingRef = useRef(false);
     const suppressMicRef = useRef(false);
+    const playbackUnlockedRef = useRef(false);
 
     useEffect(() => { voiceModeRef.current = voiceMode; }, [voiceMode]);
     useEffect(() => { recordingRef.current = recording; }, [recording]);
     useEffect(() => { dialogPendingRef.current = dialogPending; }, [dialogPending]);
+    useEffect(() => { playbackUnlockedRef.current = playbackUnlocked; }, [playbackUnlocked]);
 
     const loadStatus = useCallback(async () => {
       try {
@@ -947,18 +974,50 @@
 
     useEffect(() => stopMic, [stopMic]);
 
+    const unlockPlayback = useCallback(async () => {
+      if (!playerRef.current) return false;
+      const player = playerRef.current;
+      const previousSrc = player.getAttribute("src") || "";
+      const previousMuted = player.muted;
+      try {
+        player.muted = true;
+        player.src = SILENT_WAV;
+        await player.play();
+        player.pause();
+        player.currentTime = 0;
+        if (previousSrc) player.src = previousSrc;
+        player.muted = previousMuted;
+        playbackUnlockedRef.current = true;
+        setPlaybackUnlocked(true);
+        setPlaybackBlocked(false);
+        return true;
+      } catch {
+        player.muted = previousMuted;
+        if (previousSrc) player.src = previousSrc;
+        playbackUnlockedRef.current = false;
+        setPlaybackUnlocked(false);
+        setPlaybackBlocked(true);
+        setError("Playback is blocked by the browser. Click Enable Playback, then Speak Latest.");
+        return false;
+      }
+    }, []);
+
     const playStream = useCallback(async (streamId) => {
       if (!streamId || !playerRef.current) return false;
       suppressMicRef.current = true;
       setVoiceActivity("speaking");
+      setPlaybackBlocked(false);
       playerRef.current.src = `/api/v1/audio/tts/stream/${encodeURIComponent(streamId)}?t=${Date.now()}`;
       try {
         await playerRef.current.play();
+        playbackUnlockedRef.current = true;
+        setPlaybackUnlocked(true);
         return true;
       } catch (err) {
         suppressMicRef.current = false;
         setVoiceActivity(recordingRef.current ? "listening" : "idle");
-        setError(err.message || String(err));
+        setPlaybackBlocked(true);
+        setError("Playback is blocked by the browser. Click Enable Playback or Speak Latest.");
         return false;
       }
     }, []);
@@ -980,7 +1039,13 @@
           body: JSON.stringify({ transcript }),
         });
         setLatestDialog(result);
-        window.dispatchEvent(new CustomEvent("entity:turn-complete"));
+        window.dispatchEvent(new CustomEvent("entity:turn-complete", {
+          detail: {
+            source: "audio_dialog",
+            input_text: transcript,
+            output: result,
+          },
+        }));
         loadStatus();
         if (result.tts_stream_id) {
           playbackStarted = await playStream(result.tts_stream_id);
@@ -1002,6 +1067,7 @@
       try {
         setError("");
         setPartial("");
+        await unlockPlayback();
         const stream = await navigator.mediaDevices.getUserMedia({
           audio: { echoCancellation: true, noiseSuppression: true, channelCount: 1 },
         });
@@ -1073,7 +1139,7 @@
         stopMic();
         setError(err.message || String(err));
       }
-    }, [recording, status, stopMic, submitTranscript]);
+    }, [recording, status, stopMic, submitTranscript, unlockPlayback]);
 
     const sendFinal = useCallback(async () => {
       submitTranscript(finalText);
@@ -1092,6 +1158,7 @@
       h("div", { className: "toolbar" },
         h("button", { className: "btn-sm", onClick: startMic, disabled: recording }, recording ? "Mic On" : "Mic Start"),
         h("button", { className: "btn-sm", onClick: stopMic, disabled: !recording }, "Mic Stop"),
+        h("button", { className: `btn-sm ${playbackUnlocked ? "active" : ""}`, onClick: unlockPlayback }, playbackUnlocked ? "Playback Ready" : "Enable Playback"),
         h("button", {
           className: `btn-sm ${voiceMode ? "active" : ""}`,
           onClick: () => setVoiceMode((value) => !value),
@@ -1102,7 +1169,9 @@
       ),
       h("div", { className: "kv-grid audio-kv" },
         h("span", null, "Provider"), h("span", null, status ? status.provider : "—"),
-        h("span", null, "Status"), h("span", { className: enabled ? "ok" : "err" }, status ? (enabled ? "enabled" : status.reason) : "loading"),
+        h("span", null, "Provider status"), h("span", { className: enabled ? "ok" : "err" }, status ? (enabled ? "enabled" : status.reason) : "loading"),
+        h("span", null, "Mic"), h("span", { className: recording ? "ok" : "dim" }, recording ? "recording" : "stopped"),
+        h("span", null, "Playback"), h("span", { className: playbackBlocked ? "err" : playbackUnlocked ? "ok" : "dim" }, playbackBlocked ? "blocked" : playbackUnlocked ? "ready" : "locked"),
         h("span", null, "Voice mode"), h("span", { className: voiceMode && recording ? "ok" : "" }, `${voiceMode ? "auto" : "manual"} · ${voiceActivity}`),
         h("span", null, "STT"), h("span", null, status && status.stt ? `${status.stt.sample_rate || "—"}Hz · ${status.stt.chunk_ms || "—"}ms · ${status.stt.active_sessions || 0} active` : "—"),
         h("span", null, "STT endpoint"), h("span", null, status && status.stt ? `${status.stt.endpoint || "—"} · ${status.stt.resource_id || "—"}` : "—"),
