@@ -8,8 +8,8 @@
 
 - 当前进行中：无
 - 当前可运行形态：CLI + 本地 FastAPI 开发者 API + Web 看板 + 可选 Vision 面板 + 可选 Audio Adapter + `/visitor` 临时身体表面；观众侧最终呈现方向是身体，不是传统 UI
-- 当前核心能力：Stranger 文本协议、状态机、短期/情节/反思记忆、可解释/可选 embedding 召回、Memory Preview、managed memory proposal → commit、influence log / curation、可选 YOLO person presence detection、可选火山 STT/TTS 语音适配层
-- 当前验证基线：`PYTHONPATH=src python3 -m pytest -p no:debugging`，最近一次结果为 `319 passed`
+- 当前核心能力：Stranger 文本协议、状态机、短期/情节/反思记忆、可解释/可选 embedding 召回、Memory Preview、managed memory proposal → commit、influence log / curation、可选 YOLO person presence detection、可选火山 ASR 2.0 / TTS 2.0 双向流式 Audio Adapter
+- 当前验证基线：`PYTHONPATH=src python3 -m pytest -p no:debugging`，最近一次结果为 `325 passed`
 - 当前注意事项：`AGENTS.md` 与 `CLAUDE.md` 有用户侧未提交差异；除非明确要求，不应在常规任务中触碰
 
 ---
@@ -19,7 +19,7 @@
 - [ ] 使用已轮换的真实供应商凭证做一轮 CLI/API 联调，确认自定义模型名与网关鉴权在目标环境可用
 - [ ] 继续观察真实对话中的记忆连续性：Memory Preview 是否能解释召回来源，managed memory influence 是否可审计且不越界
 - [ ] 手动联调视觉层：安装 `.[dev,api,vision]`，配置本地 `ENTITY_VISION_MODEL_PATH`，确认 Mac 摄像头授权、实时标注帧、detections 和 presence events
-- [ ] 使用真实火山凭证做一轮 Audio Adapter 联调：确认浏览器麦克风权限、STT partial/final、`/audio/dialog`、TTS HTTP streaming、`/visitor` enable sound
+- [ ] 使用真实火山新版控制台 API Key 和 TTS 2.0 音色做一轮 Audio Adapter 联调：确认浏览器麦克风权限、ASR 2.0 partial/final、`/audio/dialog`、TTS 2.0 bidirection HTTP playback、`/visitor` enable sound
 - [ ] 继续规划非移动身体阶段：身体外观、声音风格、显示/投影/光的呈现映射；更完整空间感知仍待设计
 - [ ] 物理移动、循路、避障、底盘控制和安全边界放到更后阶段，等非物理身体通道稳定后再实现
 - [ ] 部署认证、访客身份策略与展期终止仪式仍待设计确认
@@ -27,6 +27,32 @@
 ---
 
 ## Changelog
+
+### 2026-05-11：火山 ASR 2.0 / TTS 2.0 双向流式协议升级
+
+- [x] 将 Audio Adapter 的火山默认接口切换为新版双向流式链路：
+  - STT 默认 `wss://openspeech.bytedance.com/api/v3/sauc/bigmodel_async`
+  - TTS 默认 `wss://openspeech.bytedance.com/api/v3/tts/bidirection`
+  - 新版控制台统一 API Key 仍为推荐鉴权路径，旧 AppID / Access Token 仅保留 fallback
+- [x] 实现火山 V3 WebSocket binary protocol：
+  - ASR full client request / audio-only request / final packet 使用 4-byte header、big-endian payload size、gzip payload
+  - ASR response/error frame 解析支持 `utterances[].definite` → final transcript
+  - TTS bidirection 支持 StartConnection、StartSession、TaskRequest、FinishSession、TTSResponse audio、SessionFinished / SessionFailed
+- [x] 保持现有安全边界和 public API：
+  - `/api/v1/audio/stt/stream`、`/api/v1/audio/dialog`、`/api/v1/audio/tts/stream/{stream_id}` 不改路径
+  - STT partial 仍只显示，final transcript 才进入现有 turn loop
+  - TTS 仍只朗读合法 `ExpressionOutput` 派生的 `tts_stream_id`
+- [x] 开发者面板 Audio 区补充 endpoint、resource id、TTS sample rate 和 logid 显示，便于火山联调排错
+- [x] 文档与环境模板同步：
+  - `.env.example` / `docs/TECH_STACK.md` 增加 `ENTITY_AUDIO_TTS_SAMPLE_RATE=24000`
+  - TTS endpoint 从单向流式更新为双向流式
+- [x] 验证：
+  - `PYTHONPATH=src python3 -m py_compile src/conscious_entity/audio/*.py src/conscious_entity/interfaces/api_audio.py`
+  - `node --check src/conscious_entity/interfaces/static/dashboard.js`
+  - `PYTHONPATH=src python3 -m pytest -p no:debugging tests/unit/test_audio_config.py tests/unit/test_speech_text.py tests/unit/test_audio_manager.py tests/unit/test_volcengine_audio.py tests/unit/test_api_audio.py tests/unit/test_api_export.py tests/integration/test_full_loop.py`
+  - `75 passed`
+  - `PYTHONPATH=src python3 -m pytest -p no:debugging`
+  - `325 passed`
 
 ### 2026-05-09：火山 STT/TTS Audio Adapter 第一版
 

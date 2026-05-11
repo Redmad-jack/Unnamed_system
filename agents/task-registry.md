@@ -45,6 +45,18 @@ Status values: `in_progress`, `done`
 
 | File | Agent | Status | Started |
 |------|-------|--------|---------|
+| src/conscious_entity/audio/config.py | Codex | done | 2026-05-11 16:38 CST |
+| src/conscious_entity/audio/types.py | Codex | done | 2026-05-11 16:38 CST |
+| src/conscious_entity/audio/volcengine_protocol.py | Codex | done | 2026-05-11 16:38 CST |
+| src/conscious_entity/audio/volcengine_stt.py | Codex | done | 2026-05-11 16:38 CST |
+| src/conscious_entity/audio/volcengine_tts.py | Codex | done | 2026-05-11 16:38 CST |
+| src/conscious_entity/interfaces/static/dashboard.js | Codex | done | 2026-05-11 16:38 CST |
+| .env.example | Codex | done | 2026-05-11 16:38 CST |
+| tests/unit/test_audio_config.py | Codex | done | 2026-05-11 16:38 CST |
+| tests/unit/test_volcengine_audio.py | Codex | done | 2026-05-11 16:38 CST |
+| docs/TECH_STACK.md | Codex | done | 2026-05-11 16:38 CST |
+| docs/progress.md | Codex | done | 2026-05-11 16:38 CST |
+| agents/task-registry.md | Codex | done | 2026-05-11 16:38 CST |
 | .env | Codex | done | 2026-05-11 16:29 CST |
 | agents/task-registry.md | Codex | done | 2026-05-11 16:29 CST |
 | src/conscious_entity/interfaces/static/index.html | Codex | done | 2026-05-07 10:55 |

@@ -48,8 +48,10 @@ def test_audio_config_api_key_auth_and_defaults(monkeypatch):
     assert config.disabled_reason() is None
     assert config.stt_endpoint == DEFAULT_STT_ENDPOINT
     assert config.tts_endpoint == DEFAULT_TTS_ENDPOINT
+    assert config.tts_sample_rate == 24000
     assert public["auth"]["api_key"] != "secret-api-key-value"
     assert "secret-api-key-value" not in str(public)
+    assert public["tts"]["sample_rate"] == 24000
 
 
 def test_audio_config_app_token_fallback_auth(monkeypatch):

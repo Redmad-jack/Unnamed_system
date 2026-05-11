@@ -26,9 +26,11 @@ class VolcengineSTTClient:
         headers = self.protocol.build_headers(
             self.config,
             resource_id=self.config.stt_resource_id,
+            service="asr",
         )
         try:
             async with _connect(websockets, self.config.stt_endpoint, headers) as websocket:
+                self.last_logid = _response_header(websocket, "X-Tt-Logid")
                 await websocket.send(
                     self.protocol.build_stt_start_packet(self.config, session_id=session_id)
                 )
@@ -90,6 +92,37 @@ class VolcengineSTTClient:
             return None
         if isinstance(event, AudioError):
             raise AudioRuntimeError(event.code, event.message, logid=event.logid)
+        if self.last_logid and event.logid is None:
+            event = TranscriptEvent(
+                text=event.text,
+                is_final=event.is_final,
+                session_id=event.session_id,
+                logid=self.last_logid,
+            )
         if event.logid:
             self.last_logid = event.logid
         return event
+
+
+def _response_header(websocket: Any, name: str) -> str | None:
+    headers = getattr(websocket, "response_headers", None)
+    if headers is not None:
+        value = _headers_get(headers, name)
+        if value:
+            return value
+    response = getattr(websocket, "response", None)
+    response_headers = getattr(response, "headers", None)
+    if response_headers is not None:
+        return _headers_get(response_headers, name)
+    return None
+
+
+def _headers_get(headers: Any, name: str) -> str | None:
+    for key in (name, name.lower()):
+        try:
+            value = headers.get(key)
+        except Exception:
+            value = None
+        if value:
+            return str(value)
+    return None

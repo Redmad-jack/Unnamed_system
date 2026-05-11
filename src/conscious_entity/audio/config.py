@@ -8,7 +8,7 @@ from typing import Any
 
 DEFAULT_STT_ENDPOINT = "wss://openspeech.bytedance.com/api/v3/sauc/bigmodel_async"
 DEFAULT_STT_RESOURCE_ID = "volc.seedasr.sauc.concurrent"
-DEFAULT_TTS_ENDPOINT = "wss://openspeech.bytedance.com/api/v3/tts/unidirectional/stream"
+DEFAULT_TTS_ENDPOINT = "wss://openspeech.bytedance.com/api/v3/tts/bidirection"
 DEFAULT_TTS_RESOURCE_ID = "seed-tts-2.0"
 
 
@@ -28,6 +28,7 @@ class AudioConfig:
     tts_resource_id: str = DEFAULT_TTS_RESOURCE_ID
     tts_voice_type: str | None = None
     output_format: str = "mp3"
+    tts_sample_rate: int = 24000
     tts_max_segment_bytes: int = 800
     tts_stream_ttl_seconds: int = 120
     max_active_sessions: int = 4
@@ -51,6 +52,7 @@ class AudioConfig:
             tts_resource_id=os.getenv("ENTITY_VOLCENGINE_TTS_RESOURCE_ID", DEFAULT_TTS_RESOURCE_ID).strip() or DEFAULT_TTS_RESOURCE_ID,
             tts_voice_type=_blank_to_none(os.getenv("ENTITY_VOLCENGINE_TTS_VOICE_TYPE")),
             output_format=_normalize_output_format(os.getenv("ENTITY_AUDIO_OUTPUT_FORMAT", "mp3")),
+            tts_sample_rate=_env_int("ENTITY_AUDIO_TTS_SAMPLE_RATE", 24000, minimum=8000, maximum=48000),
             tts_max_segment_bytes=_env_int("ENTITY_AUDIO_TTS_MAX_SEGMENT_BYTES", 800, minimum=80, maximum=8000),
             tts_stream_ttl_seconds=_env_int("ENTITY_AUDIO_TTS_STREAM_TTL_SECONDS", 120, minimum=10, maximum=3600),
             max_active_sessions=_env_int("ENTITY_AUDIO_MAX_ACTIVE_SESSIONS", 4, minimum=1, maximum=32),
@@ -117,6 +119,7 @@ class AudioConfig:
                 "resource_id": self.tts_resource_id,
                 "voice_type": self.tts_voice_type,
                 "output_format": self.output_format,
+                "sample_rate": self.tts_sample_rate,
                 "ttl_seconds": self.tts_stream_ttl_seconds,
             },
             "runtime": {

@@ -52,6 +52,9 @@ class SynthesisEvent:
     done: bool = False
     logid: str | None = None
     error: AudioError | None = None
+    event_code: int | None = None
+    session_id: str | None = None
+    text: str | None = None
 
 
 @dataclass(frozen=True)
