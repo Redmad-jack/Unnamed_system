@@ -28,6 +28,21 @@
 
 ## Changelog
 
+### 2026-05-11：开发者面板语音交互模式
+
+- [x] 将 Audio Adapter 开发者工作流从“STT 转文字后手动 Send Final”升级为语音交互模式：
+  - `Mic Start` 后麦克风连接保持常开
+  - `Voice Auto On` 默认开启，收到 STT final transcript 后自动调用 `/api/v1/audio/dialog`
+  - TTS 只播放合法 `ExpressionOutput` 派生的 `tts_stream_id`
+  - 模型处理和 TTS 播放期间继续向 STT socket 发送静音帧，避免等包超时，同时避免实体自己的声音被再次识别
+- [x] 开发者面板显示 voice mode 当前状态：`listening` / `thinking` / `speaking`
+- [x] 验证：
+  - `node --check src/conscious_entity/interfaces/static/dashboard.js`
+  - `PYTHONPATH=src python3 -m pytest -p no:debugging tests/unit/test_api_audio.py tests/unit/test_audio_manager.py tests/unit/test_volcengine_audio.py`
+  - `23 passed`
+  - `PYTHONPATH=src python3 -m pytest -p no:debugging`
+  - `326 passed`
+
 ### 2026-05-11：火山 Audio Adapter 真实闭环烟测
 
 - [x] 使用本地 `.env` 中的新版控制台 API Key 与 TTS 2.0 音色完成真实网络烟测：

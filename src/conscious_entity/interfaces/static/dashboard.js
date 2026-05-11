@@ -662,6 +662,9 @@
     const [latestDialog, setLatestDialog] = useState(null);
     const [error, setError] = useState("");
     const [recording, setRecording] = useState(false);
+    const [voiceMode, setVoiceMode] = useState(true);
+    const [voiceActivity, setVoiceActivity] = useState("idle");
+    const [dialogPending, setDialogPending] = useState(false);
     const socketRef = useRef(null);
     const mediaRef = useRef(null);
     const audioContextRef = useRef(null);
@@ -669,6 +672,14 @@
     const processorRef = useRef(null);
     const muteRef = useRef(null);
     const playerRef = useRef(null);
+    const voiceModeRef = useRef(true);
+    const recordingRef = useRef(false);
+    const dialogPendingRef = useRef(false);
+    const suppressMicRef = useRef(false);
+
+    useEffect(() => { voiceModeRef.current = voiceMode; }, [voiceMode]);
+    useEffect(() => { recordingRef.current = recording; }, [recording]);
+    useEffect(() => { dialogPendingRef.current = dialogPending; }, [dialogPending]);
 
     const loadStatus = useCallback(async () => {
       try {
@@ -699,14 +710,67 @@
       mediaRef.current = null;
       audioContextRef.current = null;
       setRecording(false);
+      setVoiceActivity("idle");
+      suppressMicRef.current = false;
     }, []);
 
     useEffect(() => stopMic, [stopMic]);
+
+    const playStream = useCallback(async (streamId) => {
+      if (!streamId || !playerRef.current) return false;
+      suppressMicRef.current = true;
+      setVoiceActivity("speaking");
+      playerRef.current.src = `/api/v1/audio/tts/stream/${encodeURIComponent(streamId)}?t=${Date.now()}`;
+      try {
+        await playerRef.current.play();
+        return true;
+      } catch (err) {
+        suppressMicRef.current = false;
+        setVoiceActivity(recordingRef.current ? "listening" : "idle");
+        setError(err.message || String(err));
+        return false;
+      }
+    }, []);
+
+    const submitTranscript = useCallback(async (value) => {
+      const transcript = String(value || "").trim();
+      if (!transcript || dialogPendingRef.current) return;
+      let playbackStarted = false;
+      try {
+        setError("");
+        setFinalText(transcript);
+        setDialogPending(true);
+        dialogPendingRef.current = true;
+        suppressMicRef.current = true;
+        setVoiceActivity("thinking");
+        const result = await fetchJSON("/api/v1/audio/dialog", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ transcript }),
+        });
+        setLatestDialog(result);
+        window.dispatchEvent(new CustomEvent("entity:turn-complete"));
+        loadStatus();
+        if (result.tts_stream_id) {
+          playbackStarted = await playStream(result.tts_stream_id);
+        }
+      } catch (err) {
+        setError(err.message);
+      } finally {
+        setDialogPending(false);
+        dialogPendingRef.current = false;
+        if (!playbackStarted) {
+          suppressMicRef.current = false;
+          setVoiceActivity(recordingRef.current ? "listening" : "idle");
+        }
+      }
+    }, [loadStatus, playStream]);
 
     const startMic = useCallback(async () => {
       if (recording) return;
       try {
         setError("");
+        setPartial("");
         const stream = await navigator.mediaDevices.getUserMedia({
           audio: { echoCancellation: true, noiseSuppression: true, channelCount: 1 },
         });
@@ -732,15 +796,20 @@
           try { data = JSON.parse(event.data); } catch { return; }
           if (data.type === "transcript.partial") setPartial(data.text || "");
           if (data.type === "transcript.final") {
-            setFinalText(data.text || "");
+            const text = data.text || "";
+            setFinalText(text);
             setPartial("");
+            if (voiceModeRef.current) submitTranscript(text);
           }
           if (data.type === "error" || data.type === "warning") {
             setError(`${data.code || data.type}${data.message ? `: ${data.message}` : ""}`);
           }
         };
         socket.onerror = () => setError("Audio STT stream connection failed.");
-        socket.onclose = () => setRecording(false);
+        socket.onclose = () => {
+          setRecording(false);
+          setVoiceActivity("idle");
+        };
 
         const source = context.createMediaStreamSource(stream);
         const processor = context.createScriptProcessor(4096, 1, 1);
@@ -750,7 +819,12 @@
           if (!socketRef.current || socketRef.current.readyState !== WebSocket.OPEN) return;
           const input = event.inputBuffer.getChannelData(0);
           const pcm = downsampleToInt16(input, context.sampleRate, targetRate);
-          if (pcm.byteLength > 0) socketRef.current.send(pcm);
+          if (pcm.byteLength <= 0) return;
+          if (suppressMicRef.current || dialogPendingRef.current) {
+            socketRef.current.send(new Int16Array(pcm.byteLength / 2).buffer);
+            return;
+          }
+          socketRef.current.send(pcm);
         };
         source.connect(processor);
         processor.connect(mute);
@@ -763,39 +837,16 @@
         processorRef.current = processor;
         muteRef.current = mute;
         setRecording(true);
+        setVoiceActivity("listening");
       } catch (err) {
         stopMic();
         setError(err.message || String(err));
       }
-    }, [recording, status, stopMic]);
-
-    const playStream = useCallback(async (streamId) => {
-      if (!streamId || !playerRef.current) return;
-      playerRef.current.src = `/api/v1/audio/tts/stream/${encodeURIComponent(streamId)}?t=${Date.now()}`;
-      try {
-        await playerRef.current.play();
-      } catch (err) {
-        setError(err.message || String(err));
-      }
-    }, []);
+    }, [recording, status, stopMic, submitTranscript]);
 
     const sendFinal = useCallback(async () => {
-      const transcript = finalText.trim();
-      if (!transcript) return;
-      try {
-        const result = await fetchJSON("/api/v1/audio/dialog", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ transcript }),
-        });
-        setLatestDialog(result);
-        window.dispatchEvent(new CustomEvent("entity:turn-complete"));
-        loadStatus();
-        if (result.tts_stream_id) playStream(result.tts_stream_id);
-      } catch (err) {
-        setError(err.message);
-      }
-    }, [finalText, loadStatus, playStream]);
+      submitTranscript(finalText);
+    }, [finalText, submitTranscript]);
 
     const speakLatest = useCallback(() => {
       const streamId = latestDialog && latestDialog.tts_stream_id
@@ -810,13 +861,18 @@
       h("div", { className: "toolbar" },
         h("button", { className: "btn-sm", onClick: startMic, disabled: recording }, recording ? "Mic On" : "Mic Start"),
         h("button", { className: "btn-sm", onClick: stopMic, disabled: !recording }, "Mic Stop"),
-        h("button", { className: "btn-sm", onClick: sendFinal }, "Send Final"),
+        h("button", {
+          className: `btn-sm ${voiceMode ? "active" : ""}`,
+          onClick: () => setVoiceMode((value) => !value),
+        }, voiceMode ? "Voice Auto On" : "Voice Auto Off"),
+        h("button", { className: "btn-sm", onClick: sendFinal, disabled: dialogPending }, dialogPending ? "Thinking" : "Send Final"),
         h("button", { className: "btn-sm", onClick: speakLatest }, "Speak Latest"),
         h("button", { className: "btn-sm", onClick: loadStatus }, "Reconnect"),
       ),
       h("div", { className: "kv-grid audio-kv" },
         h("span", null, "Provider"), h("span", null, status ? status.provider : "—"),
         h("span", null, "Status"), h("span", { className: enabled ? "ok" : "err" }, status ? (enabled ? "enabled" : status.reason) : "loading"),
+        h("span", null, "Voice mode"), h("span", { className: voiceMode && recording ? "ok" : "" }, `${voiceMode ? "auto" : "manual"} · ${voiceActivity}`),
         h("span", null, "STT"), h("span", null, status && status.stt ? `${status.stt.sample_rate || "—"}Hz · ${status.stt.chunk_ms || "—"}ms · ${status.stt.active_sessions || 0} active` : "—"),
         h("span", null, "STT endpoint"), h("span", null, status && status.stt ? `${status.stt.endpoint || "—"} · ${status.stt.resource_id || "—"}` : "—"),
         h("span", null, "TTS"), h("span", null, status && status.tts ? `${status.tts.output_format || "—"} · ${status.tts.sample_rate || "—"}Hz · ${status.tts.voice_type || "voice not set"}` : "—"),
@@ -838,7 +894,18 @@
         h("div", { className: "item-text" }, latestDialog.output_text || "..."),
       ) : null,
       error ? h("div", { className: "err" }, error) : null,
-      h("audio", { ref: playerRef, className: "hidden-audio" }),
+      h("audio", {
+        ref: playerRef,
+        className: "hidden-audio",
+        onEnded: () => {
+          suppressMicRef.current = false;
+          setVoiceActivity(recordingRef.current ? "listening" : "idle");
+        },
+        onError: () => {
+          suppressMicRef.current = false;
+          setVoiceActivity(recordingRef.current ? "listening" : "idle");
+        },
+      }),
     );
   }
 
