@@ -13,6 +13,7 @@ from conscious_entity.audio.types import (
     AudioError,
     AudioRuntimeError,
     STTSession,
+    STTStreamEvent,
     TTSStream,
     TranscriptEvent,
     utc_now,
@@ -41,6 +42,7 @@ class AudioManager:
         self.last_final_transcript: str | None = None
         self.last_stt_logid: str | None = None
         self.last_tts_logid: str | None = None
+        self.last_stt_stream_event: STTStreamEvent | None = None
         self.last_stream_id: str | None = None
         self.last_error: AudioError | None = None
 
@@ -57,6 +59,11 @@ class AudioManager:
             "last_partial_transcript": self.last_partial_transcript,
             "last_final_transcript": self.last_final_transcript,
             "last_logid": self.last_stt_logid,
+            "last_stream_event": (
+                self.last_stt_stream_event.to_public_dict()
+                if self.last_stt_stream_event
+                else None
+            ),
             "last_error": self.last_error.to_public_dict() if self.last_error else None,
         }
         public["tts"] = {
@@ -105,6 +112,11 @@ class AudioManager:
             self.last_final_transcript = event.text
         else:
             self.last_partial_transcript = event.text
+        if event.logid:
+            self.last_stt_logid = event.logid
+
+    def record_stt_stream_event(self, event: STTStreamEvent) -> None:
+        self.last_stt_stream_event = event
         if event.logid:
             self.last_stt_logid = event.logid
 
@@ -209,7 +221,7 @@ class AudioManager:
         audio_chunks: AsyncIterator[bytes],
         *,
         session_id: str,
-    ) -> AsyncIterator[TranscriptEvent]:
+    ) -> AsyncIterator[TranscriptEvent | STTStreamEvent]:
         self._ensure_enabled("stt_unavailable")
         client = self._stt_client or VolcengineSTTClient(self.config)
         start = time.perf_counter()
@@ -217,6 +229,20 @@ class AudioManager:
         final_recorded = False
         try:
             async for event in client.stream_pcm(audio_chunks, session_id=session_id):
+                if isinstance(event, STTStreamEvent):
+                    self.record_stt_stream_event(event)
+                    record_audio_latency(
+                        "stt.stream_closed",
+                        (time.perf_counter() - start) * 1000,
+                        metadata={
+                            "session_id": session_id,
+                            "reason": event.reason,
+                            "recoverable": event.recoverable,
+                            "logid": event.logid,
+                        },
+                    )
+                    yield event
+                    continue
                 self.record_transcript_event(event)
                 if event.is_final and not final_recorded:
                     final_recorded = True

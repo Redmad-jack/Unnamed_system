@@ -292,7 +292,10 @@ def test_stt_client_ignores_normal_server_close_after_final_packet():
 
     events = asyncio.run(_collect(client._drain_until_timeout(fake, session_id="aud")))
 
-    assert events == []
+    assert len(events) == 1
+    assert events[0].event_type == "stt.stream_closed"
+    assert events[0].reason == "websocket_closed_ok"
+    assert events[0].recoverable is True
 
 
 def test_stt_treats_rst_stream_no_error_as_normal_close():
@@ -302,6 +305,41 @@ def test_stt_treats_rst_stream_no_error_as_normal_close():
     )
 
     assert _is_normal_websocket_close(exc) is True
+
+
+def test_stt_client_surfaces_rst_stream_no_error_as_stream_event():
+    client = VolcengineSTTClient(AudioConfig(api_key="key", tts_voice_type="voice"))
+    client.last_logid = "logid"
+    fake = _RstNoErrorWebSocket()
+
+    events = asyncio.run(_collect(client._drain_available(fake, session_id="aud")))
+
+    assert len(events) == 1
+    assert events[0].event_type == "stt.stream_closed"
+    assert events[0].reason == "server_rst_stream_no_error"
+    assert events[0].message == "STT server ended the streaming RPC with RST_STREAM NO_ERROR."
+    assert events[0].recoverable is True
+    assert events[0].logid == "logid"
+
+
+def test_stt_stream_pcm_surfaces_recoverable_close_on_audio_send(monkeypatch):
+    fake = _SendClosingWebSocket()
+    monkeypatch.setattr("conscious_entity.audio.volcengine_stt._import_websockets", lambda: object())
+    monkeypatch.setattr(
+        "conscious_entity.audio.volcengine_stt._connect",
+        lambda _websockets, _endpoint, _headers: fake,
+    )
+    client = VolcengineSTTClient(AudioConfig(api_key="key", tts_voice_type="voice"))
+
+    async def audio_chunks():
+        yield b"pcm"
+
+    events = asyncio.run(_collect(client.stream_pcm(audio_chunks(), session_id="aud")))
+
+    assert len(events) == 1
+    assert events[0].event_type == "stt.stream_closed"
+    assert events[0].reason == "server_rst_stream_no_error"
+    assert fake.sent
 
 
 def test_media_type_for_format():
@@ -411,3 +449,24 @@ class ConnectionClosedOK(Exception):
 class _ClosingWebSocket:
     async def recv(self):
         raise ConnectionClosedOK("received 1000 OK")
+
+
+class _RstNoErrorWebSocket:
+    async def recv(self):
+        raise RuntimeError(
+            "stt_protocol_error: [Server-side generic error] result: rpc error: "
+            "code = 13 desc = stream terminated by RST_STREAM with error code: NO_ERROR"
+        )
+
+
+class _SendClosingWebSocket(_FakeWebSocket):
+    def __init__(self):
+        super().__init__([])
+
+    async def send(self, message):
+        self.sent.append(message)
+        if len(self.sent) > 1:
+            raise RuntimeError(
+                "stt_protocol_error: [Server-side generic error] result: rpc error: "
+                "code = 13 desc = stream terminated by RST_STREAM with error code: NO_ERROR"
+            )

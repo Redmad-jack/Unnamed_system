@@ -47,6 +47,28 @@ class TranscriptEvent:
 
 
 @dataclass(frozen=True)
+class STTStreamEvent:
+    event_type: str
+    session_id: str
+    reason: str
+    message: str
+    recoverable: bool
+    logid: str | None = None
+    timestamp: datetime = field(default_factory=utc_now)
+
+    def to_public_dict(self) -> dict:
+        return {
+            "type": self.event_type,
+            "session_id": self.session_id,
+            "reason": self.reason,
+            "message": self.message,
+            "recoverable": self.recoverable,
+            "logid": self.logid,
+            "timestamp": self.timestamp.isoformat(),
+        }
+
+
+@dataclass(frozen=True)
 class SynthesisEvent:
     audio: bytes | None = None
     done: bool = False

@@ -7,7 +7,7 @@ import pytest
 
 from conscious_entity.audio.config import AudioConfig
 from conscious_entity.audio.manager import AudioManager
-from conscious_entity.audio.types import AudioRuntimeError, utc_now
+from conscious_entity.audio.types import AudioRuntimeError, STTStreamEvent, TranscriptEvent, utc_now
 from conscious_entity.expression.output_model import ExpressionOutput
 
 
@@ -110,3 +110,34 @@ def test_stream_tts_bytes_uses_client_and_records_logid():
 
     assert chunks == [b"audio"]
     assert manager.last_tts_logid == "log-1"
+
+
+def test_stream_stt_events_records_recoverable_stream_close():
+    class FakeSTTClient:
+        async def stream_pcm(self, audio_chunks, *, session_id):
+            yield TranscriptEvent(text="你", is_final=False, session_id=session_id, logid="log-1")
+            yield STTStreamEvent(
+                event_type="stt.stream_closed",
+                session_id=session_id,
+                reason="server_rst_stream_no_error",
+                message="STT server ended the streaming RPC with RST_STREAM NO_ERROR.",
+                recoverable=True,
+                logid="log-1",
+            )
+
+    async def audio_chunks():
+        yield b"pcm"
+
+    manager = AudioManager(_enabled_config(), stt_client=FakeSTTClient())
+    session = manager.create_stt_session()
+
+    events = asyncio.run(_collect(manager.stream_stt_events(audio_chunks(), session_id=session.session_id)))
+
+    assert len(events) == 2
+    assert events[1].event_type == "stt.stream_closed"
+    assert manager.status()["stt"]["last_stream_event"]["reason"] == "server_rst_stream_no_error"
+    assert manager.last_error is None
+
+
+async def _collect(iterator):
+    return [item async for item in iterator]

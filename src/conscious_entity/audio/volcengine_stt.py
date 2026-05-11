@@ -6,7 +6,7 @@ from collections.abc import AsyncIterator
 from typing import Any
 
 from conscious_entity.audio.config import AudioConfig
-from conscious_entity.audio.types import AudioError, AudioRuntimeError, TranscriptEvent
+from conscious_entity.audio.types import AudioError, AudioRuntimeError, STTStreamEvent, TranscriptEvent
 from conscious_entity.audio.volcengine_protocol import VolcengineProtocol
 from conscious_entity.audio.volcengine_tts import _connect, _import_websockets
 from conscious_entity.telemetry.latency import record_audio_latency
@@ -23,7 +23,7 @@ class VolcengineSTTClient:
         audio_chunks: AsyncIterator[bytes],
         *,
         session_id: str,
-    ) -> AsyncIterator[TranscriptEvent]:
+    ) -> AsyncIterator[TranscriptEvent | STTStreamEvent]:
         websockets = _import_websockets()
         headers = self.protocol.build_headers(
             self.config,
@@ -45,12 +45,34 @@ class VolcengineSTTClient:
                 sequence = 0
                 async for chunk in audio_chunks:
                     sequence += 1
-                    await websocket.send(
-                        self.protocol.build_stt_audio_packet(chunk, sequence=sequence)
-                    )
+                    try:
+                        await websocket.send(
+                            self.protocol.build_stt_audio_packet(chunk, sequence=sequence)
+                        )
+                    except Exception as exc:
+                        close_event = _recoverable_stream_close_event(
+                            exc,
+                            session_id=session_id,
+                            logid=self.last_logid,
+                        )
+                        if close_event is not None:
+                            yield close_event
+                            return
+                        raise
                     async for event in self._drain_available(websocket, session_id=session_id):
                         yield event
-                await websocket.send(self.protocol.build_stt_final_packet(session_id=session_id))
+                try:
+                    await websocket.send(self.protocol.build_stt_final_packet(session_id=session_id))
+                except Exception as exc:
+                    close_event = _recoverable_stream_close_event(
+                        exc,
+                        session_id=session_id,
+                        logid=self.last_logid,
+                    )
+                    if close_event is not None:
+                        yield close_event
+                        return
+                    raise
                 async for event in self._drain_until_timeout(websocket, session_id=session_id):
                     yield event
         except AudioRuntimeError:
@@ -70,14 +92,20 @@ class VolcengineSTTClient:
         websocket: Any,
         *,
         session_id: str,
-    ) -> AsyncIterator[TranscriptEvent]:
+    ) -> AsyncIterator[TranscriptEvent | STTStreamEvent]:
         while True:
             try:
                 message = await asyncio.wait_for(websocket.recv(), timeout=0.01)
             except asyncio.TimeoutError:
                 return
             except Exception as exc:
-                if _is_normal_websocket_close(exc):
+                close_event = _recoverable_stream_close_event(
+                    exc,
+                    session_id=session_id,
+                    logid=self.last_logid,
+                )
+                if close_event is not None:
+                    yield close_event
                     return
                 raise
             event = self.protocol.parse_stt_response(message, session_id=session_id)
@@ -90,14 +118,20 @@ class VolcengineSTTClient:
         websocket: Any,
         *,
         session_id: str,
-    ) -> AsyncIterator[TranscriptEvent]:
+    ) -> AsyncIterator[TranscriptEvent | STTStreamEvent]:
         while True:
             try:
                 message = await asyncio.wait_for(websocket.recv(), timeout=2.0)
             except asyncio.TimeoutError:
                 return
             except Exception as exc:
-                if _is_normal_websocket_close(exc):
+                close_event = _recoverable_stream_close_event(
+                    exc,
+                    session_id=session_id,
+                    logid=self.last_logid,
+                )
+                if close_event is not None:
+                    yield close_event
                     return
                 raise
             event = self.protocol.parse_stt_response(message, session_id=session_id)
@@ -152,7 +186,36 @@ def _headers_get(headers: Any, name: str) -> str | None:
 
 
 def _is_normal_websocket_close(exc: Exception) -> bool:
+    return _recoverable_stream_close_reason(exc) is not None
+
+
+def _recoverable_stream_close_reason(exc: Exception) -> str | None:
     if exc.__class__.__name__ == "ConnectionClosedOK":
-        return True
+        return "websocket_closed_ok"
     message = str(exc)
-    return "RST_STREAM" in message and "NO_ERROR" in message
+    if "RST_STREAM" in message and "NO_ERROR" in message:
+        return "server_rst_stream_no_error"
+    return None
+
+
+def _recoverable_stream_close_event(
+    exc: Exception,
+    *,
+    session_id: str,
+    logid: str | None,
+) -> STTStreamEvent | None:
+    reason = _recoverable_stream_close_reason(exc)
+    if reason is None:
+        return None
+    if reason == "server_rst_stream_no_error":
+        message = "STT server ended the streaming RPC with RST_STREAM NO_ERROR."
+    else:
+        message = "STT WebSocket closed normally."
+    return STTStreamEvent(
+        event_type="stt.stream_closed",
+        session_id=session_id,
+        reason=reason,
+        message=message,
+        recoverable=True,
+        logid=logid,
+    )

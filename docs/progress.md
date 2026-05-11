@@ -9,7 +9,7 @@
 - 当前进行中：无
 - 当前可运行形态：CLI + 本地 FastAPI 开发者 API + Web 看板 + 可选 Vision 面板 + 可选 Audio Adapter + `/visitor` 临时身体表面；观众侧最终呈现方向是身体，不是传统 UI
 - 当前核心能力：Stranger 文本协议、状态机、短期/情节/反思记忆、可解释/可选 embedding 召回、Memory Preview、managed memory proposal → commit、influence log / curation、可选 YOLO person presence detection、可选火山 ASR 2.0 / TTS 2.0 双向流式 Audio Adapter
-- 当前验证基线：`PYTHONPATH=src python3 -m pytest -p no:debugging`，最近一次完整结果为 `333 passed`
+- 当前验证基线：`PYTHONPATH=src python3 -m pytest -p no:debugging`，最近一次完整结果为 `336 passed`
 - 当前注意事项：`AGENTS.md` 与 `CLAUDE.md` 有用户侧未提交差异；除非明确要求，不应在常规任务中触碰
 
 ---
@@ -28,6 +28,28 @@
 ---
 
 ## Changelog
+
+### 2026-05-12：STT 生命周期事件与 Audio Adapter 状态可见性
+
+- [x] 将火山 STT recoverable close 从静默处理改为开发者可见的生命周期事件：
+  - `ConnectionClosedOK` 与 `RST_STREAM ... NO_ERROR` 会产出 `stt.stream_closed`
+  - 事件包含 `reason`、`message`、`recoverable`、`logid` 和 timestamp
+  - `AudioManager.status()` 暴露 `stt.last_stream_event`
+  - latency tracker 增加 `stt.stream_closed`
+- [x] Dashboard Audio Adapter 状态更清晰：
+  - 控制按钮拆成 Mic / Playback / Dialogue 两组
+  - active 状态用于 Mic On、Playback Ready、Voice Auto On、Thinking、Stop Speaking
+  - Runtime 中新增 `STT stream`、`STT close`、`Last STT event`、`Reconnect`
+  - 自动重连仍保留，但会显示 `reconnecting` 与 close reason
+- [x] 经验规则：
+  - `docs/lessons.md` 增加 L14：开发者界面不能吞掉可恢复的协议生命周期
+- [x] 验证：
+  - `python3 -m py_compile src/conscious_entity/audio/types.py src/conscious_entity/audio/volcengine_stt.py src/conscious_entity/audio/manager.py`
+  - `node --check src/conscious_entity/interfaces/static/dashboard.js`
+  - `PYTHONPATH=src python3 -m pytest -p no:debugging tests/unit/test_volcengine_audio.py tests/unit/test_audio_manager.py tests/unit/test_api_audio.py`
+  - `29 passed`
+  - `PYTHONPATH=src python3 -m pytest -p no:debugging`
+  - `336 passed`
 
 ### 2026-05-12：语音断线恢复与 TTS 中断路径
 

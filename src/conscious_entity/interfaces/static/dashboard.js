@@ -943,6 +943,10 @@
     const [playbackUnlocked, setPlaybackUnlocked] = useState(false);
     const [playbackBlocked, setPlaybackBlocked] = useState(false);
     const [playbackDetail, setPlaybackDetail] = useState("not unlocked");
+    const [sttStreamState, setSttStreamState] = useState("stopped");
+    const [sttCloseDetail, setSttCloseDetail] = useState("none");
+    const [lastSttEvent, setLastSttEvent] = useState("none");
+    const [reconnectDetail, setReconnectDetail] = useState("none");
     const socketRef = useRef(null);
     const mediaRef = useRef(null);
     const audioContextRef = useRef(null);
@@ -966,7 +970,14 @@
 
     const loadStatus = useCallback(async () => {
       try {
-        setStatus(await fetchJSON("/api/v1/audio/status"));
+        const data = await fetchJSON("/api/v1/audio/status");
+        setStatus(data);
+        const streamEvent = data && data.stt && data.stt.last_stream_event;
+        if (streamEvent) {
+          const reason = streamEvent.reason || "closed";
+          setSttCloseDetail(`${reason} · ${streamEvent.recoverable ? "recoverable" : "fatal"}`);
+          setLastSttEvent(streamEvent.message || reason);
+        }
       } catch (err) {
         setError(err.message);
       }
@@ -1003,6 +1014,9 @@
       cleanupMicInput();
       setRecording(false);
       setVoiceActivity("idle");
+      setSttStreamState("stopped");
+      setSttCloseDetail("manual stop");
+      setReconnectDetail("none");
       suppressMicRef.current = false;
     }, [cleanupMicInput]);
 
@@ -1133,6 +1147,9 @@
       try {
         setError("");
         setPartial("");
+        setSttStreamState("connecting");
+        setSttCloseDetail("none");
+        setReconnectDetail("none");
         manualStopRef.current = false;
         stopPlayback();
         await unlockPlayback();
@@ -1147,6 +1164,8 @@
         const socket = new WebSocket(`${window.location.protocol === "https:" ? "wss" : "ws"}://${window.location.host}/api/v1/audio/stt/stream`);
         socket.binaryType = "arraybuffer";
         socket.onopen = () => {
+          setSttStreamState("open");
+          setLastSttEvent("websocket open");
           socket.send(JSON.stringify({
             type: "start",
             format: "pcm_s16le",
@@ -1160,6 +1179,17 @@
           let data = null;
           try { data = JSON.parse(event.data); } catch { return; }
           if (data.type === "transcript.partial") setPartial(data.text || "");
+          if (data.type === "stt.start") {
+            setSttStreamState("streaming");
+            setLastSttEvent(`session ${compactId(data.session_id || "")}`);
+          }
+          if (data.type === "stt.stream_closed") {
+            const reason = data.reason || "closed";
+            const recoverable = data.recoverable ? "recoverable" : "fatal";
+            setSttStreamState("closed");
+            setSttCloseDetail(`${reason} · ${recoverable}`);
+            setLastSttEvent(data.message || reason);
+          }
           if (data.type === "transcript.final") {
             const text = data.text || "";
             setFinalText(text);
@@ -1177,6 +1207,8 @@
           cleanupMicInput();
           setRecording(false);
           setVoiceActivity(shouldReconnect ? "reconnecting" : "idle");
+          setSttStreamState(shouldReconnect ? "reconnecting" : "stopped");
+          setReconnectDetail(shouldReconnect ? "scheduled after stream close" : "none");
           if (shouldReconnect) {
             reconnectTimerRef.current = window.setTimeout(() => {
               reconnectTimerRef.current = null;
@@ -1214,6 +1246,7 @@
         setVoiceActivity("listening");
       } catch (err) {
         stopMic();
+        setSttStreamState("error");
         setError(err.message || String(err));
       }
     }, [cleanupMicInput, recording, status, stopMic, stopPlayback, submitTranscript, unlockPlayback]);
@@ -1233,22 +1266,35 @@
     return h("div", { className: "section audio-section" },
       h("div", { className: "section-title" }, "Audio Adapter"),
       h("div", { className: "toolbar" },
-        h("button", { className: "btn-sm", onClick: startMic, disabled: recording }, recording ? "Mic On" : "Mic Start"),
+        h("span", { className: "dim" }, "Mic"),
+        h("button", {
+          className: `btn-sm ${recording || sttStreamState === "connecting" || sttStreamState === "reconnecting" ? "active" : ""}`,
+          onClick: startMic,
+          disabled: recording || sttStreamState === "connecting" || sttStreamState === "reconnecting",
+        }, recording ? "Mic On" : sttStreamState === "reconnecting" ? "Reconnecting" : "Mic Start"),
         h("button", { className: "btn-sm", onClick: stopMic, disabled: !recording }, "Mic Stop"),
+        h("span", { className: "dim" }, "Playback"),
         h("button", { className: `btn-sm ${playbackUnlocked ? "active" : ""}`, onClick: unlockPlayback }, playbackUnlocked ? "Playback Ready" : "Enable Playback"),
+        h("button", { className: `btn-sm ${voiceActivity === "speaking" ? "active" : ""}`, onClick: stopPlayback, disabled: voiceActivity !== "speaking" }, "Stop Speaking"),
+      ),
+      h("div", { className: "toolbar" },
+        h("span", { className: "dim" }, "Dialogue"),
         h("button", {
           className: `btn-sm ${voiceMode ? "active" : ""}`,
           onClick: () => setVoiceMode((value) => !value),
         }, voiceMode ? "Voice Auto On" : "Voice Auto Off"),
-        h("button", { className: "btn-sm", onClick: sendFinal, disabled: dialogPending }, dialogPending ? "Thinking" : "Send Final"),
+        h("button", { className: `btn-sm ${dialogPending ? "active" : ""}`, onClick: sendFinal, disabled: dialogPending }, dialogPending ? "Thinking" : "Send Final"),
         h("button", { className: "btn-sm", onClick: speakLatest }, "Speak Latest"),
-        h("button", { className: "btn-sm", onClick: stopPlayback }, "Stop Speaking"),
         h("button", { className: "btn-sm", onClick: loadStatus }, "Refresh Status"),
       ),
       h("div", { className: "kv-grid audio-kv" },
         h("span", null, "Provider"), h("span", null, status ? status.provider : "—"),
         h("span", null, "Provider status"), h("span", { className: enabled ? "ok" : "err" }, status ? (enabled ? "enabled" : status.reason) : "loading"),
         h("span", null, "Mic"), h("span", { className: recording ? "ok" : "dim" }, recording ? "recording" : "stopped"),
+        h("span", null, "STT stream"), h("span", { className: sttStreamState === "streaming" ? "ok" : sttStreamState === "error" ? "err" : "dim" }, sttStreamState),
+        h("span", null, "STT close"), h("span", { className: "dim" }, sttCloseDetail),
+        h("span", null, "Last STT event"), h("span", { className: "dim" }, lastSttEvent),
+        h("span", null, "Reconnect"), h("span", { className: sttStreamState === "reconnecting" ? "ok" : "dim" }, reconnectDetail),
         h("span", null, "Playback"), h("span", { className: playbackBlocked ? "err" : playbackUnlocked ? "ok" : "dim" }, playbackBlocked ? "blocked" : playbackUnlocked ? "ready" : "locked"),
         h("span", null, "Playback detail"), h("span", { className: playbackBlocked ? "err" : "dim" }, playbackDetail),
         h("span", null, "Voice mode"), h("span", { className: voiceMode && recording ? "ok" : "" }, `${voiceMode ? "auto" : "manual"} · ${voiceActivity}`),
