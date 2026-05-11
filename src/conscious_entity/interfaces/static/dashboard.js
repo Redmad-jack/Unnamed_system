@@ -943,6 +943,7 @@
     const [playbackUnlocked, setPlaybackUnlocked] = useState(false);
     const [playbackBlocked, setPlaybackBlocked] = useState(false);
     const [playbackDetail, setPlaybackDetail] = useState("not unlocked");
+    const [bargeInDetail, setBargeInDetail] = useState("idle");
     const [sttStreamState, setSttStreamState] = useState("stopped");
     const [sttCloseDetail, setSttCloseDetail] = useState("none");
     const [lastSttEvent, setLastSttEvent] = useState("none");
@@ -960,6 +961,7 @@
     const suppressMicRef = useRef(false);
     const playbackUnlockedRef = useRef(false);
     const playbackStreamRef = useRef("");
+    const bargeInFramesRef = useRef(0);
     const manualStopRef = useRef(false);
     const reconnectTimerRef = useRef(null);
 
@@ -1017,6 +1019,8 @@
       setSttStreamState("stopped");
       setSttCloseDetail("manual stop");
       setReconnectDetail("none");
+      setBargeInDetail("idle");
+      bargeInFramesRef.current = 0;
       suppressMicRef.current = false;
     }, [cleanupMicInput]);
 
@@ -1057,7 +1061,7 @@
       }
     }, []);
 
-    const stopPlayback = useCallback(() => {
+    const stopPlayback = useCallback((detail = "interrupted") => {
       const player = playerRef.current;
       const hadPlayback = Boolean(playbackStreamRef.current || (player && player.getAttribute("src")));
       if (player) {
@@ -1066,17 +1070,24 @@
         player.load();
       }
       playbackStreamRef.current = "";
+      bargeInFramesRef.current = 0;
       suppressMicRef.current = false;
       setPlaybackBlocked(false);
       setVoiceActivity(recordingRef.current ? "listening" : "idle");
-      if (hadPlayback) setPlaybackDetail("interrupted");
+      if (hadPlayback) {
+        const detailText = String(detail || "interrupted");
+        setPlaybackDetail(detailText);
+        setBargeInDetail(detailText.startsWith("barge-in") ? "detected, playback stopped" : "idle");
+      }
     }, []);
 
     const playStream = useCallback(async (streamId) => {
       if (!streamId || !playerRef.current) return false;
       suppressMicRef.current = true;
+      bargeInFramesRef.current = 0;
       setVoiceActivity("speaking");
       setPlaybackBlocked(false);
+      setBargeInDetail("armed while speaking");
       const player = playerRef.current;
       playbackStreamRef.current = streamId;
       player.muted = false;
@@ -1091,8 +1102,10 @@
         return true;
       } catch (err) {
         suppressMicRef.current = false;
+        bargeInFramesRef.current = 0;
         setVoiceActivity(recordingRef.current ? "listening" : "idle");
         setPlaybackBlocked(true);
+        setBargeInDetail("idle");
         const message = err && err.name === "NotAllowedError"
           ? "Playback blocked: enable once from this browser tab."
           : describeMediaError(player, "Playback failed.");
@@ -1226,6 +1239,18 @@
           const input = event.inputBuffer.getChannelData(0);
           const pcm = downsampleToInt16(input, context.sampleRate, targetRate);
           if (pcm.byteLength <= 0) return;
+          if (playbackStreamRef.current) {
+            if (pcmHasVoiceActivity(pcm)) {
+              bargeInFramesRef.current += 1;
+            } else {
+              bargeInFramesRef.current = Math.max(0, bargeInFramesRef.current - 1);
+            }
+            if (bargeInFramesRef.current >= 2) {
+              stopPlayback("barge-in: user speech detected");
+              socketRef.current.send(pcm);
+              return;
+            }
+          }
           if (suppressMicRef.current || dialogPendingRef.current) {
             socketRef.current.send(new Int16Array(pcm.byteLength / 2).buffer);
             return;
@@ -1275,7 +1300,7 @@
         h("button", { className: "btn-sm", onClick: stopMic, disabled: !recording }, "Mic Stop"),
         h("span", { className: "dim" }, "Playback"),
         h("button", { className: `btn-sm ${playbackUnlocked ? "active" : ""}`, onClick: unlockPlayback }, playbackUnlocked ? "Playback Ready" : "Enable Playback"),
-        h("button", { className: `btn-sm ${voiceActivity === "speaking" ? "active" : ""}`, onClick: stopPlayback, disabled: voiceActivity !== "speaking" }, "Stop Speaking"),
+        h("button", { className: `btn-sm ${voiceActivity === "speaking" ? "active" : ""}`, onClick: () => stopPlayback(), disabled: voiceActivity !== "speaking" }, "Stop Speaking"),
       ),
       h("div", { className: "toolbar" },
         h("span", { className: "dim" }, "Dialogue"),
@@ -1297,6 +1322,7 @@
         h("span", null, "Reconnect"), h("span", { className: sttStreamState === "reconnecting" ? "ok" : "dim" }, reconnectDetail),
         h("span", null, "Playback"), h("span", { className: playbackBlocked ? "err" : playbackUnlocked ? "ok" : "dim" }, playbackBlocked ? "blocked" : playbackUnlocked ? "ready" : "locked"),
         h("span", null, "Playback detail"), h("span", { className: playbackBlocked ? "err" : "dim" }, playbackDetail),
+        h("span", null, "Barge-in"), h("span", { className: bargeInDetail.startsWith("detected") ? "ok" : "dim" }, bargeInDetail),
         h("span", null, "Voice mode"), h("span", { className: voiceMode && recording ? "ok" : "" }, `${voiceMode ? "auto" : "manual"} · ${voiceActivity}`),
         h("span", null, "STT"), h("span", null, status && status.stt ? `${status.stt.sample_rate || "—"}Hz · ${status.stt.chunk_ms || "—"}ms · ${status.stt.active_sessions || 0} active` : "—"),
         h("span", null, "STT endpoint"), h("span", null, status && status.stt ? `${status.stt.endpoint || "—"} · ${status.stt.resource_id || "—"}` : "—"),
@@ -1326,16 +1352,20 @@
         playsInline: true,
         onEnded: () => {
           playbackStreamRef.current = "";
+          bargeInFramesRef.current = 0;
           suppressMicRef.current = false;
           setVoiceActivity(recordingRef.current ? "listening" : "idle");
           setPlaybackDetail("ended");
+          setBargeInDetail("idle");
         },
         onError: () => {
           playbackStreamRef.current = "";
+          bargeInFramesRef.current = 0;
           suppressMicRef.current = false;
           setVoiceActivity(recordingRef.current ? "listening" : "idle");
           setPlaybackBlocked(true);
           setPlaybackDetail(describeMediaError(playerRef.current, "Playback stream error."));
+          setBargeInDetail("idle");
         },
       }),
     );
@@ -1504,6 +1534,20 @@
       view.setInt16(i * 2, sample < 0 ? sample * 0x8000 : sample * 0x7fff, true);
     }
     return buffer;
+  }
+
+  function pcmHasVoiceActivity(buffer) {
+    const samples = new Int16Array(buffer);
+    if (!samples.length) return false;
+    let peak = 0;
+    let squareSum = 0;
+    for (let i = 0; i < samples.length; i += 1) {
+      const value = Math.abs(samples[i]);
+      if (value > peak) peak = value;
+      squareSum += value * value;
+    }
+    const rms = Math.sqrt(squareSum / samples.length);
+    return peak >= 3500 || rms >= 850;
   }
 
   function ConfigModal({ onClose }) {

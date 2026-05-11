@@ -29,6 +29,18 @@
 
 ## Changelog
 
+### 2026-05-12：Audio Adapter 播放中 barge-in 打断
+
+- [x] 修复 TTS 播放期间无法直接说话打断的问题：
+  - 播放期间不再无条件把麦克风输入替换成静音
+  - 未检测到本地人声时仍发送静音块，降低 TTS 回声进入 STT 的概率
+  - 连续检测到本地人声能量后立即停止当前 `<audio>` 播放，取消 TTS HTTP stream，并把当前真实 PCM 发给 STT
+  - Dashboard 增加 `Barge-in` 状态，显示 `armed while speaking` / `detected, playback stopped`
+- [x] 经验规则：
+  - `docs/lessons.md` 增加 L15：语音播放期间的 suppress 不能阻断 barge-in
+- [x] 验证：
+  - `node --check src/conscious_entity/interfaces/static/dashboard.js`
+
 ### 2026-05-12：STT 生命周期事件与 Audio Adapter 状态可见性
 
 - [x] 将火山 STT recoverable close 从静默处理改为开发者可见的生命周期事件：

@@ -61,6 +61,11 @@
 - 原因：现场调试需要知道服务端何时主动结束流、客户端何时重连；把 `RST_STREAM NO_ERROR` 静默处理会让真正的链路状态不可诊断
 - 如何应用：区分 fatal error 与 recoverable lifecycle，前者进入 error，后者进入明确的 stream status / last event / reconnect detail
 
+**L15：语音播放期间的 suppress 不能阻断 barge-in**
+- 规则：TTS 播放期间可以给 STT 发送静音来防回声，但必须保留本地用户人声检测；检测到用户插话时应立即停止播放并恢复真实麦克风音频
+- 原因：展陈对话需要允许观众打断实体发声；无条件 suppress 麦克风会让系统看似“听不见”
+- 如何应用：播放期间用本地音量门限检测 barge-in，未触发时静音，触发后停止 `<audio>` 并发送真实 PCM
+
 **L07：不要跳过 `clamp_all()`**
 - 规则：每次状态更新调用链末尾必须调用 `clamp_all()`
 - 原因：连续事件的累积增量可能使状态值越出 `[0.0, 1.0]`

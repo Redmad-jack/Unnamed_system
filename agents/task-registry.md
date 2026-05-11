@@ -45,6 +45,10 @@ Status values: `in_progress`, `done`
 
 | File | Agent | Status | Started |
 |------|-------|--------|---------|
+| src/conscious_entity/interfaces/static/dashboard.js | Codex | done | 2026-05-12 02:29 CST |
+| docs/progress.md | Codex | done | 2026-05-12 02:29 CST |
+| docs/lessons.md | Codex | done | 2026-05-12 02:29 CST |
+| agents/task-registry.md | Codex | done | 2026-05-12 02:29 CST |
 | src/conscious_entity/audio/types.py | Codex | done | 2026-05-12 02:19 CST |
 | src/conscious_entity/audio/volcengine_stt.py | Codex | done | 2026-05-12 02:19 CST |
 | src/conscious_entity/audio/manager.py | Codex | done | 2026-05-12 02:19 CST |
