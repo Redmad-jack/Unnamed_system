@@ -258,7 +258,7 @@
       h("button", { className: "btn-sm", onClick: onReset }, "Reset Memory / New Session"),
       h("button", { className: "btn-sm", onClick: onConfig }, "YAML Config"),
       h("div", { className: "header-spacer" }),
-      h("span", { className: "session-label" }, health && health.session_id ? `session: ${compactId(health.session_id)} · ${sessionType}` : "session: —"),
+      h("span", { className: "session-label" }, health && health.session_id ? `session: ${compactId(health.session_id)} · ${sessionType} · visitor: ${health.visitor_id ? compactId(health.visitor_id) : "none"}` : "session: —"),
     );
   }
 
@@ -675,15 +675,17 @@
     const [latency, setLatency] = useState(null);
     const [audioLatency, setAudioLatency] = useState(null);
     const [harness, setHarness] = useState(null);
+    const [visitor, setVisitor] = useState(null);
 
     const load = useCallback(async () => {
-      const [llmConfig, embeddingConfig, llmStats, latencyStats, audioLatencyStats, harnessStatus] = await Promise.all([
+      const [llmConfig, embeddingConfig, llmStats, latencyStats, audioLatencyStats, harnessStatus, visitorStatus] = await Promise.all([
         fetchJSON("/api/v1/config/llm").catch(() => null),
         fetchJSON("/api/v1/config/embedding").catch(() => null),
         fetchJSON("/api/v1/stats/llm").catch(() => null),
         fetchJSON("/api/v1/stats/latency?n=1").catch(() => null),
         fetchJSON("/api/v1/stats/audio-latency?n=8").catch(() => null),
         fetchJSON("/api/v1/harness/status").catch(() => null),
+        fetchJSON("/api/v1/visitors/current").catch(() => null),
       ]);
       setLlm(llmConfig);
       setEmbedding(embeddingConfig);
@@ -691,12 +693,14 @@
       setLatency(latencyStats);
       setAudioLatency(audioLatencyStats);
       setHarness(harnessStatus);
+      setVisitor(visitorStatus);
     }, []);
 
     useEffect(() => { load(); }, [load]);
     useInterval(load, 10000);
 
     return h(React.Fragment, null,
+      h(VisitorSection, { data: visitor, onSaved: load }),
       h(LLMConfigSection, { data: llm, onSaved: load }),
       h(EmbeddingConfigSection, { data: embedding, onSaved: load }),
       h(AudioPane),
@@ -712,6 +716,94 @@
         )) : h("div", { className: "dim" }, "Loading diagnostics…"),
       ),
       h(LatencySection, { latency, audioLatency }),
+    );
+  }
+
+  function VisitorSection({ data, onSaved }) {
+    const [known, setKnown] = useState([]);
+    const [visitorId, setVisitorId] = useState("");
+    const [displayName, setDisplayName] = useState("");
+    const [saving, setSaving] = useState(false);
+    const current = data && data.visitor ? data.visitor : null;
+
+    const loadKnown = useCallback(async () => {
+      setKnown(await fetchJSON("/api/v1/visitors?limit=80").catch(() => []));
+    }, []);
+
+    useEffect(() => { loadKnown(); }, [loadKnown]);
+    useInterval(loadKnown, 15000);
+
+    const create = useCallback(async () => {
+      setSaving(true);
+      try {
+        await fetchJSON("/api/v1/visitors", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            visitor_id: visitorId || null,
+            display_name: displayName || null,
+          }),
+        });
+        setVisitorId("");
+        setDisplayName("");
+        await onSaved();
+        await loadKnown();
+        window.dispatchEvent(new CustomEvent("entity:session-reset"));
+      } catch (error) {
+        alert(`Visitor update failed: ${error.message}`);
+      } finally {
+        setSaving(false);
+      }
+    }, [visitorId, displayName, onSaved, loadKnown]);
+
+    const select = useCallback(async (id) => {
+      setSaving(true);
+      try {
+        await fetchJSON("/api/v1/visitors/current", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ visitor_id: id || null }),
+        });
+        await onSaved();
+        window.dispatchEvent(new CustomEvent("entity:session-reset"));
+      } catch (error) {
+        alert(`Visitor select failed: ${error.message}`);
+      } finally {
+        setSaving(false);
+      }
+    }, [onSaved]);
+
+    return h("div", { className: "section" },
+      h("div", { className: "section-title" }, "Visitor Identity"),
+      h("table", null, h("tbody", null,
+        h("tr", null, h("td", null, "Current visitor"), h("td", null, current ? `${current.display_name || current.id} · ${current.id}` : "none")),
+        h("tr", null, h("td", null, "Scope"), h("td", null, current ? "same visitor sessions included in retrieval" : "current session only")),
+      )),
+      h("div", { className: "toolbar", style: { marginTop: "8px" } },
+        h("input", {
+          value: visitorId,
+          placeholder: "visitor id optional",
+          onChange: (event) => setVisitorId(event.target.value),
+        }),
+        h("input", {
+          value: displayName,
+          placeholder: "display name optional",
+          onChange: (event) => setDisplayName(event.target.value),
+        }),
+        h("button", { className: "btn-sm", disabled: saving, onClick: create }, saving ? "Saving…" : "Create / Set"),
+        h("button", { className: "btn-sm", disabled: saving || !current, onClick: () => select(null) }, "Clear"),
+      ),
+      known.length ? h("div", { className: "card-list compact-list" },
+        known.slice(0, 5).map((item) => h("button", {
+          key: item.id,
+          className: `session-item ${item.active ? "active" : ""}`,
+          onClick: () => select(item.id),
+          disabled: saving,
+        },
+          h("div", { className: "session-title" }, h("span", null, item.display_name || item.id), h("span", null, item.active ? "active" : "")),
+          h("div", { className: "session-meta" }, `${item.session_count || 0} sessions · ${item.turn_count || 0} turns`),
+        )),
+      ) : h("div", { className: "dim" }, "No visitor profiles yet."),
     );
   }
 

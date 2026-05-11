@@ -45,6 +45,26 @@ Status values: `in_progress`, `done`
 
 | File | Agent | Status | Started |
 |------|-------|--------|---------|
+| src/conscious_entity/db/migrations.py | Codex | done | 2026-05-12 05:21 CST |
+| src/conscious_entity/core/loop.py | Codex | done | 2026-05-12 05:21 CST |
+| src/conscious_entity/memory/episodic_store.py | Codex | done | 2026-05-12 05:21 CST |
+| src/conscious_entity/memory/reflective_store.py | Codex | done | 2026-05-12 05:21 CST |
+| src/conscious_entity/memory/retrieval.py | Codex | done | 2026-05-12 05:21 CST |
+| src/conscious_entity/memory/managed.py | Codex | done | 2026-05-12 05:21 CST |
+| src/conscious_entity/interfaces/api_models.py | Codex | done | 2026-05-12 05:21 CST |
+| src/conscious_entity/interfaces/api_runtime.py | Codex | done | 2026-05-12 05:21 CST |
+| src/conscious_entity/interfaces/api_routes.py | Codex | done | 2026-05-12 05:21 CST |
+| src/conscious_entity/interfaces/api.py | Codex | done | 2026-05-12 05:21 CST |
+| src/conscious_entity/interfaces/static/dashboard.js | Codex | done | 2026-05-12 05:21 CST |
+| tests/unit/test_memory_retrieval.py | Codex | done | 2026-05-12 05:21 CST |
+| tests/unit/test_api_export.py | Codex | done | 2026-05-12 05:21 CST |
+| tests/integration/test_full_loop.py | Codex | done | 2026-05-12 05:21 CST |
+| docs/PRD.md | Codex | done | 2026-05-12 05:21 CST |
+| docs/APP_FLOW.md | Codex | done | 2026-05-12 05:21 CST |
+| docs/BACKEND_STRUCTURE.md | Codex | done | 2026-05-12 05:21 CST |
+| docs/progress.md | Codex | done | 2026-05-12 05:21 CST |
+| docs/lessons.md | Codex | done | 2026-05-12 05:21 CST |
+| agents/task-registry.md | Codex | done | 2026-05-12 05:21 CST |
 | src/conscious_entity/harness/__init__.py | Codex | done | 2026-05-12 04:36 CST |
 | src/conscious_entity/harness/trace.py | Codex | done | 2026-05-12 04:36 CST |
 | src/conscious_entity/core/loop.py | Codex | done | 2026-05-12 04:36 CST |

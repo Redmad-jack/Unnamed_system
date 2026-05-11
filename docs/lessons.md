@@ -71,6 +71,11 @@
 - 原因：否则实体会把转录文本当成书面输入来解释，错误声称自己区分了文字层面的语言、标点或拼写，而不知道它没有接收原始声音
 - 如何应用：保持 `raw_text` 干净，只在 short-term metadata / prompt context 中注入 `voice_transcript` 说明
 
+**L17：跨 session 记忆必须有 visitor scope**
+- 规则：不能依赖 `session_type` 或全局池去模拟“同一个访客”的连续性；跨 session 的个人事实、关系线索和回返感必须经过显式 `visitor_id` 绑定
+- 原因：否则一个访客说过的事实会在另一个访客处泄漏，或者像“K 是谁”这类旧会话事实在新 session 中无法稳定召回
+- 如何应用：session 可为空 visitor；一旦设置 `visitor_id`，interaction / episodic / reflective / managed memory 路径都要记录该 scope，检索时优先同一 visitor 的旧 session
+
 **L07：不要跳过 `clamp_all()`**
 - 规则：每次状态更新调用链末尾必须调用 `clamp_all()`
 - 原因：连续事件的累积增量可能使状态值越出 `[0.0, 1.0]`

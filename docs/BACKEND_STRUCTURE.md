@@ -145,12 +145,29 @@ CREATE TABLE sessions (
     id              TEXT PRIMARY KEY,      -- UUID
     started_at      TEXT NOT NULL DEFAULT (datetime('now')),
     ended_at        TEXT,
+    session_type    TEXT NOT NULL DEFAULT 'test',
+    visitor_id      TEXT,
     visitor_count   INTEGER DEFAULT 0,
     notes           TEXT
 );
 ```
 
-**说明：** 一个 session 对应一次连续的装置运行周期。早期文本 MVP 全部使用单一 session；当前系统支持多 session 跨天记录，并通过 `session_type` 区分 test / exhibition 池。
+**说明：** 一个 session 对应一次连续的装置运行周期。早期文本 MVP 全部使用单一 session；当前系统支持多 session 跨天记录，并通过 `session_type` 区分 test / exhibition 池。`visitor_id` 可为空；只有开发者明确设置匿名访客时，跨 session 记忆才按同一 visitor 归属召回。
+
+### 2.1.1 visitor_profiles
+
+```sql
+CREATE TABLE visitor_profiles (
+    id              TEXT PRIMARY KEY,
+    display_name    TEXT,
+    notes           TEXT,
+    created_at      TEXT NOT NULL DEFAULT (datetime('now')),
+    last_seen_at    TEXT,
+    metadata        TEXT NOT NULL DEFAULT '{}'
+);
+```
+
+**说明：** 这是开发者/展陈路由用的匿名访客注册表，不是观众账户系统；不包含密码、登录态、人脸、声纹或真实身份字段。
 
 ---
 
@@ -193,6 +210,7 @@ CREATE TABLE state_snapshots (
 CREATE TABLE interaction_log (
     id                INTEGER PRIMARY KEY AUTOINCREMENT,
     session_id        TEXT NOT NULL REFERENCES sessions(id),
+    visitor_id        TEXT,
     turn_at           TEXT NOT NULL DEFAULT (datetime('now')),
     role              TEXT NOT NULL CHECK(role IN ('user', 'entity', 'system')),
     raw_text          TEXT,
@@ -213,6 +231,7 @@ CREATE TABLE interaction_log (
 CREATE TABLE episodic_memories (
     id                INTEGER PRIMARY KEY AUTOINCREMENT,
     session_id        TEXT NOT NULL REFERENCES sessions(id),
+    visitor_id        TEXT,
     created_at        TEXT NOT NULL DEFAULT (datetime('now')),
     event_type        TEXT NOT NULL,
     content           TEXT NOT NULL,    -- 可读的事件摘要
@@ -251,6 +270,7 @@ CREATE TABLE episodic_memories (
 CREATE TABLE reflective_summaries (
     id                    INTEGER PRIMARY KEY AUTOINCREMENT,
     session_id            TEXT NOT NULL REFERENCES sessions(id),
+    visitor_id            TEXT,
     created_at            TEXT NOT NULL DEFAULT (datetime('now')),
     content               TEXT NOT NULL,    -- LLM 压缩后的洞察文本
     source_event_ids      TEXT NOT NULL,    -- JSON array of episodic_memory IDs
@@ -282,6 +302,7 @@ Managed memory 是 mem0-style 的行为记忆层。原始对话仍完整保留�
 - `preview_influence()` 不产生写入
 - archived / hidden managed memories 不参与行为
 - `core/loop.py` 每轮先 preview influence，再做 policy influence / retrieval，最后写入 influence log 并 proposal / auto-commit
+- `visitor_id` 绑定后，新的 managed memory / proposal / influence log 会记录 visitor scope；未绑定 visitor 时保持 session / session_type 行为。
 
 ---
 
@@ -319,6 +340,10 @@ CREATE TABLE schema_version (
 | `GET` | `/api/v1/state` | 获取当前 EntityState | 本地开发面板，当前无认证 |
 | `GET` | `/api/v1/sessions` | 获取 session 列表 | 本地开发面板，当前无认证 |
 | `POST` | `/api/v1/sessions/reset` | 归档当前 session 并创建新 session | 本地开发面板，当前无认证 |
+| `GET` | `/api/v1/visitors` | 查看匿名 visitor profile 列表 | 本地开发面板，当前无认证 |
+| `POST` | `/api/v1/visitors` | 创建匿名 visitor profile 并绑定当前 session | 本地开发面板，当前无认证 |
+| `GET` | `/api/v1/visitors/current` | 查看当前 session 绑定的 visitor | 本地开发面板，当前无认证 |
+| `POST` | `/api/v1/visitors/current` | 切换或清空当前 session 的 visitor 绑定 | 本地开发面板，当前无认证 |
 | `GET` | `/api/v1/memory/preview?query=...` | 预览指定 query 会召回的记忆材料 | 本地开发面板，当前无认证 |
 | `GET` | `/api/v1/managed-memory` | 查看 committed managed memories | 本地开发面板，当前无认证 |
 | `POST` | `/api/v1/managed-memory/commit` | commit pending proposal 或手动 operation | 本地开发面板，当前无认证 |
@@ -375,10 +400,10 @@ OPERATOR_API_KEY=your_secret_here
 | 版本 | 身份策略 |
 |---|---|
 | 早期文本 MVP | 全部共用 `session_id="shared"`，无访客区分 |
-| 当前系统 | 使用 session 与 `session_type = test / exhibition` 区分测试池和展览池，不保存访客身份 |
-| 后续展览阶段 | 如需访客识别，再设计 `visitor_id` 或其它匿名识别方式（待确认：语音声纹、视觉识别或对话引导） |
+| 当前系统 | 开发者可创建匿名 `visitor_profiles`，把当前 session 绑定到 `visitor_id`；同一 visitor 的旧 session 可参与记忆召回 |
+| 后续展览阶段 | 多人并发输入、自动识别和 routing / 仲裁策略仍待设计；当前不做人脸、声纹或自动身份识别 |
 
-**注：** 不引入账户注册或密码机制。
+**注：** 不引入账户注册或密码机制。匿名 `visitor_id` 是路由和连续性线索，不等于真实身份画像。
 
 ---
 

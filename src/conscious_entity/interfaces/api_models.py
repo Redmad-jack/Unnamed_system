@@ -44,6 +44,17 @@ class SessionTypeRequest(BaseModel):
     session_type: str
 
 
+class VisitorCreateRequest(BaseModel):
+    visitor_id: Optional[str] = None
+    display_name: Optional[str] = None
+    notes: Optional[str] = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class VisitorSelectRequest(BaseModel):
+    visitor_id: Optional[str] = None
+
+
 class MemoryStatusRequest(BaseModel):
     status: str
 

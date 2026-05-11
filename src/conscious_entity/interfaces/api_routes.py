@@ -23,6 +23,8 @@ from conscious_entity.interfaces.api_models import (
     MemoryInfluencePreviewRequest,
     MemoryStatusRequest,
     SessionTypeRequest,
+    VisitorCreateRequest,
+    VisitorSelectRequest,
 )
 from conscious_entity.interfaces.api_runtime import (
     _active_embedding_client,
@@ -49,10 +51,12 @@ from conscious_entity.interfaces.api_runtime import (
     _rebuild_loop,
     _row_to_dict,
     _save_initial_state,
+    _set_current_visitor,
     _session_type,
     _static_dir,
     _validate_memory_status,
     _validate_memory_type,
+    _visitor_row_to_public,
 )
 from conscious_entity.llm.claude_client import ClaudeConfigurationError
 from conscious_entity.llm.embedding_client import EmbeddingConfigurationError
@@ -65,6 +69,24 @@ from conscious_entity.vision import VisionConfigurationError
 
 
 router = APIRouter()
+
+
+def _current_visitor_payload(request: Request, visitor_id: str | None) -> dict[str, Any]:
+    if visitor_id is None:
+        return {
+            "visitor_id": None,
+            "visitor": None,
+            "session_id": request.app.state.session_id,
+        }
+    row = request.app.state.conn.execute(
+        "SELECT * FROM visitor_profiles WHERE id = ?",
+        (visitor_id,),
+    ).fetchone()
+    return {
+        "visitor_id": visitor_id,
+        "visitor": _visitor_row_to_public(row, active=True),
+        "session_id": request.app.state.session_id,
+    }
 
 
 @router.get("/", include_in_schema=False)
@@ -102,6 +124,7 @@ async def health(request: Request):
         "embedding": "error: " + embedding_error if embedding_error else "configured",
         "session_id": request.app.state.session_id,
         "session_type": _session_type(request.app.state.conn, request.app.state.session_id),
+        "visitor_id": getattr(request.app.state, "visitor_id", None),
     }
 
 
@@ -197,12 +220,15 @@ async def sessions(request: Request):
                 s.started_at,
                 s.ended_at,
                 s.session_type,
+                s.visitor_id,
+                v.display_name AS visitor_display_name,
                 s.notes,
                 (SELECT COUNT(*) FROM interaction_log WHERE session_id = s.id) AS turn_count,
                 (SELECT COUNT(*) FROM episodic_memories WHERE session_id = s.id) AS memory_count,
                 (SELECT COUNT(*) FROM reflective_summaries WHERE session_id = s.id) AS reflection_count,
                 (SELECT MAX(turn_at) FROM interaction_log WHERE session_id = s.id) AS latest_turn_at
             FROM sessions s
+            LEFT JOIN visitor_profiles v ON v.id = s.visitor_id
             ORDER BY COALESCE(latest_turn_at, s.started_at) DESC, s.started_at DESC
             """
         ).fetchall()
@@ -223,6 +249,7 @@ async def sessions_reset(request: Request):
     old_session_id = request.app.state.session_id
     new_session_id = str(uuid.uuid4())
     current_type = _session_type(conn, old_session_id)
+    current_visitor_id = getattr(request.app.state, "visitor_id", None)
 
     async with request.app.state.loop_lock:
         try:
@@ -237,8 +264,8 @@ async def sessions_reset(request: Request):
             (old_session_id,),
         )
         conn.execute(
-            "INSERT INTO sessions (id, session_type) VALUES (?, ?)",
-            (new_session_id, current_type),
+            "INSERT INTO sessions (id, session_type, visitor_id) VALUES (?, ?, ?)",
+            (new_session_id, current_type, current_visitor_id),
         )
         conn.commit()
 
@@ -252,7 +279,85 @@ async def sessions_reset(request: Request):
         "archived_session_id": old_session_id,
         "session_id": new_session_id,
         "session_type": current_type,
+        "visitor_id": current_visitor_id,
     }
+
+
+@router.get("/api/v1/visitors")
+async def visitors(request: Request, limit: int = 100):
+    limit = max(1, min(limit, 500))
+    current = getattr(request.app.state, "visitor_id", None)
+    conn = _read_conn(request)
+    try:
+        rows = conn.execute(
+            """
+            SELECT
+                v.*,
+                (SELECT COUNT(*) FROM sessions WHERE visitor_id = v.id) AS session_count,
+                (SELECT COUNT(*) FROM interaction_log WHERE visitor_id = v.id) AS turn_count,
+                (SELECT MAX(turn_at) FROM interaction_log WHERE visitor_id = v.id) AS latest_turn_at
+            FROM visitor_profiles v
+            ORDER BY COALESCE(v.last_seen_at, latest_turn_at, v.created_at) DESC, v.created_at DESC
+            LIMIT ?
+            """,
+            (limit,),
+        ).fetchall()
+        return [
+            {
+                **(_visitor_row_to_public(row, active=row["id"] == current) or {}),
+                "session_count": row["session_count"],
+                "turn_count": row["turn_count"],
+                "latest_turn_at": row["latest_turn_at"],
+            }
+            for row in rows
+        ]
+    finally:
+        conn.close()
+
+
+@router.post("/api/v1/visitors")
+async def visitor_create(body: VisitorCreateRequest, request: Request):
+    async with request.app.state.loop_lock:
+        visitor_id = _set_current_visitor(
+            request,
+            body.visitor_id or f"visitor-{uuid.uuid4().hex[:12]}",
+            display_name=body.display_name,
+            notes=body.notes,
+            metadata=body.metadata,
+        )
+        try:
+            llm_client = _active_llm_client(request)
+            embedding_client = _active_embedding_client(request)
+        except ClaudeConfigurationError as exc:
+            request.app.state.llm_error = str(exc)
+            raise HTTPException(status_code=400, detail=str(exc))
+        _rebuild_loop(request, llm_client, embedding_client)
+    return _current_visitor_payload(request, visitor_id)
+
+
+@router.get("/api/v1/visitors/current")
+async def visitor_current(request: Request):
+    return _current_visitor_payload(request, getattr(request.app.state, "visitor_id", None))
+
+
+@router.post("/api/v1/visitors/current")
+async def visitor_current_update(body: VisitorSelectRequest, request: Request):
+    visitor_id = _blank_to_none(body.visitor_id)
+    conn = request.app.state.conn
+    if visitor_id is not None:
+        row = conn.execute("SELECT id FROM visitor_profiles WHERE id = ?", (visitor_id,)).fetchone()
+        if row is None:
+            raise HTTPException(status_code=404, detail="visitor not found")
+    async with request.app.state.loop_lock:
+        try:
+            llm_client = _active_llm_client(request)
+            embedding_client = _active_embedding_client(request)
+        except ClaudeConfigurationError as exc:
+            request.app.state.llm_error = str(exc)
+            raise HTTPException(status_code=400, detail=str(exc))
+        _set_current_visitor(request, visitor_id)
+        _rebuild_loop(request, llm_client, embedding_client)
+    return _current_visitor_payload(request, visitor_id)
 
 
 @router.get("/api/v1/sessions/current/type")
@@ -415,15 +520,20 @@ async def memory_preview(request: Request, query: str, limit: int = 9):
             conn,
             request.app.state.session_id,
             embedding_client=_active_embedding_client(request),
+            visitor_id=getattr(request.app.state, "visitor_id", None),
         )
         results = retriever.retrieve(query, events=[], limit=limit)
         influence = _managed_provider(request, conn).preview_influence(
             query,
-            {"filters": {"session_type": _session_type(conn, request.app.state.session_id)}},
+            {
+                "filters": {"session_type": _session_type(conn, request.app.state.session_id)},
+                "visitor_id": getattr(request.app.state, "visitor_id", None),
+            },
         )
         return {
             "session_id": request.app.state.session_id,
             "session_type": _session_type(conn, request.app.state.session_id),
+            "visitor_id": getattr(request.app.state, "visitor_id", None),
             "query": query,
             "results": [item.to_public_dict() for item in results],
             "managed_influence": influence,

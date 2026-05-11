@@ -19,6 +19,8 @@ from conscious_entity.interfaces.api import (
     MemoryStatusRequest,
     MemoryInfluencePreviewRequest,
     SessionTypeRequest,
+    VisitorCreateRequest,
+    VisitorSelectRequest,
     _conversation_export_payload,
     _resolve_session_id,
 )
@@ -122,6 +124,8 @@ def test_session_reset_archives_old_session_and_creates_initial_state(tmp_path, 
     conn.row_factory = sqlite3.Row
     run_migrations(conn)
     conn.execute("INSERT INTO sessions (id, session_type) VALUES (?, ?)", ("old-session", "exhibition"))
+    conn.execute("INSERT INTO visitor_profiles (id, display_name) VALUES (?, ?)", ("visitor-1", "Visitor One"))
+    conn.execute("UPDATE sessions SET visitor_id = ? WHERE id = ?", ("visitor-1", "old-session"))
     conn.execute(
         """
         INSERT INTO interaction_log (
@@ -136,6 +140,7 @@ def test_session_reset_archives_old_session_and_creates_initial_state(tmp_path, 
     request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(
         conn=conn,
         session_id="old-session",
+        visitor_id="visitor-1",
         configs=configs,
         prompts_dir=api._project_root() / "prompts",
         loop_lock=asyncio.Lock(),
@@ -160,10 +165,11 @@ def test_session_reset_archives_old_session_and_creates_initial_state(tmp_path, 
         (result["session_id"],),
     ).fetchone()["cnt"] == 1
     new_session = conn.execute(
-        "SELECT session_type FROM sessions WHERE id = ?",
+        "SELECT session_type, visitor_id FROM sessions WHERE id = ?",
         (result["session_id"],),
     ).fetchone()
     assert new_session["session_type"] == "exhibition"
+    assert new_session["visitor_id"] == "visitor-1"
     conn.close()
 
 
@@ -200,6 +206,79 @@ def test_session_type_update_rebuilds_loop(tmp_path, monkeypatch):
     assert rebuilt["called"] is True
     row = conn.execute("SELECT session_type FROM sessions WHERE id = ?", ("current",)).fetchone()
     assert row["session_type"] == "exhibition"
+    conn.close()
+
+
+def test_visitor_create_sets_current_session_and_rebuilds_loop(tmp_path, monkeypatch):
+    db_path = tmp_path / "memory.db"
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    run_migrations(conn)
+    conn.execute("INSERT INTO sessions (id) VALUES (?)", ("current",))
+    conn.commit()
+
+    request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(
+        conn=conn,
+        db_path=db_path,
+        session_id="current",
+        visitor_id=None,
+        loop_lock=asyncio.Lock(),
+        llm_runtime_config=None,
+        llm_error=None,
+        embedding_runtime_config=None,
+        embedding_error=None,
+    )))
+    rebuilt = {"called": False}
+
+    monkeypatch.setattr(api_routes, "_active_llm_client", lambda _request: MagicMock())
+    monkeypatch.setattr(api_routes, "_active_embedding_client", lambda _request: None)
+    monkeypatch.setattr(
+        api_routes,
+        "_rebuild_loop",
+        lambda _request, _client, _embedding_client=None: rebuilt.update(called=True),
+    )
+
+    result = asyncio.run(api.visitor_create(
+        VisitorCreateRequest(visitor_id="visitor-k", display_name="K Tester"),
+        request,
+    ))
+
+    assert result["visitor_id"] == "visitor-k"
+    assert result["visitor"]["display_name"] == "K Tester"
+    assert rebuilt["called"] is True
+    assert conn.execute("SELECT visitor_id FROM sessions WHERE id = 'current'").fetchone()["visitor_id"] == "visitor-k"
+    conn.close()
+
+
+def test_visitor_current_can_clear_assignment(tmp_path, monkeypatch):
+    db_path = tmp_path / "memory.db"
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    run_migrations(conn)
+    conn.execute("INSERT INTO visitor_profiles (id) VALUES (?)", ("visitor-k",))
+    conn.execute("INSERT INTO sessions (id, visitor_id) VALUES (?, ?)", ("current", "visitor-k"))
+    conn.commit()
+
+    request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(
+        conn=conn,
+        db_path=db_path,
+        session_id="current",
+        visitor_id="visitor-k",
+        loop_lock=asyncio.Lock(),
+        llm_runtime_config=None,
+        llm_error=None,
+        embedding_runtime_config=None,
+        embedding_error=None,
+    )))
+    monkeypatch.setattr(api_routes, "_active_llm_client", lambda _request: MagicMock())
+    monkeypatch.setattr(api_routes, "_active_embedding_client", lambda _request: None)
+    monkeypatch.setattr(api_routes, "_rebuild_loop", lambda _request, _client, _embedding_client=None: None)
+
+    result = asyncio.run(api.visitor_current_update(VisitorSelectRequest(visitor_id=None), request))
+
+    assert result["visitor_id"] is None
+    assert request.app.state.visitor_id is None
+    assert conn.execute("SELECT visitor_id FROM sessions WHERE id = 'current'").fetchone()["visitor_id"] is None
     conn.close()
 
 

@@ -6,21 +6,28 @@ from conscious_entity.memory.models import ReflectiveSummary
 
 
 class ReflectiveStore:
-    def __init__(self, conn: sqlite3.Connection, session_id: str) -> None:
+    def __init__(
+        self,
+        conn: sqlite3.Connection,
+        session_id: str,
+        visitor_id: str | None = None,
+    ) -> None:
         self._conn = conn
         self._session_id = session_id
+        self._visitor_id = visitor_id
 
     def store(self, summary: ReflectiveSummary) -> int:
         """Insert a reflective summary. Returns the new row id."""
         cursor = self._conn.execute(
             """
             INSERT INTO reflective_summaries (
-                session_id, content, source_event_ids, state_at_reflection,
+                session_id, visitor_id, content, source_event_ids, state_at_reflection,
                 embedding, embedding_model, active
-            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 self._session_id,
+                self._visitor_id,
                 summary.content,
                 summary.source_event_ids_json(),
                 summary.state_json(),

@@ -34,12 +34,14 @@ class MemoryRetriever:
         embedding_client: EmbeddingClient | None = None,
         session_type: str | None = None,
         managed_provider: MemoryProvider | None = None,
+        visitor_id: str | None = None,
     ) -> None:
         self._conn = conn
         self._session_id = session_id
         self._embedding_client = embedding_client
         self._session_type = session_type or self._resolve_session_type()
         self._managed_provider = managed_provider
+        self._visitor_id = visitor_id or self._resolve_visitor_id()
 
     def retrieve(
         self,
@@ -71,10 +73,57 @@ class MemoryRetriever:
 
         results: list[RetrievedMemory] = []
         results.extend(self._recent_dialog(query_tokens, limit=4))
+        results.extend(self._visitor_recent_dialog(query_tokens, limit=4))
         results.extend(self._episodic_memories(query_tokens, event_types, protocol_keys, limit=5))
+        results.extend(self._visitor_episodic_memories(query_tokens, event_types, protocol_keys, limit=5))
         results.extend(self._reflective_summaries(query_tokens, limit=3))
+        results.extend(self._visitor_reflective_summaries(query_tokens, limit=3))
 
         results.sort(key=lambda item: item.score, reverse=True)
+        return results[:limit]
+
+    def _visitor_recent_dialog(self, query_tokens: set[str], limit: int) -> list[RetrievedMemory]:
+        if not self._visitor_id:
+            return []
+        rows = self._conn.execute(
+            """
+            SELECT i.id, i.session_id, i.turn_at, i.raw_text, i.expression_output, i.policy_action
+            FROM interaction_log i
+            JOIN sessions s ON s.id = i.session_id
+            WHERE i.session_id != ?
+              AND (i.visitor_id = ? OR s.visitor_id = ?)
+            ORDER BY i.turn_at DESC, i.id DESC
+            LIMIT ?
+            """,
+            (self._session_id, self._visitor_id, self._visitor_id, max(limit, 8)),
+        ).fetchall()
+
+        results: list[RetrievedMemory] = []
+        for idx, row in enumerate(rows):
+            user_text = row["raw_text"] or ""
+            entity_text = row["expression_output"] or ""
+            if not user_text and not entity_text:
+                continue
+            content = _format_recent_turn(user_text, entity_text)
+            overlap = _overlap(query_tokens, _tokens(content))
+            recency = 1.0 / (idx + 1)
+            score = 0.46 * recency + 0.54 * overlap
+            if score <= 0.0 and query_tokens:
+                continue
+            results.append(RetrievedMemory(
+                memory_type="recent",
+                content=content,
+                timestamp=_parse_time(row["turn_at"]),
+                score=score,
+                source="deterministic",
+                metadata={
+                    "turn_id": row["id"],
+                    "policy_action": row["policy_action"],
+                    "scope": "visitor",
+                    "session_id": row["session_id"],
+                    "visitor_id": self._visitor_id,
+                },
+            ))
         return results[:limit]
 
     def _semantic_retrieve(
@@ -136,6 +185,66 @@ class MemoryRetriever:
             ))
         return results[:limit]
 
+    def _visitor_episodic_memories(
+        self,
+        query_tokens: set[str],
+        event_types: set[str],
+        protocol_keys: set[str],
+        limit: int,
+    ) -> list[RetrievedMemory]:
+        if not self._visitor_id:
+            return []
+        rows = self._conn.execute(
+            """
+            SELECT e.id, e.session_id, e.created_at, e.event_type, e.content,
+                   e.raw_text, e.salience, e.metadata
+            FROM episodic_memories e
+            JOIN sessions s ON s.id = e.session_id
+            WHERE e.session_id != ?
+              AND (e.visitor_id = ? OR s.visitor_id = ?)
+              AND e.memory_status = 'active'
+            ORDER BY e.created_at DESC, e.id DESC
+            LIMIT 80
+            """,
+            (self._session_id, self._visitor_id, self._visitor_id),
+        ).fetchall()
+
+        results: list[RetrievedMemory] = []
+        for idx, row in enumerate(rows):
+            metadata = _json_dict(row["metadata"])
+            memory_keys = {str(metadata.get("mechanism", "")), str(metadata.get("posture", ""))}
+            overlap = _overlap(query_tokens, _tokens(" ".join([
+                row["content"] or "",
+                row["raw_text"] or "",
+                row["event_type"] or "",
+                " ".join(v for v in memory_keys if v),
+            ])))
+            relation_match = 1.0 if row["event_type"] in event_types or bool(protocol_keys & memory_keys) else 0.0
+            recency = 1.0 / (idx + 1)
+            salience = float(row["salience"] or 0.0)
+            score = 0.38 * overlap + 0.22 * relation_match + 0.2 * salience + 0.2 * recency
+            if score <= 0.0:
+                continue
+            results.append(RetrievedMemory(
+                memory_type="episodic",
+                content=f"{row['event_type']}: {row['content']}",
+                timestamp=_parse_time(row["created_at"]),
+                score=score,
+                source="deterministic",
+                metadata={
+                    "id": row["id"],
+                    "event_type": row["event_type"],
+                    "salience": salience,
+                    "mechanism": metadata.get("mechanism"),
+                    "posture": metadata.get("posture"),
+                    "scope": "visitor",
+                    "session_id": row["session_id"],
+                    "visitor_id": self._visitor_id,
+                },
+            ))
+        results.sort(key=lambda item: item.score, reverse=True)
+        return results[:limit]
+
     def _episodic_memories(
         self,
         query_tokens: set[str],
@@ -189,6 +298,44 @@ class MemoryRetriever:
         results.sort(key=lambda item: item.score, reverse=True)
         return results[:limit]
 
+    def _visitor_reflective_summaries(self, query_tokens: set[str], limit: int) -> list[RetrievedMemory]:
+        if not self._visitor_id:
+            return []
+        rows = self._conn.execute(
+            """
+            SELECT r.id, r.session_id, r.created_at, r.content
+            FROM reflective_summaries r
+            JOIN sessions s ON s.id = r.session_id
+            WHERE r.session_id != ?
+              AND (r.visitor_id = ? OR s.visitor_id = ?)
+              AND r.active = 1
+              AND r.memory_status = 'active'
+            ORDER BY r.created_at DESC, r.id DESC
+            LIMIT 30
+            """,
+            (self._session_id, self._visitor_id, self._visitor_id),
+        ).fetchall()
+
+        results: list[RetrievedMemory] = []
+        for idx, row in enumerate(rows):
+            overlap = _overlap(query_tokens, _tokens(row["content"] or ""))
+            recency = 1.0 / (idx + 1)
+            score = 0.62 * overlap + 0.38 * recency
+            results.append(RetrievedMemory(
+                memory_type="reflective",
+                content=row["content"],
+                timestamp=_parse_time(row["created_at"]),
+                score=score,
+                source="deterministic",
+                metadata={
+                    "id": row["id"],
+                    "scope": "visitor",
+                    "session_id": row["session_id"],
+                    "visitor_id": self._visitor_id,
+                },
+            ))
+        return results[:limit]
+
     def _reflective_summaries(self, query_tokens: set[str], limit: int) -> list[RetrievedMemory]:
         rows = self._conn.execute(
             """
@@ -224,7 +371,8 @@ class MemoryRetriever:
     ) -> list[RetrievedMemory]:
         rows = self._conn.execute(
             """
-            SELECT e.id, e.session_id, e.created_at, e.event_type, e.content, e.raw_text,
+            SELECT e.id, e.session_id, COALESCE(e.visitor_id, s.visitor_id) AS visitor_id,
+                   e.created_at, e.event_type, e.content, e.raw_text,
                    e.salience, e.metadata, e.embedding, e.embedding_model
             FROM episodic_memories e
             JOIN sessions s ON s.id = e.session_id
@@ -258,8 +406,14 @@ class MemoryRetriever:
                 metadata={
                     "id": row["id"],
                     "session_id": row["session_id"],
+                    "visitor_id": row["visitor_id"],
                     "session_type": self._session_type,
-                    "scope": "current_session" if row["session_id"] == self._session_id else "same_label_pool",
+                    "scope": _memory_scope(
+                        row["session_id"],
+                        self._session_id,
+                        row["visitor_id"],
+                        self._visitor_id,
+                    ),
                     "event_type": row["event_type"],
                     "salience": salience,
                     "embedding_model": row["embedding_model"],
@@ -272,7 +426,8 @@ class MemoryRetriever:
     def _embedded_reflective(self, query_embedding: list[float]) -> list[RetrievedMemory]:
         rows = self._conn.execute(
             """
-            SELECT r.id, r.session_id, r.created_at, r.content, r.embedding, r.embedding_model
+            SELECT r.id, r.session_id, COALESCE(r.visitor_id, s.visitor_id) AS visitor_id,
+                   r.created_at, r.content, r.embedding, r.embedding_model
             FROM reflective_summaries r
             JOIN sessions s ON s.id = r.session_id
             WHERE s.session_type = ? AND r.active = 1 AND r.embedding IS NOT NULL
@@ -302,8 +457,14 @@ class MemoryRetriever:
                 metadata={
                     "id": row["id"],
                     "session_id": row["session_id"],
+                    "visitor_id": row["visitor_id"],
                     "session_type": self._session_type,
-                    "scope": "current_session" if row["session_id"] == self._session_id else "same_label_pool",
+                    "scope": _memory_scope(
+                        row["session_id"],
+                        self._session_id,
+                        row["visitor_id"],
+                        self._visitor_id,
+                    ),
                     "embedding_model": row["embedding_model"],
                 },
             ))
@@ -317,6 +478,15 @@ class MemoryRetriever:
         if row and row["session_type"] in {"test", "exhibition"}:
             return str(row["session_type"])
         return "test"
+
+    def _resolve_visitor_id(self) -> str | None:
+        row = self._conn.execute(
+            "SELECT visitor_id FROM sessions WHERE id = ?",
+            (self._session_id,),
+        ).fetchone()
+        if row and row["visitor_id"]:
+            return str(row["visitor_id"])
+        return None
 
 
 def _merge_results(
@@ -333,6 +503,19 @@ def _merge_results(
     results = list(merged.values())
     results.sort(key=lambda item: item.score, reverse=True)
     return results[:limit]
+
+
+def _memory_scope(
+    session_id: str,
+    current_session_id: str,
+    visitor_id: str | None,
+    current_visitor_id: str | None,
+) -> str:
+    if session_id == current_session_id:
+        return "current_session"
+    if visitor_id and current_visitor_id and visitor_id == current_visitor_id:
+        return "visitor"
+    return "same_label_pool"
 
 
 def _event_keys(events: Iterable[PerceptionEvent]) -> tuple[set[str], set[str]]:

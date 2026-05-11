@@ -203,6 +203,28 @@ class TestStatePersistence:
 
         assert "remember this sentence after restart" in output.raw_prompt
 
+    def test_same_visitor_prior_session_memory_enters_prompt(self, db, config_dir, prompts_dir, mock_client):
+        from conscious_entity.core.config_loader import load_all_configs
+        config = load_all_configs(config_dir)
+
+        db.execute("INSERT INTO visitor_profiles (id, display_name) VALUES (?, ?)", ("visitor-k", "K Tester"))
+        db.execute("UPDATE sessions SET visitor_id = ? WHERE id = ?", ("visitor-k", "test-session"))
+        db.execute("INSERT INTO sessions (id, visitor_id) VALUES (?, ?)", ("prior-session", "visitor-k"))
+        db.execute(
+            """
+            INSERT INTO interaction_log (
+                session_id, visitor_id, role, raw_text, event_types, policy_action, expression_output
+            ) VALUES (?, ?, 'user', ?, '[]', 'respond_openly', ?)
+            """,
+            ("prior-session", "visitor-k", "K 是创作者之前反复提到的人。", "这会留下来。"),
+        )
+        db.commit()
+
+        loop = InteractionLoop(db, "test-session", config, prompts_dir, mock_client, visitor_id="visitor-k")
+        output = loop.run_turn("K是谁？")
+
+        assert "K 是创作者之前反复提到的人" in output.raw_prompt
+
 
 # ---------------------------------------------------------------------------
 # Shutdown keyword behavior

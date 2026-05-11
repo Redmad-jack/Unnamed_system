@@ -88,6 +88,7 @@ Step 8   策略选择
 
 Step 9   [条件] 若策略或 managed memory 要求检索记忆
           └─ 检索当前 session 的最近对话、情节记忆和反思摘要
+          └─ 若当前 session 绑定匿名 visitor_id，同一 visitor 的旧 session 可作为 continuity hint 参与召回
           └─ embedding 启用时，同 `session_type` 的语义池可参与 hybrid retrieval
           └─ 默认使用可解释排序；启用 embedding 时使用 hybrid retrieval
           └─ `RETRIEVE_MEMORY_FIRST` 取回材料后进入开放表达，其它检索策略保持原 action

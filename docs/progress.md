@@ -8,8 +8,8 @@
 
 - 当前进行中：无
 - 当前可运行形态：CLI + 本地 FastAPI 开发者 API + Web 看板 + 可选 Vision 面板 + 可选 Audio Adapter + `/visitor` 临时身体表面；观众侧最终呈现方向是身体，不是传统 UI
-- 当前核心能力：Stranger 文本协议、状态机、短期/情节/反思记忆、可解释/可选 embedding 召回、Memory Preview、managed memory proposal → commit、influence log / curation、Runtime Harness Trace、可选 YOLO person presence detection、可选火山 ASR 2.0 / TTS 2.0 双向流式 Audio Adapter
-- 当前验证基线：`PYTHONPATH=src python3 -m pytest -p no:debugging`，最近一次完整结果为 `350 passed`
+- 当前核心能力：Stranger 文本协议、状态机、短期/情节/反思记忆、匿名 visitor profile 与跨 session visitor 记忆召回、可解释/可选 embedding 召回、Memory Preview、managed memory proposal → commit、influence log / curation、Runtime Harness Trace、可选 YOLO person presence detection、可选火山 ASR 2.0 / TTS 2.0 双向流式 Audio Adapter
+- 当前验证基线：`PYTHONPATH=src python3 -m pytest -p no:debugging`，最近一次完整结果为 `354 passed`
 - 当前注意事项：`AGENTS.md` 与 `CLAUDE.md` 有用户侧未提交差异；除非明确要求，不应在常规任务中触碰
 
 ---
@@ -17,10 +17,10 @@
 ## 下一步
 
 - [ ] 使用已轮换的真实供应商凭证做一轮 CLI/API 联调，确认自定义模型名与网关鉴权在目标环境可用
-- [ ] 继续观察真实对话中的记忆连续性：Memory Preview 是否能解释召回来源，managed memory influence 是否可审计且不越界
+- [ ] 继续观察真实对话中的记忆连续性：同一 visitor 的跨 session 召回是否稳定，Memory Preview 是否能解释召回来源，managed memory influence 是否可审计且不越界
 - [ ] 手动联调视觉层：安装 `.[dev,api,vision]`，配置本地 `ENTITY_VISION_MODEL_PATH`，确认 Mac 摄像头授权、实时标注帧、detections 和 presence events
 - [ ] 使用真实火山新版控制台 API Key 和 TTS 2.0 音色做一轮 Audio Adapter 联调：确认浏览器麦克风权限、ASR 2.0 partial/final、`/audio/dialog`、TTS 2.0 bidirection HTTP playback、`/visitor` enable sound
-- [ ] 后续单独设计访客身份与多人并发策略：当前系统不保存访客身份，同一时刻只处理一个主要对话流；如需多用户，需要 visitor_id / routing / 仲裁策略确认
+- [ ] 后续单独设计多人并发策略：当前已支持开发者手动绑定匿名 visitor_id，但同一时刻仍只处理一个主要对话流；多用户 routing / 仲裁策略仍待确认
 - [ ] 继续规划非移动身体阶段：身体外观、声音风格、显示/投影/光的呈现映射；更完整空间感知仍待设计
 - [ ] 物理移动、循路、避障、底盘控制和安全边界放到更后阶段，等非物理身体通道稳定后再实现
 - [ ] 部署认证、访客身份策略与展期终止仪式仍待设计确认
@@ -28,6 +28,30 @@
 ---
 
 ## Changelog
+
+### 2026-05-12：匿名 Visitor Identity 与跨 session 记忆连续性
+
+- [x] 新增匿名 `visitor_profiles` 与 session `visitor_id` 绑定：
+  - 不引入账号、密码、人脸、声纹或自动身份识别
+  - 开发者可通过 API / Dashboard 创建、切换、清空当前 visitor
+  - session reset 会保留当前 visitor 绑定，支持连续测试
+- [x] 记忆链路支持 visitor scope：
+  - `interaction_log`、`episodic_memories`、`reflective_summaries`、managed memory / proposal / influence log 记录 `visitor_id`
+  - `MemoryRetriever` 在设置 visitor 时可召回同一 visitor 的旧 session 最近对话、情节记忆和反思摘要
+  - 普通 policy 未显式要求 retrieval 时，也允许高相关 visitor continuity hint 进入 prompt
+- [x] 开发者面板 Runtime 区新增 Visitor Identity：
+  - 显示当前 visitor、scope 语义、最近 visitor profile
+  - 支持 Create / Set / Clear
+- [x] 文档：
+  - 更新 `docs/PRD.md`、`docs/APP_FLOW.md`、`docs/BACKEND_STRUCTURE.md`
+  - `docs/lessons.md` 增加 visitor scope 规则
+- [x] 验证：
+  - `python3 -m py_compile src/conscious_entity/db/migrations.py src/conscious_entity/core/loop.py src/conscious_entity/memory/episodic_store.py src/conscious_entity/memory/reflective_store.py src/conscious_entity/memory/retrieval.py src/conscious_entity/memory/managed.py src/conscious_entity/interfaces/api_models.py src/conscious_entity/interfaces/api_runtime.py src/conscious_entity/interfaces/api_routes.py src/conscious_entity/interfaces/api.py`
+  - `node --check src/conscious_entity/interfaces/static/dashboard.js`
+  - `PYTHONPATH=src python3 -m pytest -p no:debugging tests/integration/test_full_loop.py::TestStatePersistence::test_same_visitor_prior_session_memory_enters_prompt tests/unit/test_memory_retrieval.py tests/unit/test_api_export.py tests/unit/test_managed_memory.py`
+  - `29 passed`
+  - `PYTHONPATH=src python3 -m pytest -p no:debugging`
+  - `354 passed`
 
 ### 2026-05-12：Runtime Harness System v1
 

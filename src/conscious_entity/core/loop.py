@@ -85,9 +85,11 @@ class InteractionLoop:
         llm_client: Optional[ClaudeClient] = None,
         embedding_client: Optional[EmbeddingClient] = None,
         event_bus: Optional[EventBus] = None,
+        visitor_id: str | None = None,
     ) -> None:
         self._conn = conn
         self._session_id = session_id
+        self._visitor_id = visitor_id or _visitor_id_for_session(conn, session_id)
         self._event_bus = event_bus or EventBus()
         self._config = config
         self._prompts_dir = prompts_dir
@@ -112,8 +114,8 @@ class InteractionLoop:
             max_turns=int(session_cfg.get("short_term_window", 10))
         )
         self._hydrate_short_term_from_log()
-        self._episodic_store = EpisodicStore(conn, session_id)
-        self._reflective_store = ReflectiveStore(conn, session_id)
+        self._episodic_store = EpisodicStore(conn, session_id, visitor_id=self._visitor_id)
+        self._reflective_store = ReflectiveStore(conn, session_id, visitor_id=self._visitor_id)
         self._embedding_client = embedding_client if embedding_client is not None else _optional_embedding_client()
         self._background_db_path = _database_path_for_background(conn)
         self._background_executor: ThreadPoolExecutor | None = (
@@ -126,6 +128,7 @@ class InteractionLoop:
         self._managed_memory: MemoryProvider = build_memory_provider(
             conn,
             session_id,
+            visitor_id=self._visitor_id,
             llm_client=client,
             embedding_client=self._embedding_client,
             prompts_dir=prompts_dir,
@@ -135,6 +138,7 @@ class InteractionLoop:
             session_id,
             self._embedding_client,
             managed_provider=self._managed_memory,
+            visitor_id=self._visitor_id,
         )
 
         keyword_detector = KeywordDetector(profile.get("topics_of_sensitivity", []))
@@ -186,12 +190,14 @@ class InteractionLoop:
             metadata={
                 "input_chars": len(raw_input),
                 "input_mode": turn_metadata.get("input_mode") or "text",
+                "visitor_id": self._visitor_id,
             },
         )
         recorder = TurnLatencyRecorder(
             source=source,
             metadata={
                 "session_id": self._session_id,
+                "visitor_id": self._visitor_id,
                 "input_chars": len(raw_input),
                 "input_mode": turn_metadata.get("input_mode"),
             },
@@ -211,6 +217,7 @@ class InteractionLoop:
                     metadata={
                         "source": source,
                         "input_mode": turn_metadata.get("input_mode") or "text",
+                        "visitor_id": self._visitor_id,
                         "chars": len(raw_input),
                         "event_types": [event.event_type.value for event in events],
                     },
@@ -240,6 +247,7 @@ class InteractionLoop:
                             "events": [event.event_type.value for event in events],
                             "state": new_state.to_dict(),
                             "filters": {"session_type": self._session_type()},
+                            "visitor_id": self._visitor_id,
                         },
                     )
                     new_state = _apply_memory_state_influence(new_state, memory_influence)
@@ -539,6 +547,13 @@ class InteractionLoop:
                 for item in memory_influence.get("expression_context", [])
                 if isinstance(item, dict)
             ]
+            if self._visitor_id:
+                visitor_hits = [
+                    item
+                    for item in self._memory_retriever.retrieve(raw_input, events=events, limit=5)
+                    if item.metadata.get("scope") == "visitor" and item.score >= 0.2
+                ]
+                retrieved_memories.extend(visitor_hits[:3])
 
         if decision.action == PolicyAction.RETRIEVE_MEMORY_FIRST:
             decision = PolicyDecision(
@@ -569,6 +584,7 @@ class InteractionLoop:
                     "source_turn_ids": [turn_id] if turn_id is not None else [],
                     "events": [event.event_type.value for event in events],
                     "policy_action": decision.action.value,
+                    "visitor_id": self._visitor_id,
                 },
             )
             if proposals and self._managed_memory.auto_commit:
@@ -593,11 +609,13 @@ class InteractionLoop:
             "source_turn_ids": [turn_id] if turn_id is not None else [],
             "events": [event.event_type.value for event in events],
             "policy_action": decision.action.value,
+            "visitor_id": self._visitor_id,
         }
         future = self._background_executor.submit(
             _run_managed_memory_maintenance,
             db_path=self._background_db_path,
             session_id=self._session_id,
+            visitor_id=self._visitor_id,
             llm_client=self._llm_client,
             embedding_client=self._embedding_client,
             prompts_dir=self._prompts_dir,
@@ -653,13 +671,14 @@ class InteractionLoop:
             cursor = self._conn.execute(
                 """
                 INSERT INTO interaction_log (
-                    session_id, role, raw_text, event_types,
+                    session_id, visitor_id, role, raw_text, event_types,
                     policy_action, expression_output, delay_ms,
                     visual_mode, state_snapshot_id
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     self._session_id,
+                    self._visitor_id,
                     role,
                     raw_text,
                     event_types_json,
@@ -771,6 +790,7 @@ def _run_managed_memory_maintenance(
     *,
     db_path: Path,
     session_id: str,
+    visitor_id: str | None,
     llm_client: ClaudeClient | None,
     embedding_client: EmbeddingClient | None,
     prompts_dir: Path,
@@ -782,6 +802,7 @@ def _run_managed_memory_maintenance(
         provider = build_memory_provider(
             conn,
             session_id,
+            visitor_id=visitor_id,
             llm_client=llm_client,
             embedding_client=embedding_client,
             prompts_dir=prompts_dir,
@@ -827,3 +848,17 @@ def _optional_embedding_client() -> EmbeddingClient | None:
     except EmbeddingConfigurationError as exc:
         logger.warning("Embedding configuration ignored; deterministic memory retrieval remains active: %s", exc)
         return None
+
+
+def _visitor_id_for_session(conn: sqlite3.Connection, session_id: str) -> str | None:
+    try:
+        row = conn.execute(
+            "SELECT visitor_id FROM sessions WHERE id = ?",
+            (session_id,),
+        ).fetchone()
+    except sqlite3.Error:
+        return None
+    if row is None:
+        return None
+    value = row["visitor_id"] if isinstance(row, sqlite3.Row) else row[0]
+    return str(value) if value else None

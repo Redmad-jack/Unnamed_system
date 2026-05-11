@@ -4,6 +4,7 @@ import json
 import os
 import sqlite3
 import asyncio
+import uuid
 from contextlib import asynccontextmanager, suppress
 from datetime import datetime, timezone
 from pathlib import Path
@@ -109,11 +110,13 @@ async def lifespan(app: Any):
         prompts_dir,
         llm_client=llm_client,
         embedding_client=embedding_client,
+        visitor_id=_session_visitor_id(conn, session_id),
     )
 
     app.state.loop = loop
     app.state.conn = conn
     app.state.session_id = session_id
+    app.state.visitor_id = _session_visitor_id(conn, session_id)
     app.state.configs = configs
     app.state.config_dir = config_dir
     app.state.prompts_dir = prompts_dir
@@ -205,6 +208,92 @@ def _session_type(conn: sqlite3.Connection, session_id: str) -> str:
         if value in {"test", "exhibition"}:
             return str(value)
     return "test"
+
+
+def _session_visitor_id(conn: sqlite3.Connection, session_id: str) -> str | None:
+    row = conn.execute(
+        "SELECT visitor_id FROM sessions WHERE id = ?",
+        (session_id,),
+    ).fetchone()
+    if row:
+        value = row["visitor_id"] if isinstance(row, sqlite3.Row) else row[0]
+        return str(value) if value else None
+    return None
+
+
+def _visitor_row_to_public(row: sqlite3.Row | None, *, active: bool = False) -> dict[str, Any] | None:
+    if row is None:
+        return None
+    item = _row_to_dict(row)
+    item["metadata"] = _json_dict(item.get("metadata"))
+    item["active"] = active
+    return item
+
+
+def _ensure_visitor_profile(
+    conn: sqlite3.Connection,
+    visitor_id: str | None = None,
+    *,
+    display_name: str | None = None,
+    notes: str | None = None,
+    metadata: dict[str, Any] | None = None,
+) -> str:
+    cleaned = _blank_to_none(visitor_id) or f"visitor-{uuid.uuid4().hex[:12]}"
+    conn.execute(
+        """
+        INSERT INTO visitor_profiles (id, display_name, notes, last_seen_at, metadata)
+        VALUES (?, ?, ?, datetime('now'), ?)
+        ON CONFLICT(id) DO UPDATE SET
+            display_name = COALESCE(excluded.display_name, visitor_profiles.display_name),
+            notes = COALESCE(excluded.notes, visitor_profiles.notes),
+            last_seen_at = datetime('now'),
+            metadata = CASE
+                WHEN excluded.metadata != '{}' THEN excluded.metadata
+                ELSE visitor_profiles.metadata
+            END
+        """,
+        (
+            cleaned,
+            _blank_to_none(display_name),
+            _blank_to_none(notes),
+            json.dumps(metadata or {}, ensure_ascii=False),
+        ),
+    )
+    return cleaned
+
+
+def _set_current_visitor(
+    request: Request,
+    visitor_id: str | None,
+    *,
+    display_name: str | None = None,
+    notes: str | None = None,
+    metadata: dict[str, Any] | None = None,
+) -> str | None:
+    conn = request.app.state.conn
+    if visitor_id is None:
+        conn.execute(
+            "UPDATE sessions SET visitor_id = NULL WHERE id = ?",
+            (request.app.state.session_id,),
+        )
+        conn.commit()
+        request.app.state.visitor_id = None
+        return None
+
+    resolved = _ensure_visitor_profile(
+        conn,
+        visitor_id,
+        display_name=display_name,
+        notes=notes,
+        metadata=metadata,
+    )
+    conn.execute(
+        "UPDATE sessions SET visitor_id = ? WHERE id = ?",
+        (resolved, request.app.state.session_id),
+    )
+    conn.commit()
+    request.app.state.visitor_id = resolved
+    return resolved
 
 
 def _redact(v: Optional[str]) -> Optional[str]:
@@ -399,6 +488,7 @@ def _managed_provider(request: Request, conn: sqlite3.Connection | None = None):
     return build_memory_provider(
         conn or request.app.state.conn,
         request.app.state.session_id,
+        visitor_id=getattr(request.app.state, "visitor_id", None),
         llm_client=llm_client,
         embedding_client=_active_embedding_client(request),
         prompts_dir=getattr(request.app.state, "prompts_dir", _prompts_dir()),
@@ -420,6 +510,7 @@ def _rebuild_loop(
         request.app.state.prompts_dir,
         llm_client=llm_client,
         embedding_client=embedding_client,
+        visitor_id=getattr(request.app.state, "visitor_id", None),
     )
 
 

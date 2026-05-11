@@ -99,6 +99,7 @@ class LocalManagedMemoryProvider:
         self,
         conn: sqlite3.Connection,
         session_id: str,
+        visitor_id: str | None = None,
         llm_client: ClaudeClient | None = None,
         embedding_client: EmbeddingClient | None = None,
         prompts_dir: Path | None = None,
@@ -106,6 +107,7 @@ class LocalManagedMemoryProvider:
     ) -> None:
         self._conn = conn
         self._session_id = session_id
+        self._visitor_id = visitor_id
         self._llm_client = llm_client
         self._embedding_client = embedding_client
         self._prompts_dir = prompts_dir
@@ -132,12 +134,13 @@ class LocalManagedMemoryProvider:
             cursor = self._conn.execute(
                 """
                 INSERT INTO memory_operation_proposals (
-                    session_id, operation_type, operation_json, reason,
+                    session_id, visitor_id, operation_type, operation_json, reason,
                     raw_llm_output, source_turn_ids, status
-                ) VALUES (?, ?, ?, ?, ?, ?, 'pending')
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, 'pending')
                 """,
                 (
                     self._session_id,
+                    self._visitor_id,
                     proposal.operation,
                     proposal.operation_json(),
                     proposal.reason,
@@ -354,13 +357,14 @@ class LocalManagedMemoryProvider:
         self._conn.execute(
             """
             INSERT INTO memory_influence_log (
-                session_id, turn_id, query, retrieved_memory_ids,
+                session_id, visitor_id, turn_id, query, retrieved_memory_ids,
                 expression_context, policy_influence, state_influence,
                 state_snapshot_id, policy_action
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 self._session_id,
+                self._visitor_id,
                 turn_id,
                 query,
                 json.dumps([mid for mid in memory_ids if mid is not None]),
@@ -425,13 +429,14 @@ class LocalManagedMemoryProvider:
         cursor = self._conn.execute(
             """
             INSERT INTO managed_memories (
-                session_id, session_type, scope, memory_kind, content,
+                session_id, visitor_id, session_type, scope, memory_kind, content,
                 entities, topics, confidence, source_turn_ids, status,
                 embedding, embedding_model, metadata
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?)
             """,
             (
                 self._session_id,
+                self._visitor_id,
                 self._session_type,
                 proposal.scope,
                 str(proposal.metadata.get("memory_kind", "observation")),
@@ -511,9 +516,16 @@ class LocalManagedMemoryProvider:
     def _candidate_rows(self, query: str, filters: dict[str, Any], limit: int) -> list[sqlite3.Row]:
         status = str(filters.get("status", "active"))
         session_type = str(filters.get("session_type", self._session_type))
+        visitor_id = str(filters.get("visitor_id") or self._visitor_id or "").strip()
         params: list[Any] = []
         where = ["session_type = ?"]
         params.append(session_type)
+        if visitor_id:
+            where.append("(visitor_id = ? OR session_id = ? OR visitor_id IS NULL)")
+            params.extend([visitor_id, self._session_id])
+        else:
+            where.append("(visitor_id IS NULL OR session_id = ?)")
+            params.append(self._session_id)
         if status != "all":
             where.append("status = ?")
             params.append(status)
@@ -553,7 +565,7 @@ class LocalManagedMemoryProvider:
                 SELECT m.*
                 FROM managed_memories_fts f
                 JOIN managed_memories m ON m.id = f.rowid
-                WHERE f.managed_memories_fts MATCH ? AND {" AND ".join("m." + item for item in where)}
+                WHERE f.managed_memories_fts MATCH ? AND {" AND ".join(_qualify_condition(item) for item in where)}
                 ORDER BY bm25(f), m.updated_at DESC
                 LIMIT ?
                 """,
@@ -600,12 +612,13 @@ class LocalManagedMemoryProvider:
         self._conn.execute(
             """
             INSERT INTO memory_operation_log (
-                session_id, action, memory_id, proposal_id,
+                session_id, visitor_id, action, memory_id, proposal_id,
                 source_turn_ids, details
-            ) VALUES (?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 self._session_id,
+                self._visitor_id,
                 action,
                 memory_id,
                 proposal.id,
@@ -646,6 +659,7 @@ class Mem0Provider(LocalManagedMemoryProvider):
 def build_memory_provider(
     conn: sqlite3.Connection,
     session_id: str,
+    visitor_id: str | None = None,
     llm_client: ClaudeClient | None = None,
     embedding_client: EmbeddingClient | None = None,
     prompts_dir: Path | None = None,
@@ -653,7 +667,7 @@ def build_memory_provider(
 ) -> MemoryProvider:
     cfg = config or MemoryProviderConfig.from_env()
     cls = Mem0Provider if cfg.backend == "mem0" else LocalManagedMemoryProvider
-    return cls(conn, session_id, llm_client, embedding_client, prompts_dir, cfg)
+    return cls(conn, session_id, visitor_id, llm_client, embedding_client, prompts_dir, cfg)
 
 
 def _fallback_proposals(messages: list[dict], source_turn_ids: list[int]) -> list[MemoryOperationProposal]:
@@ -820,6 +834,13 @@ def _memory_row_to_public(row: sqlite3.Row) -> dict[str, Any]:
 
 def _row_to_dict(row: sqlite3.Row) -> dict[str, Any]:
     return {key: row[key] for key in row.keys()}
+
+
+def _qualify_condition(condition: str) -> str:
+    if condition.startswith("("):
+        return condition.replace("visitor_id", "m.visitor_id").replace("session_id", "m.session_id")
+    column, _, rest = condition.partition(" ")
+    return f"m.{column} {rest}" if rest else f"m.{column}"
 
 
 def _json_dict(value: Any) -> dict[str, Any]:

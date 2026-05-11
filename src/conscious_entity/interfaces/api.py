@@ -37,6 +37,8 @@ from conscious_entity.interfaces.api_models import (
     MemoryInfluencePreviewRequest,
     MemoryStatusRequest,
     SessionTypeRequest,
+    VisitorCreateRequest,
+    VisitorSelectRequest,
 )
 from conscious_entity.interfaces.api_routes import (
     config_all,
@@ -85,6 +87,10 @@ from conscious_entity.interfaces.api_routes import (
     stats_audio_latency,
     stats_latency,
     stats_llm,
+    visitor_create,
+    visitor_current,
+    visitor_current_update,
+    visitors,
     visitor_surface,
     vision_start,
     vision_status,
@@ -123,6 +129,8 @@ from conscious_entity.interfaces.api_runtime import (
     _resolve_session_id,
     _row_to_dict,
     _save_initial_state,
+    _session_visitor_id,
+    _set_current_visitor,
     _session_type,
     _static_dir,
     _validate_memory_status,

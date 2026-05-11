@@ -23,8 +23,18 @@ CREATE TABLE IF NOT EXISTS sessions (
     started_at      TEXT NOT NULL DEFAULT (datetime('now')),
     ended_at        TEXT,
     session_type    TEXT NOT NULL DEFAULT 'test' CHECK(session_type IN ('test', 'exhibition')),
+    visitor_id      TEXT,
     visitor_count   INTEGER DEFAULT 0,
     notes           TEXT
+);
+
+CREATE TABLE IF NOT EXISTS visitor_profiles (
+    id              TEXT PRIMARY KEY,
+    display_name    TEXT,
+    notes           TEXT,
+    created_at      TEXT NOT NULL DEFAULT (datetime('now')),
+    last_seen_at    TEXT,
+    metadata        TEXT NOT NULL DEFAULT '{}'
 );
 
 CREATE TABLE IF NOT EXISTS state_snapshots (
@@ -60,6 +70,7 @@ CREATE INDEX IF NOT EXISTS idx_snapshots_session
 CREATE TABLE IF NOT EXISTS interaction_log (
     id                INTEGER PRIMARY KEY AUTOINCREMENT,
     session_id        TEXT NOT NULL REFERENCES sessions(id),
+    visitor_id        TEXT,
     turn_at           TEXT NOT NULL DEFAULT (datetime('now')),
     role              TEXT NOT NULL CHECK(role IN ('user', 'entity', 'system')),
     raw_text          TEXT,
@@ -73,10 +84,13 @@ CREATE TABLE IF NOT EXISTS interaction_log (
 
 CREATE INDEX IF NOT EXISTS idx_log_session
     ON interaction_log(session_id, turn_at DESC);
+CREATE INDEX IF NOT EXISTS idx_log_visitor
+    ON interaction_log(visitor_id, turn_at DESC);
 
 CREATE TABLE IF NOT EXISTS episodic_memories (
     id                INTEGER PRIMARY KEY AUTOINCREMENT,
     session_id        TEXT NOT NULL REFERENCES sessions(id),
+    visitor_id        TEXT,
     created_at        TEXT NOT NULL DEFAULT (datetime('now')),
     event_type        TEXT NOT NULL,
     content           TEXT NOT NULL,
@@ -96,12 +110,15 @@ CREATE TABLE IF NOT EXISTS episodic_memories (
 
 CREATE INDEX IF NOT EXISTS idx_episodic_session
     ON episodic_memories(session_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_episodic_visitor
+    ON episodic_memories(visitor_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_episodic_reflected
     ON episodic_memories(reflected, created_at);
 
 CREATE TABLE IF NOT EXISTS reflective_summaries (
     id                    INTEGER PRIMARY KEY AUTOINCREMENT,
     session_id            TEXT NOT NULL REFERENCES sessions(id),
+    visitor_id            TEXT,
     created_at            TEXT NOT NULL DEFAULT (datetime('now')),
     content               TEXT NOT NULL,
     source_event_ids      TEXT NOT NULL,
@@ -117,6 +134,8 @@ CREATE TABLE IF NOT EXISTS reflective_summaries (
 
 CREATE INDEX IF NOT EXISTS idx_reflective_session
     ON reflective_summaries(session_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_reflective_visitor
+    ON reflective_summaries(visitor_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_reflective_active
     ON reflective_summaries(active, created_at DESC);
 
@@ -134,6 +153,7 @@ CREATE TABLE IF NOT EXISTS memory_curation_log (
 CREATE TABLE IF NOT EXISTS managed_memories (
     id                    INTEGER PRIMARY KEY AUTOINCREMENT,
     session_id            TEXT NOT NULL REFERENCES sessions(id),
+    visitor_id            TEXT,
     session_type          TEXT NOT NULL DEFAULT 'test',
     created_at            TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at            TEXT NOT NULL DEFAULT (datetime('now')),
@@ -152,12 +172,15 @@ CREATE TABLE IF NOT EXISTS managed_memories (
 
 CREATE INDEX IF NOT EXISTS idx_managed_session_status
     ON managed_memories(session_id, status, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_managed_visitor_status
+    ON managed_memories(visitor_id, status, updated_at DESC);
 CREATE INDEX IF NOT EXISTS idx_managed_session_type_status
     ON managed_memories(session_type, status, updated_at DESC);
 
 CREATE TABLE IF NOT EXISTS memory_operation_proposals (
     id                    INTEGER PRIMARY KEY AUTOINCREMENT,
     session_id            TEXT NOT NULL REFERENCES sessions(id),
+    visitor_id            TEXT,
     created_at            TEXT NOT NULL DEFAULT (datetime('now')),
     operation_type        TEXT NOT NULL,
     operation_json        TEXT NOT NULL,
@@ -169,11 +192,14 @@ CREATE TABLE IF NOT EXISTS memory_operation_proposals (
 
 CREATE INDEX IF NOT EXISTS idx_memory_proposals_session_status
     ON memory_operation_proposals(session_id, status, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_memory_proposals_visitor_status
+    ON memory_operation_proposals(visitor_id, status, created_at DESC);
 
 CREATE TABLE IF NOT EXISTS memory_operation_log (
     id                    INTEGER PRIMARY KEY AUTOINCREMENT,
     action_at             TEXT NOT NULL DEFAULT (datetime('now')),
     session_id            TEXT NOT NULL REFERENCES sessions(id),
+    visitor_id            TEXT,
     action                TEXT NOT NULL,
     memory_id             INTEGER NOT NULL,
     proposal_id           INTEGER,
@@ -188,6 +214,7 @@ CREATE TABLE IF NOT EXISTS memory_influence_log (
     id                    INTEGER PRIMARY KEY AUTOINCREMENT,
     influenced_at         TEXT NOT NULL DEFAULT (datetime('now')),
     session_id            TEXT NOT NULL REFERENCES sessions(id),
+    visitor_id            TEXT,
     turn_id               INTEGER,
     query                 TEXT,
     retrieved_memory_ids  TEXT NOT NULL DEFAULT '[]',
@@ -200,6 +227,8 @@ CREATE TABLE IF NOT EXISTS memory_influence_log (
 
 CREATE INDEX IF NOT EXISTS idx_memory_influence_session
     ON memory_influence_log(session_id, influenced_at DESC);
+CREATE INDEX IF NOT EXISTS idx_memory_influence_visitor
+    ON memory_influence_log(visitor_id, influenced_at DESC);
 
 INSERT OR IGNORE INTO schema_version(version) VALUES (1);
 """
@@ -209,6 +238,7 @@ def run_migrations(conn: sqlite3.Connection) -> None:
     """Apply the full schema to the given SQLite connection."""
     conn.executescript(SCHEMA_SQL)
     _ensure_session_columns(conn)
+    _ensure_visitor_identity_schema(conn)
     _ensure_memory_curation_columns(conn)
     _ensure_managed_memory_schema(conn)
     _ensure_state_columns(conn)
@@ -223,11 +253,62 @@ def _ensure_session_columns(conn: sqlite3.Connection) -> None:
     }
     if "session_type" not in existing:
         conn.execute("ALTER TABLE sessions ADD COLUMN session_type TEXT NOT NULL DEFAULT 'test'")
+    if "visitor_id" not in existing:
+        conn.execute("ALTER TABLE sessions ADD COLUMN visitor_id TEXT")
     conn.execute(
         """
         UPDATE sessions
         SET session_type = 'test'
         WHERE session_type IS NULL OR session_type NOT IN ('test', 'exhibition')
+        """
+    )
+
+
+def _ensure_visitor_identity_schema(conn: sqlite3.Connection) -> None:
+    """Add anonymous visitor identity columns to existing SQLite databases."""
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS visitor_profiles (
+            id              TEXT PRIMARY KEY,
+            display_name    TEXT,
+            notes           TEXT,
+            created_at      TEXT NOT NULL DEFAULT (datetime('now')),
+            last_seen_at    TEXT,
+            metadata        TEXT NOT NULL DEFAULT '{}'
+        )
+        """
+    )
+    _ensure_columns(conn, "visitor_profiles", {
+        "display_name": "TEXT",
+        "notes": "TEXT",
+        "created_at": "TEXT NOT NULL DEFAULT (datetime('now'))",
+        "last_seen_at": "TEXT",
+        "metadata": "TEXT NOT NULL DEFAULT '{}'",
+    })
+    for table in (
+        "interaction_log",
+        "episodic_memories",
+        "reflective_summaries",
+        "managed_memories",
+        "memory_operation_proposals",
+        "memory_operation_log",
+        "memory_influence_log",
+    ):
+        _ensure_columns(conn, table, {"visitor_id": "TEXT"})
+    conn.executescript(
+        """
+        CREATE INDEX IF NOT EXISTS idx_log_visitor
+            ON interaction_log(visitor_id, turn_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_episodic_visitor
+            ON episodic_memories(visitor_id, created_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_reflective_visitor
+            ON reflective_summaries(visitor_id, created_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_managed_visitor_status
+            ON managed_memories(visitor_id, status, updated_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_memory_proposals_visitor_status
+            ON memory_operation_proposals(visitor_id, status, created_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_memory_influence_visitor
+            ON memory_influence_log(visitor_id, influenced_at DESC);
         """
     )
 

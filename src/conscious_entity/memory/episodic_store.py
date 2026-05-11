@@ -7,22 +7,29 @@ from conscious_entity.memory.models import EpisodicMemory
 
 
 class EpisodicStore:
-    def __init__(self, conn: sqlite3.Connection, session_id: str) -> None:
+    def __init__(
+        self,
+        conn: sqlite3.Connection,
+        session_id: str,
+        visitor_id: str | None = None,
+    ) -> None:
         self._conn = conn
         self._session_id = session_id
+        self._visitor_id = visitor_id
 
     def store(self, memory: EpisodicMemory) -> int:
         """Insert an episodic memory. Returns the new row id."""
         cursor = self._conn.execute(
             """
             INSERT INTO episodic_memories (
-                session_id, event_type, content, raw_text,
+                session_id, visitor_id, event_type, content, raw_text,
                 salience, state_snapshot_id, embedding, embedding_model,
                 reflected, reflection_id, metadata
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 self._session_id,
+                self._visitor_id,
                 memory.event_type,
                 memory.content,
                 memory.raw_text,

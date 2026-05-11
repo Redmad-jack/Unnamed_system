@@ -15,6 +15,22 @@ def _session(conn, session_id: str, session_type: str = "test") -> None:
     conn.commit()
 
 
+def _visitor(conn, visitor_id: str, display_name: str = "Visitor") -> None:
+    conn.execute(
+        "INSERT OR IGNORE INTO visitor_profiles (id, display_name) VALUES (?, ?)",
+        (visitor_id, display_name),
+    )
+    conn.commit()
+
+
+def _assign_visitor(conn, session_id: str, visitor_id: str) -> None:
+    conn.execute(
+        "UPDATE sessions SET visitor_id = ? WHERE id = ?",
+        (visitor_id, session_id),
+    )
+    conn.commit()
+
+
 def _interaction(conn, session_id: str, user_text: str, entity_text: str) -> None:
     conn.execute(
         """
@@ -89,6 +105,26 @@ def test_deterministic_retrieval_is_current_session_only(in_memory_db):
     assert "visitor asked about memory continuity" in contents
     assert "Earlier contact is affecting the reply" in contents
     assert "archived" not in contents
+
+
+def test_deterministic_retrieval_can_use_same_visitor_prior_sessions(in_memory_db):
+    _session(in_memory_db, "current")
+    _session(in_memory_db, "prior")
+    _session(in_memory_db, "other")
+    _visitor(in_memory_db, "visitor-k", "K tester")
+    _assign_visitor(in_memory_db, "current", "visitor-k")
+    _assign_visitor(in_memory_db, "prior", "visitor-k")
+    _interaction(in_memory_db, "prior", "K 是创作者之前提到过的人。", "这会留下一个痕迹。")
+    _interaction(in_memory_db, "other", "K 是另一个访客的秘密。", "不该混进来。")
+
+    results = MemoryRetriever(in_memory_db, "current", visitor_id="visitor-k").retrieve("K是谁")
+    contents = "\n".join(item.content for item in results)
+
+    assert "K 是创作者之前提到过的人" in contents
+    assert "另一个访客" not in contents
+    visitor_memory = next(item for item in results if "K 是创作者" in item.content)
+    assert visitor_memory.metadata["scope"] == "visitor"
+    assert visitor_memory.metadata["visitor_id"] == "visitor-k"
 
 
 def test_semantic_retrieval_uses_embeddings_when_available(in_memory_db):
