@@ -121,9 +121,11 @@
   <button class="sound-toggle" id="soundToggle" type="button">enable sound</button>
   <div class="body" aria-hidden="true"></div>
   <div class="voice" id="voice"></div>
-  <audio id="voiceAudio"></audio>
+  <audio id="voiceAudio" preload="auto" playsinline></audio>
 </main>
 <script>
+const SILENT_WAV = 'data:audio/wav;base64,UklGRigAAABXQVZFZm10IBAAAAABAAEAESsAACJWAAACABAAZGF0YQQAAAAAAA==';
+
 async function fetchJSON(url) {
   const r = await fetch(url);
   if (!r.ok) throw new Error(String(r.status));
@@ -176,10 +178,22 @@ const soundToggle = document.getElementById('soundToggle');
 const voiceAudio = document.getElementById('voiceAudio');
 
 soundToggle.addEventListener('click', async () => {
-  soundEnabled = true;
-  soundToggle.classList.add('enabled');
-  soundToggle.textContent = 'sound enabled';
-  try { await voiceAudio.play(); voiceAudio.pause(); } catch {}
+  try {
+    voiceAudio.muted = true;
+    voiceAudio.src = SILENT_WAV;
+    voiceAudio.load();
+    await voiceAudio.play();
+    voiceAudio.pause();
+    voiceAudio.currentTime = 0;
+    voiceAudio.muted = false;
+    soundEnabled = true;
+    soundToggle.classList.add('enabled');
+    soundToggle.textContent = 'sound enabled';
+  } catch {
+    soundEnabled = false;
+    soundToggle.classList.remove('enabled');
+    soundToggle.textContent = 'enable sound';
+  }
 });
 
 async function maybePlayLatestAudio(audioStatus) {

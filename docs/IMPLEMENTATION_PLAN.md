@@ -312,6 +312,7 @@ PYTHONPATH=src python -m pytest -p no:debugging \
 - 语音输入/输出（STT/TTS）第一版已由 Audio Adapter 完成；本地 Whisper/Piper 仍未做
 - 外部向量库依赖（当前先用 SQLite embedding 字段）
 - 访客身份识别
+- 实时多人同时输入、visitor routing 或多人并发对话仲裁
 - 时钟驱动的状态衰减（v0.1 用 per-turn 衰减代替）
 - 展期终止仪式
 - 硬件接口
@@ -324,4 +325,5 @@ PYTHONPATH=src python -m pytest -p no:debugging \
 - Presidio / Fairlearn 隐私与偏差审计工具链
 - vLLM / llama.cpp / 本地大模型部署
 - 访客账户、完整个人画像或人脸身份识别
+- 实时多人同时输入、visitor routing 或多人并发对话仲裁
 - 未经运营者确认的自动调参

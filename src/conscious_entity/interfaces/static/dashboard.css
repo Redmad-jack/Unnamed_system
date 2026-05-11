@@ -420,7 +420,15 @@ tr:hover td { background: var(--surface2); }
   word-break: break-word;
 }
 .audio-transcript.partial { color: var(--yellow); }
-.hidden-audio { display: none; }
+.hidden-audio {
+  height: 1px;
+  left: -9999px;
+  opacity: 0;
+  pointer-events: none;
+  position: fixed;
+  top: auto;
+  width: 1px;
+}
 
 .config-overlay {
   align-items: center;

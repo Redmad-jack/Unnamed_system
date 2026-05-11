@@ -9,7 +9,7 @@
 - 当前进行中：无
 - 当前可运行形态：CLI + 本地 FastAPI 开发者 API + Web 看板 + 可选 Vision 面板 + 可选 Audio Adapter + `/visitor` 临时身体表面；观众侧最终呈现方向是身体，不是传统 UI
 - 当前核心能力：Stranger 文本协议、状态机、短期/情节/反思记忆、可解释/可选 embedding 召回、Memory Preview、managed memory proposal → commit、influence log / curation、可选 YOLO person presence detection、可选火山 ASR 2.0 / TTS 2.0 双向流式 Audio Adapter
-- 当前验证基线：`PYTHONPATH=src python3 -m pytest -p no:debugging`，最近一次结果为 `326 passed`
+- 当前验证基线：`PYTHONPATH=src python3 -m pytest -p no:debugging`，最近一次完整结果为 `329 passed`；最近相关验证为 `17 passed`
 - 当前注意事项：`AGENTS.md` 与 `CLAUDE.md` 有用户侧未提交差异；除非明确要求，不应在常规任务中触碰
 
 ---
@@ -20,6 +20,7 @@
 - [ ] 继续观察真实对话中的记忆连续性：Memory Preview 是否能解释召回来源，managed memory influence 是否可审计且不越界
 - [ ] 手动联调视觉层：安装 `.[dev,api,vision]`，配置本地 `ENTITY_VISION_MODEL_PATH`，确认 Mac 摄像头授权、实时标注帧、detections 和 presence events
 - [ ] 使用真实火山新版控制台 API Key 和 TTS 2.0 音色做一轮 Audio Adapter 联调：确认浏览器麦克风权限、ASR 2.0 partial/final、`/audio/dialog`、TTS 2.0 bidirection HTTP playback、`/visitor` enable sound
+- [ ] 后续单独设计访客身份与多人并发策略：当前系统不保存访客身份，同一时刻只处理一个主要对话流；如需多用户，需要 visitor_id / routing / 仲裁策略确认
 - [ ] 继续规划非移动身体阶段：身体外观、声音风格、显示/投影/光的呈现映射；更完整空间感知仍待设计
 - [ ] 物理移动、循路、避障、底盘控制和安全边界放到更后阶段，等非物理身体通道稳定后再实现
 - [ ] 部署认证、访客身份策略与展期终止仪式仍待设计确认
@@ -27,6 +28,25 @@
 ---
 
 ## Changelog
+
+### 2026-05-11：语音 Dialog 同步与浏览器播放链路再加固
+
+- [x] 修正主 Dialog reload 后看不到最新语音回合的问题：
+  - `/interaction-log` 返回 newest-first 时，前端统一按 `turn_at` / `id` 转成时间升序渲染
+  - 语音回合即时追加后，延迟刷新不再把最新内容移动到不可见的顶部
+- [x] 加固浏览器 TTS 播放链路：
+  - Dashboard audio 元素不再使用 `display:none`，改为视觉隐藏，降低浏览器 media playback 异常概率
+  - `Enable Playback` / `Mic Start` 通过同一个 audio 元素播放静音 wav 完成一次性解锁
+  - Runtime 中新增 `Playback detail`，区分 ready、playing、blocked 和 media error
+  - `/visitor` 的 enable sound 也改为实际播放静音 wav 解锁，而不是对空 `src` 调用 `play()`
+- [x] 文档确认：
+  - PRD 已声明不做访客账户体系和实时多人同时输入
+  - IMPLEMENTATION_PLAN 补充 `visitor routing` / 多人并发对话仲裁暂不做
+- [x] 验证：
+  - `node --check src/conscious_entity/interfaces/static/dashboard.js`
+  - `node -e "...extract visitor.html script..."`
+  - `PYTHONPATH=src python3 -m pytest -p no:debugging tests/unit/test_api_audio.py tests/unit/test_api_export.py`
+  - `17 passed`
 
 ### 2026-05-11：Audio Adapter 播放解锁与主对话同步加固
 

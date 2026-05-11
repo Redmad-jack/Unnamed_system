@@ -68,6 +68,27 @@
     return value ? String(value).slice(0, 8) : "";
   }
 
+  function rowTimeMs(row) {
+    const ms = Date.parse(row && row.turn_at ? row.turn_at : "");
+    return Number.isFinite(ms) ? ms : 0;
+  }
+
+  function rowOrder(row) {
+    const value = Number(row && row.id);
+    return Number.isFinite(value) ? value : 0;
+  }
+
+  function normalizeInteractionRows(rows) {
+    return (Array.isArray(rows) ? rows : [])
+      .slice()
+      .sort((a, b) => rowTimeMs(a) - rowTimeMs(b) || rowOrder(a) - rowOrder(b));
+  }
+
+  function describeMediaError(player, fallback) {
+    const code = player && player.error ? player.error.code : "";
+    return `${fallback}${code ? ` (media error ${code})` : ""}`;
+  }
+
   function Panel({ title, children, className = "", bodyClassName = "" }) {
     return h("section", { className: `panel ${className}` },
       h("div", { className: "panel-title" }, title),
@@ -431,7 +452,7 @@
     const load = useCallback(async () => {
       try {
         const data = await fetchJSON("/api/v1/interaction-log?limit=30");
-        setRows(data || []);
+        setRows(normalizeInteractionRows(data));
       } catch {
         setRows([]);
       }
@@ -921,6 +942,7 @@
     const [dialogPending, setDialogPending] = useState(false);
     const [playbackUnlocked, setPlaybackUnlocked] = useState(false);
     const [playbackBlocked, setPlaybackBlocked] = useState(false);
+    const [playbackDetail, setPlaybackDetail] = useState("not unlocked");
     const socketRef = useRef(null);
     const mediaRef = useRef(null);
     const audioContextRef = useRef(null);
@@ -981,7 +1003,9 @@
       const previousMuted = player.muted;
       try {
         player.muted = true;
+        player.volume = 1;
         player.src = SILENT_WAV;
+        player.load();
         await player.play();
         player.pause();
         player.currentTime = 0;
@@ -990,13 +1014,18 @@
         playbackUnlockedRef.current = true;
         setPlaybackUnlocked(true);
         setPlaybackBlocked(false);
+        setPlaybackDetail("ready after user gesture");
         return true;
-      } catch {
+      } catch (err) {
         player.muted = previousMuted;
         if (previousSrc) player.src = previousSrc;
         playbackUnlockedRef.current = false;
         setPlaybackUnlocked(false);
         setPlaybackBlocked(true);
+        const message = err && err.name === "NotAllowedError"
+          ? "Playback permission was not granted by this browser gesture."
+          : describeMediaError(player, "Playback unlock failed.");
+        setPlaybackDetail(message);
         setError("Playback is blocked by the browser. Click Enable Playback, then Speak Latest.");
         return false;
       }
@@ -1007,16 +1036,25 @@
       suppressMicRef.current = true;
       setVoiceActivity("speaking");
       setPlaybackBlocked(false);
-      playerRef.current.src = `/api/v1/audio/tts/stream/${encodeURIComponent(streamId)}?t=${Date.now()}`;
+      const player = playerRef.current;
+      player.muted = false;
+      player.volume = 1;
+      player.src = `/api/v1/audio/tts/stream/${encodeURIComponent(streamId)}?t=${Date.now()}`;
+      player.load();
       try {
-        await playerRef.current.play();
+        await player.play();
         playbackUnlockedRef.current = true;
         setPlaybackUnlocked(true);
+        setPlaybackDetail(`playing ${compactId(streamId)}`);
         return true;
       } catch (err) {
         suppressMicRef.current = false;
         setVoiceActivity(recordingRef.current ? "listening" : "idle");
         setPlaybackBlocked(true);
+        const message = err && err.name === "NotAllowedError"
+          ? "Playback blocked: enable once from this browser tab."
+          : describeMediaError(player, "Playback failed.");
+        setPlaybackDetail(message);
         setError("Playback is blocked by the browser. Click Enable Playback or Speak Latest.");
         return false;
       }
@@ -1172,6 +1210,7 @@
         h("span", null, "Provider status"), h("span", { className: enabled ? "ok" : "err" }, status ? (enabled ? "enabled" : status.reason) : "loading"),
         h("span", null, "Mic"), h("span", { className: recording ? "ok" : "dim" }, recording ? "recording" : "stopped"),
         h("span", null, "Playback"), h("span", { className: playbackBlocked ? "err" : playbackUnlocked ? "ok" : "dim" }, playbackBlocked ? "blocked" : playbackUnlocked ? "ready" : "locked"),
+        h("span", null, "Playback detail"), h("span", { className: playbackBlocked ? "err" : "dim" }, playbackDetail),
         h("span", null, "Voice mode"), h("span", { className: voiceMode && recording ? "ok" : "" }, `${voiceMode ? "auto" : "manual"} · ${voiceActivity}`),
         h("span", null, "STT"), h("span", null, status && status.stt ? `${status.stt.sample_rate || "—"}Hz · ${status.stt.chunk_ms || "—"}ms · ${status.stt.active_sessions || 0} active` : "—"),
         h("span", null, "STT endpoint"), h("span", null, status && status.stt ? `${status.stt.endpoint || "—"} · ${status.stt.resource_id || "—"}` : "—"),
@@ -1197,13 +1236,18 @@
       h("audio", {
         ref: playerRef,
         className: "hidden-audio",
+        preload: "auto",
+        playsInline: true,
         onEnded: () => {
           suppressMicRef.current = false;
           setVoiceActivity(recordingRef.current ? "listening" : "idle");
+          setPlaybackDetail("ended");
         },
         onError: () => {
           suppressMicRef.current = false;
           setVoiceActivity(recordingRef.current ? "listening" : "idle");
+          setPlaybackBlocked(true);
+          setPlaybackDetail(describeMediaError(playerRef.current, "Playback stream error."));
         },
       }),
     );
