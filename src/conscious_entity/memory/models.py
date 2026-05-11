@@ -15,6 +15,7 @@ class ShortTermEntry:
     content: str
     timestamp: datetime
     event_type: Optional[EventType] = None
+    metadata: dict = field(default_factory=dict)
 
 
 @dataclass

@@ -64,6 +64,7 @@ class ContextBuilder:
         self._constitution_block = _load_prompt(prompts_dir / "partials" / "constitution_block.txt")
         self._state_context_tpl = _load_prompt(prompts_dir / "partials" / "state_context.txt")
         self._memory_context_tpl = _load_prompt(prompts_dir / "partials" / "memory_context.txt")
+        self._input_context_tpl = _load_prompt(prompts_dir / "partials" / "input_context.txt")
 
     def build(
         self,
@@ -75,6 +76,7 @@ class ContextBuilder:
     ) -> ExpressionContext:
         state_block = self._render_state(state)
         memory_block = self._render_memories(retrieved_memories)
+        input_context_block = self._render_input_context(short_term)
         policy_instruction = _policy_instruction(policy)
         style_hints_text = (
             f"Fragmentation level: {style.fragmentation_level:.1f}\n"
@@ -87,6 +89,7 @@ class ContextBuilder:
             .replace("{memory_context}", memory_block)
             .replace("{policy_instruction}", policy_instruction)
             .replace("{style_hints}", style_hints_text)
+            + ("\n\n" + input_context_block if input_context_block else "")
             + "\n\n"
             + self._constitution_block
         )
@@ -145,6 +148,15 @@ class ContextBuilder:
         memory_text = "\n\n".join(sections)
         return self._memory_context_tpl.replace("{retrieved_memories}", memory_text)
 
+    def _render_input_context(self, short_term: ShortTermMemory) -> str:
+        latest_user = _latest_user_entry(short_term)
+        if latest_user is None:
+            return ""
+        metadata = getattr(latest_user, "metadata", {}) or {}
+        if metadata.get("input_mode") != "voice_transcript":
+            return ""
+        return self._input_context_tpl
+
 
 # ---------------------------------------------------------------------------
 # Module-level helpers
@@ -158,6 +170,13 @@ def _load_prompt(path: Path) -> str:
             f"Ensure the file exists in the prompts directory."
         )
     return path.read_text(encoding="utf-8")
+
+
+def _latest_user_entry(short_term: ShortTermMemory):
+    for entry in reversed(short_term.get_recent(10)):
+        if entry.role == "user":
+            return entry
+    return None
 
 
 def _state_guidance(state: EntityState) -> dict[str, str]:

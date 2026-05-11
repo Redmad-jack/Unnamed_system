@@ -31,7 +31,17 @@ async def audio_dialog(body: AudioDialogRequest, request: Request):
         raise HTTPException(status_code=400, detail="transcript is required")
 
     try:
-        output = await _run_dialog_turn(request, transcript, source="audio_dialog")
+        output = await _run_dialog_turn(
+            request,
+            transcript,
+            source="audio_dialog",
+            input_metadata={
+                "input_mode": "voice_transcript",
+                "source": "audio_dialog",
+                "audio_session_id": body.audio_session_id,
+                "transcript_state": "final",
+            },
+        )
     except HTTPException:
         raise
     except Exception as exc:

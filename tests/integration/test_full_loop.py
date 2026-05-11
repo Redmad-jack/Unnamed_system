@@ -105,6 +105,24 @@ class TestBasicPipeline:
         output = loop.run_turn("hello")
         assert output.spoken_text is None
 
+    def test_audio_turn_marks_voice_transcript_in_prompt_without_polluting_text(self, loop, db):
+        output = loop.run_turn(
+            "Hello hello 能听到吗？",
+            source="audio_dialog",
+            input_metadata={
+                "input_mode": "voice_transcript",
+                "source": "audio_dialog",
+                "audio_session_id": "aud_test",
+            },
+        )
+
+        assert "final STT transcript from a live spoken conversation" in output.raw_prompt
+        assert "Hello hello 能听到吗？" in output.raw_prompt
+        row = db.execute(
+            "SELECT raw_text FROM interaction_log WHERE session_id='test-session' ORDER BY id DESC LIMIT 1"
+        ).fetchone()
+        assert row["raw_text"] == "Hello hello 能听到吗？"
+
 
 # ---------------------------------------------------------------------------
 # State persistence

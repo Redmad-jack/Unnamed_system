@@ -170,13 +170,21 @@ class InteractionLoop:
         """Expose current state for CLI display and debug tools."""
         return self._current_state or self._initial_state
 
-    def run_turn(self, raw_input: str, source: str = "dialog") -> ExpressionOutput:
+    def run_turn(
+        self,
+        raw_input: str,
+        source: str = "dialog",
+        input_metadata: dict[str, Any] | None = None,
+    ) -> ExpressionOutput:
         """Run one user input through the managed-memory-aware turn pipeline."""
+        turn_metadata = dict(input_metadata or {})
+        turn_metadata.setdefault("source", source)
         recorder = TurnLatencyRecorder(
             source=source,
             metadata={
                 "session_id": self._session_id,
                 "input_chars": len(raw_input),
+                "input_mode": turn_metadata.get("input_mode"),
             },
         )
         success = False
@@ -195,6 +203,7 @@ class InteractionLoop:
                         content=raw_input,
                         timestamp=datetime.now(timezone.utc),
                         event_type=events[0].event_type if events else None,
+                        metadata=turn_metadata,
                     ))
 
                 # Apply events and per-turn decay before memory influence is previewed.

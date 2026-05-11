@@ -9,7 +9,7 @@
 - 当前进行中：无
 - 当前可运行形态：CLI + 本地 FastAPI 开发者 API + Web 看板 + 可选 Vision 面板 + 可选 Audio Adapter + `/visitor` 临时身体表面；观众侧最终呈现方向是身体，不是传统 UI
 - 当前核心能力：Stranger 文本协议、状态机、短期/情节/反思记忆、可解释/可选 embedding 召回、Memory Preview、managed memory proposal → commit、influence log / curation、可选 YOLO person presence detection、可选火山 ASR 2.0 / TTS 2.0 双向流式 Audio Adapter
-- 当前验证基线：`PYTHONPATH=src python3 -m pytest -p no:debugging`，最近一次完整结果为 `336 passed`
+- 当前验证基线：`PYTHONPATH=src python3 -m pytest -p no:debugging`，最近一次完整结果为 `340 passed`
 - 当前注意事项：`AGENTS.md` 与 `CLAUDE.md` 有用户侧未提交差异；除非明确要求，不应在常规任务中触碰
 
 ---
@@ -28,6 +28,24 @@
 ---
 
 ## Changelog
+
+### 2026-05-12：语音 transcript 通道上下文进入 LLM prompt
+
+- [x] 修复 `/audio/dialog` 只把 STT transcript 当普通文字输入的问题：
+  - `run_turn()` 新增 `input_metadata`，默认兼容普通文本入口
+  - `/api/v1/audio/dialog` 传入 `input_mode=voice_transcript`、`source=audio_dialog`、`audio_session_id` 和 `transcript_state=final`
+  - `ShortTermEntry` 新增 metadata，但 `interaction_log.raw_text` 仍保存干净 transcript
+  - `ContextBuilder` 仅在最新用户 turn 是语音 transcript 时向 system prompt 注入输入通道说明
+  - prompt 明确告知 LLM：它只接收 STT 文本，不直接接收原始音频、声调、发音或转录前声音
+- [x] 文档：
+  - `docs/BACKEND_STRUCTURE.md` 记录 audio dialog 的 `voice_transcript` prompt metadata 边界
+  - `docs/lessons.md` 增加 L16：语音 transcript 必须带通道上下文进入 prompt
+- [x] 验证：
+  - `python3 -m py_compile src/conscious_entity/memory/models.py src/conscious_entity/core/loop.py src/conscious_entity/interfaces/api_runtime.py src/conscious_entity/interfaces/api_audio.py src/conscious_entity/expression/context_builder.py`
+  - `PYTHONPATH=src python3 -m pytest -p no:debugging tests/unit/test_context_builder.py tests/unit/test_api_audio.py tests/integration/test_full_loop.py::TestBasicPipeline::test_audio_turn_marks_voice_transcript_in_prompt_without_polluting_text`
+  - `35 passed`
+  - `PYTHONPATH=src python3 -m pytest -p no:debugging`
+  - `340 passed`
 
 ### 2026-05-12：Audio Adapter 播放中 barge-in 打断
 

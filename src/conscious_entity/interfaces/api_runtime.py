@@ -137,7 +137,13 @@ async def lifespan(app: Any):
         conn.close()
 
 
-async def _run_dialog_turn(request: Request, text: str, *, source: str = "dialog"):
+async def _run_dialog_turn(
+    request: Request,
+    text: str,
+    *,
+    source: str = "dialog",
+    input_metadata: dict[str, Any] | None = None,
+):
     loop = request.app.state.loop
     if loop is None:
         raise HTTPException(status_code=503, detail="Loop not initialised")
@@ -148,6 +154,7 @@ async def _run_dialog_turn(request: Request, text: str, *, source: str = "dialog
             loop.run_turn,
             text,
             source,
+            input_metadata,
         )
 
     manager = getattr(request.app.state, "vision_manager", None)

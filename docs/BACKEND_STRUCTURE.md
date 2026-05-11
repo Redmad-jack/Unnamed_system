@@ -321,6 +321,7 @@ CREATE TABLE schema_version (
 - Audio layer 只做输入/输出适配，不决定人格、不改状态规则、不写记忆规则。
 - STT partial transcript 只显示，不进入 `run_turn()`、memory 或 state；只有 final transcript 可调用 `/api/v1/audio/dialog`。
 - `/api/v1/audio/dialog` 与 `/api/v1/dialog` 共用同一个 turn lock，避免并发修改状态、记忆和短期上下文。
+- `/api/v1/audio/dialog` 会把当前输入标记为 `voice_transcript` metadata，让 expression prompt 知道最新用户消息来自实时语音的 STT final transcript；`interaction_log.raw_text` 仍只保存干净 transcript，不写入通道标签。
 - TTS 只能使用最终已过滤的 `ExpressionOutput` 派生文本并生成短期 `tts_stream_id`；visitor/body 不允许直接提交任意 raw text 让 Stranger 说话。
 - debug raw TTS 只有 `ENTITY_AUDIO_ALLOW_DEBUG_RAW_TTS=1` 时可用，并且不视为 Stranger speech。
 - 原始音频不写入 SQLite；audio runtime 只在内存中保留最近 transcript、stream id、logid 和 sanitized error。

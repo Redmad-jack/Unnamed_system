@@ -66,6 +66,11 @@
 - 原因：展陈对话需要允许观众打断实体发声；无条件 suppress 麦克风会让系统看似“听不见”
 - 如何应用：播放期间用本地音量门限检测 barge-in，未触发时静音，触发后停止 `<audio>` 并发送真实 PCM
 
+**L16：语音 transcript 必须带通道上下文进入 prompt**
+- 规则：`/audio/dialog` 不能只把 STT final transcript 当普通文字输入；必须用 metadata 告诉 expression prompt 最新用户消息来自实时语音转录
+- 原因：否则实体会把转录文本当成书面输入来解释，错误声称自己区分了文字层面的语言、标点或拼写，而不知道它没有接收原始声音
+- 如何应用：保持 `raw_text` 干净，只在 short-term metadata / prompt context 中注入 `voice_transcript` 说明
+
 **L07：不要跳过 `clamp_all()`**
 - 规则：每次状态更新调用链末尾必须调用 `clamp_all()`
 - 原因：连续事件的累积增量可能使状态值越出 `[0.0, 1.0]`

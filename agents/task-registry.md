@@ -45,6 +45,19 @@ Status values: `in_progress`, `done`
 
 | File | Agent | Status | Started |
 |------|-------|--------|---------|
+| src/conscious_entity/memory/models.py | Codex | done | 2026-05-12 03:15 CST |
+| src/conscious_entity/core/loop.py | Codex | done | 2026-05-12 03:15 CST |
+| src/conscious_entity/interfaces/api_runtime.py | Codex | done | 2026-05-12 03:15 CST |
+| src/conscious_entity/interfaces/api_audio.py | Codex | done | 2026-05-12 03:15 CST |
+| src/conscious_entity/expression/context_builder.py | Codex | done | 2026-05-12 03:15 CST |
+| prompts/partials/input_context.txt | Codex | done | 2026-05-12 03:15 CST |
+| tests/unit/test_context_builder.py | Codex | done | 2026-05-12 03:15 CST |
+| tests/unit/test_api_audio.py | Codex | done | 2026-05-12 03:15 CST |
+| tests/integration/test_full_loop.py | Codex | done | 2026-05-12 03:15 CST |
+| docs/BACKEND_STRUCTURE.md | Codex | done | 2026-05-12 03:15 CST |
+| docs/progress.md | Codex | done | 2026-05-12 03:15 CST |
+| docs/lessons.md | Codex | done | 2026-05-12 03:15 CST |
+| agents/task-registry.md | Codex | done | 2026-05-12 03:15 CST |
 | src/conscious_entity/interfaces/static/dashboard.js | Codex | done | 2026-05-12 02:29 CST |
 | docs/progress.md | Codex | done | 2026-05-12 02:29 CST |
 | docs/lessons.md | Codex | done | 2026-05-12 02:29 CST |

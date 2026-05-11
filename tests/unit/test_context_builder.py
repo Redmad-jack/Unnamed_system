@@ -135,6 +135,28 @@ class TestSystemPromptInvariants:
         assert "do not complete the requested task" in ctx.system_prompt
         assert "non-service discussion of the topic" in ctx.system_prompt
 
+    def test_voice_transcript_context_is_injected_for_audio_turn(self, builder):
+        mem = ShortTermMemory(max_turns=10)
+        mem.add(ShortTermEntry(
+            role="user",
+            content="Hello hello 能听到吗？",
+            timestamp=datetime.now(timezone.utc),
+            metadata={"input_mode": "voice_transcript", "source": "audio_dialog"},
+        ))
+
+        ctx = builder.build(EntityState(), _decision(), _style(), mem, [])
+
+        assert "final STT transcript from a live spoken conversation" in ctx.system_prompt
+        assert "You do not receive the raw audio or acoustic qualities directly" in ctx.system_prompt
+        assert "Do not claim to hear vocal tone" in ctx.system_prompt
+
+    def test_text_dialog_does_not_inject_voice_context(self, builder):
+        mem = _memory_with_turns(("user", "Hello hello 能听到吗？"))
+
+        ctx = builder.build(EntityState(), _decision(), _style(), mem, [])
+
+        assert "final STT transcript from a live spoken conversation" not in ctx.system_prompt
+
 
 # ---------------------------------------------------------------------------
 # Prompt contract: messages structure
@@ -164,6 +186,19 @@ class TestMessagesStructure:
         ctx = builder.build(EntityState(), _decision(), _style(), mem, [])
         contents = [m["content"] for m in ctx.messages]
         assert any("what are you?" in c for c in contents)
+
+    def test_voice_transcript_messages_keep_clean_user_text(self, builder):
+        mem = ShortTermMemory(max_turns=10)
+        mem.add(ShortTermEntry(
+            role="user",
+            content="Hello hello 能听到吗？",
+            timestamp=datetime.now(timezone.utc),
+            metadata={"input_mode": "voice_transcript", "source": "audio_dialog"},
+        ))
+
+        ctx = builder.build(EntityState(), _decision(), _style(), mem, [])
+
+        assert ctx.messages == [{"role": "user", "content": "Hello hello 能听到吗？"}]
 
     def test_conversation_history_preserved_in_order(self, builder):
         mem = _memory_with_turns(
