@@ -45,6 +45,8 @@ Status values: `in_progress`, `done`
 
 | File | Agent | Status | Started |
 |------|-------|--------|---------|
+| docs/testlist.md | Codex | done | 2026-05-12 10:58 CST |
+| agents/task-registry.md | Codex | done | 2026-05-12 10:58 CST |
 | src/conscious_entity/db/migrations.py | Codex | done | 2026-05-12 06:50 CST |
 | src/conscious_entity/interfaces/api_audio.py | Codex | done | 2026-05-12 06:50 CST |
 | tests/unit/test_db_connection.py | Codex | done | 2026-05-12 06:50 CST |
