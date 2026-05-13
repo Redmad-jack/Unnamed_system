@@ -247,6 +247,12 @@ button, input, select, textarea {
 }
 .confidence-fill { background: var(--green); height: 100%; }
 .bbox { color: var(--dim); }
+.recognition-status {
+  border-top: 1px solid var(--border);
+  display: grid;
+  gap: 5px;
+  padding-top: 6px;
+}
 .events-list {
   border-top: 1px solid var(--border);
   color: var(--text-dim);

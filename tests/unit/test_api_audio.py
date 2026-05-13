@@ -43,11 +43,28 @@ class FakeAudioManager:
         raise AudioRuntimeError("tts_stream_expired", "expired")
 
 
-def _request(loop=None, audio_manager=None):
+class FakeIdentityGating:
+    def before_turn(self, *, source, input_mode, text, metadata=None):
+        return {
+            "runtime_state": "in_dialogue",
+            "session_decision": "continue_unidentified",
+            "source": source,
+            "input_mode": input_mode,
+            "text_chars": len(text),
+        }
+
+
+class BrokenIdentityGating:
+    def before_turn(self, *, source, input_mode, text, metadata=None):
+        raise RuntimeError("gating failed")
+
+
+def _request(loop=None, audio_manager=None, identity_gating=None):
     return SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(
         loop=loop or FakeLoop(),
         loop_lock=asyncio.Lock(),
         audio_manager=audio_manager or FakeAudioManager(),
+        identity_gating=identity_gating,
     )))
 
 
@@ -75,6 +92,33 @@ def test_audio_dialog_reuses_loop_and_creates_tts_stream():
     assert manager.created is True
     assert result["tts_stream_id"] == "tts_test"
     assert result["should_speak"] is True
+
+
+def test_audio_dialog_attaches_identity_session_context_when_available():
+    loop = FakeLoop()
+
+    asyncio.run(api.audio_dialog(
+        AudioDialogRequest(transcript="  你还记得我吗？ ", audio_session_id="aud"),
+        _request(loop=loop, identity_gating=FakeIdentityGating()),
+    ))
+
+    metadata = loop.inputs[0][2]
+    assert metadata["input_mode"] == "voice_transcript"
+    assert metadata["identity_session"]["session_decision"] == "continue_unidentified"
+    assert metadata["identity_session"]["runtime_state"] == "in_dialogue"
+
+
+def test_audio_dialog_continues_when_identity_gating_fails():
+    loop = FakeLoop()
+
+    asyncio.run(api.audio_dialog(
+        AudioDialogRequest(transcript="继续", audio_session_id="aud"),
+        _request(loop=loop, identity_gating=BrokenIdentityGating()),
+    ))
+
+    metadata = loop.inputs[0][2]
+    assert metadata["identity_session"]["error"] == "identity_gating_failed"
+    assert metadata["identity_session"]["session_decision"] == "continue_unidentified"
 
 
 def test_audio_dialog_rejects_blank_transcript():

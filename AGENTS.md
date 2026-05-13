@@ -126,4 +126,5 @@ Keep this file compact. Only keep rules here that are useful in most sessions.
 
 Before starting any task, check `agents/task-registry.md`.
 Do not touch files already marked `in_progress` by another agent.
+When starting: add your file(s) with status `in_progress`, mark the exact time of the starting of each session.
 When done: mark your task `done` and commit before the next agent continues.

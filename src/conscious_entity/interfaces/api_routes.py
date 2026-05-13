@@ -160,6 +160,14 @@ async def harness_trace_recent(limit: int = 20):
     }
 
 
+@router.get("/api/v1/identity/status")
+async def identity_status(request: Request):
+    controller = getattr(request.app.state, "identity_gating", None)
+    if controller is None:
+        return {"enabled": False, "error": "Identity/session gating not initialised"}
+    return controller.status()
+
+
 @router.get("/api/v1/vision/status")
 async def vision_status(request: Request):
     manager = getattr(request.app.state, "vision_manager", None)
@@ -270,6 +278,12 @@ async def sessions_reset(request: Request):
         conn.commit()
 
         request.app.state.session_id = new_session_id
+        identity_controller = getattr(request.app.state, "identity_gating", None)
+        if identity_controller is not None:
+            identity_controller.configure_session(
+                session_id=new_session_id,
+                primary_visitor_id=current_visitor_id,
+            )
         _save_initial_state(conn, new_session_id, request.app.state.configs)
         request.app.state.llm_error = None
         _rebuild_loop(request, llm_client, embedding_client)

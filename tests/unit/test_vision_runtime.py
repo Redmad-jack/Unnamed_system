@@ -1,7 +1,15 @@
 from __future__ import annotations
 
+import pytest
+
+from conscious_entity.vision import runtime as vision_runtime
 from conscious_entity.perception.event_types import EventType
-from conscious_entity.vision import VisionConfig, VisionManager, VisionPresenceTracker
+from conscious_entity.vision import (
+    VisionConfig,
+    VisionConfigurationError,
+    VisionManager,
+    VisionPresenceTracker,
+)
 
 
 def test_vision_config_from_env(monkeypatch, tmp_path):
@@ -69,3 +77,41 @@ def test_vision_manager_status_disabled_without_model_path():
     assert status["enabled"] is False
     assert status["running"] is False
     assert "ENTITY_VISION_MODEL_PATH" in status["disabled_reason"]
+    assert status["recognition"]["pipeline_status"] == "disabled"
+
+
+def test_vision_manager_records_camera_open_failure(monkeypatch, tmp_path):
+    model = tmp_path / "model.pt"
+    model.write_text("placeholder", encoding="utf-8")
+
+    class FakeCapture:
+        def set(self, *_args):
+            return None
+
+        def isOpened(self):
+            return False
+
+        def release(self):
+            return None
+
+    class FakeCv2:
+        CAP_PROP_FRAME_WIDTH = 3
+        CAP_PROP_FRAME_HEIGHT = 4
+        CAP_PROP_FPS = 5
+
+        def VideoCapture(self, _index):
+            return FakeCapture()
+
+    manager = VisionManager(VisionConfig(model_path=model, camera_index=7))
+    manager._dependency_status = lambda: {"available": True, "missing": []}  # type: ignore[method-assign]
+    monkeypatch.setattr(vision_runtime, "_import_required", lambda *_args: FakeCv2())
+    monkeypatch.setattr(vision_runtime, "_import_yolo", lambda: lambda _path: object())
+
+    with pytest.raises(VisionConfigurationError):
+        manager.start()
+
+    status = manager.status()
+    assert status["error"] == "Could not open camera index 7"
+    assert status["recognition"]["pipeline_status"] == "error"
+    assert status["recognition"]["camera_status"] == "error"
+    assert "Camera permission" in status["recognition"]["access_hint"]

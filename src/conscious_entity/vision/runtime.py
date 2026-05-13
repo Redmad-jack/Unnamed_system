@@ -233,6 +233,7 @@ class VisionManager:
                 "detections": [item.to_public_dict() for item in self._snapshot.detections],
                 "events": [item.to_public_dict() for item in self._recent_events[-20:]],
                 "recent_events": [item.to_public_dict() for item in self._recent_events[-20:]],
+                "recognition": self._recognition_status_locked(disabled_reason),
                 "latest": {
                     "frame_id": self._snapshot.frame_id,
                     "timestamp": self._snapshot.timestamp.isoformat() if self._snapshot.timestamp else None,
@@ -257,9 +258,9 @@ class VisionManager:
         capture.set(cv2.CAP_PROP_FPS, self.config.fps)
         if not capture.isOpened():
             capture.release()
-            raise VisionConfigurationError(
-                f"Could not open camera index {self.config.camera_index}"
-            )
+            message = f"Could not open camera index {self.config.camera_index}"
+            self._set_error(message)
+            raise VisionConfigurationError(message)
 
         with self._lock:
             self._capture = capture
@@ -290,6 +291,7 @@ class VisionManager:
     def stream_snapshot(self) -> tuple[dict[str, Any], bytes | None]:
         with self._lock:
             metadata = self._snapshot.metadata(self.config, self._running, self._error)
+            metadata["recognition"] = self._recognition_status_locked(None)
             return metadata, self._snapshot.jpeg
 
     def pop_pending_events(self) -> list[EventType]:
@@ -409,6 +411,46 @@ class VisionManager:
         with self._lock:
             self._error = message
 
+    def _recognition_status_locked(self, disabled_reason: str | None) -> dict[str, Any]:
+        frame_age_ms = None
+        if self._snapshot.timestamp is not None:
+            frame_age_ms = int(
+                (datetime.now(timezone.utc) - self._snapshot.timestamp).total_seconds() * 1000
+            )
+        if disabled_reason:
+            pipeline_status = "disabled"
+            camera_status = "not_available"
+            detector_status = "not_ready"
+        elif self._error:
+            pipeline_status = "error"
+            camera_status = "error"
+            detector_status = "ready"
+        elif self._running:
+            pipeline_status = "running"
+            camera_status = "open"
+            detector_status = "running"
+        elif self._snapshot.frame_id > 0:
+            pipeline_status = "stopped"
+            camera_status = "closed"
+            detector_status = "ready"
+        else:
+            pipeline_status = "ready"
+            camera_status = "not_started"
+            detector_status = "ready"
+        return {
+            "pipeline_status": pipeline_status,
+            "camera_status": camera_status,
+            "detector_status": detector_status,
+            "frame_status": "receiving" if self._running and self._snapshot.frame_id > 0 else "no_frame",
+            "frame_age_ms": frame_age_ms,
+            "person_count": len(self._snapshot.detections),
+            "person_present": self._tracker.person_present,
+            "confidence_threshold": self.config.confidence,
+            "enter_frames": self.config.enter_frames,
+            "last_error": self._error,
+            "access_hint": _camera_access_hint(self._error, self.config.camera_index),
+        }
+
     def _dependency_status(self) -> dict[str, Any]:
         missing: list[str] = []
         cv2_available = importlib.util.find_spec("cv2") is not None
@@ -501,3 +543,15 @@ def _blank_to_none(value: str | None) -> str | None:
         return None
     stripped = value.strip()
     return stripped or None
+
+
+def _camera_access_hint(error: str | None, camera_index: int) -> str | None:
+    if not error:
+        return None
+    if "Could not open camera index" not in error and "not authorized" not in error.lower():
+        return None
+    return (
+        f"Camera index {camera_index} exists or is configured, but OpenCV could not open it. "
+        "On macOS, grant Camera permission to Python/Terminal/IDE, close other camera apps, "
+        "then restart the developer API."
+    )

@@ -191,6 +191,11 @@ class InteractionLoop:
                 "input_chars": len(raw_input),
                 "input_mode": turn_metadata.get("input_mode") or "text",
                 "visitor_id": self._visitor_id,
+                "identity_session": (
+                    turn_metadata.get("identity_session")
+                    if isinstance(turn_metadata.get("identity_session"), dict)
+                    else None
+                ),
             },
         )
         recorder = TurnLatencyRecorder(
@@ -213,11 +218,21 @@ class InteractionLoop:
                 harness_recorder.record(
                     HarnessLayer.INPUT,
                     status="tagged",
+                    decision=(
+                        turn_metadata.get("identity_session", {}).get("session_decision")
+                        if isinstance(turn_metadata.get("identity_session"), dict)
+                        else None
+                    ),
                     summary="User input accepted and parsed into perception events.",
                     metadata={
                         "source": source,
                         "input_mode": turn_metadata.get("input_mode") or "text",
                         "visitor_id": self._visitor_id,
+                        "identity_session": (
+                            turn_metadata.get("identity_session")
+                            if isinstance(turn_metadata.get("identity_session"), dict)
+                            else None
+                        ),
                         "chars": len(raw_input),
                         "event_types": [event.event_type.value for event in events],
                     },

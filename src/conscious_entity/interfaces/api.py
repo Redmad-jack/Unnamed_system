@@ -59,6 +59,7 @@ from conscious_entity.interfaces.api_routes import (
     health,
     harness_status,
     harness_trace_recent,
+    identity_status,
     interaction_log,
     managed_memory_archive,
     managed_memory_commit,

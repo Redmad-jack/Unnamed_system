@@ -67,3 +67,13 @@ def test_vision_stop_delegates_to_manager():
 
     assert manager.stopped is True
     assert result["running"] is False
+
+
+def test_identity_status_reports_controller_state():
+    controller = SimpleNamespace(status=lambda: {"enabled": True, "status": {"runtime_state": "idle"}})
+    request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(identity_gating=controller)))
+
+    result = asyncio.run(api.identity_status(request))
+
+    assert result["enabled"] is True
+    assert result["status"]["runtime_state"] == "idle"

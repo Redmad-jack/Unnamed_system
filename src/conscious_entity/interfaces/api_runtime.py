@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import sqlite3
 import asyncio
@@ -17,6 +18,7 @@ from conscious_entity.core.loop import InteractionLoop
 from conscious_entity.db.connection import get_connection
 from conscious_entity.db.migrations import run_migrations
 from conscious_entity.audio import AudioConfig, AudioManager
+from conscious_entity.identity import VisitorSessionGatingController
 from conscious_entity.interfaces.api_models import EmbeddingConfigRequest, LLMConfigRequest
 from conscious_entity.llm.claude_client import ClaudeClient, ClaudeConfigurationError
 from conscious_entity.llm.embedding_client import EmbeddingClient, EmbeddingConfigurationError
@@ -25,6 +27,9 @@ from conscious_entity.runtime_env import load_project_env
 from conscious_entity.state.state_core import EntityState
 from conscious_entity.state.state_store import StateStore
 from conscious_entity.vision import VisionConfig, VisionManager
+
+
+logger = logging.getLogger(__name__)
 
 
 def _project_root() -> Path:
@@ -117,6 +122,10 @@ async def lifespan(app: Any):
     app.state.conn = conn
     app.state.session_id = session_id
     app.state.visitor_id = _session_visitor_id(conn, session_id)
+    app.state.identity_gating = VisitorSessionGatingController(
+        session_id=session_id,
+        primary_visitor_id=app.state.visitor_id,
+    )
     app.state.configs = configs
     app.state.config_dir = config_dir
     app.state.prompts_dir = prompts_dir
@@ -152,12 +161,31 @@ async def _run_dialog_turn(
         raise HTTPException(status_code=503, detail="Loop not initialised")
 
     async with request.app.state.loop_lock:
+        turn_metadata = dict(input_metadata or {})
+        input_mode = str(turn_metadata.get("input_mode") or "text")
+        identity_controller = getattr(request.app.state, "identity_gating", None)
+        if identity_controller is not None:
+            try:
+                turn_metadata["identity_session"] = identity_controller.before_turn(
+                    source=source,
+                    input_mode=input_mode,
+                    text=text,
+                    metadata=turn_metadata,
+                )
+            except Exception as exc:
+                logger.error("Identity/session gating failed; continuing turn: %s", exc)
+                turn_metadata["identity_session"] = {
+                    "runtime_state": "unknown",
+                    "session_decision": "continue_unidentified",
+                    "identity_status": "unidentified",
+                    "error": "identity_gating_failed",
+                }
         output = await asyncio.get_running_loop().run_in_executor(
             None,
             loop.run_turn,
             text,
             source,
-            input_metadata,
+            turn_metadata,
         )
 
     manager = getattr(request.app.state, "vision_manager", None)
@@ -173,6 +201,15 @@ async def _vision_event_dispatcher(app: Any) -> None:
         manager = getattr(app.state, "vision_manager", None)
         if manager is not None:
             for event_type in manager.pop_pending_events():
+                identity_controller = getattr(app.state, "identity_gating", None)
+                if identity_controller is not None:
+                    try:
+                        identity_controller.handle_system_event(event_type)
+                    except Exception as exc:
+                        logger.error(
+                            "Identity/session gating system event failed; continuing: %s",
+                            exc,
+                        )
                 loop = getattr(app.state, "loop", None)
                 if loop is None:
                     continue
@@ -278,6 +315,9 @@ def _set_current_visitor(
         )
         conn.commit()
         request.app.state.visitor_id = None
+        identity_controller = getattr(request.app.state, "identity_gating", None)
+        if identity_controller is not None:
+            identity_controller.set_primary_visitor(None)
         return None
 
     resolved = _ensure_visitor_profile(
@@ -293,6 +333,9 @@ def _set_current_visitor(
     )
     conn.commit()
     request.app.state.visitor_id = resolved
+    identity_controller = getattr(request.app.state, "identity_gating", None)
+    if identity_controller is not None:
+        identity_controller.set_primary_visitor(resolved)
     return resolved
 
 

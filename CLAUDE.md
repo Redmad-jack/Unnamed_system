@@ -122,3 +122,12 @@ Keep this file compact. Only keep rules here that are useful in most sessions.
 - User-facing conversation: Chinese unless the user asks otherwise
 - Project documentation: Chinese by default, with technical terms kept in English where clearer
 - YAML `note` fields: English
+
+---
+
+## Task Coordination
+
+Before starting any task, check `agents/task-registry.md`.
+Do not touch files already marked `in_progress` by another agent.
+When starting: add your file(s) with status `in_progress`.
+When done: mark your task `done` and commit before the next agent continues.

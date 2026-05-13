@@ -301,6 +301,7 @@
 
   function VisionPanel() {
     const [status, setStatus] = useState(null);
+    const [identityStatus, setIdentityStatus] = useState(null);
     const [metadata, setMetadata] = useState(null);
     const [error, setError] = useState("");
     const [frameUrl, setFrameUrl] = useState("");
@@ -340,8 +341,12 @@
 
     const loadStatus = useCallback(async () => {
       try {
-        const data = await fetchJSON("/api/v1/vision/status");
+        const [data, identity] = await Promise.all([
+          fetchJSON("/api/v1/vision/status"),
+          fetchJSON("/api/v1/identity/status").catch(() => null),
+        ]);
         setStatus(data);
+        setIdentityStatus(identity);
         setError(data.error || data.disabled_reason || "");
         if (data.running) connectStream();
       } catch (err) {
@@ -357,8 +362,9 @@
         connectStream();
       } catch (err) {
         setError(err.message);
+        await loadStatus();
       }
-    }, [connectStream]);
+    }, [connectStream, loadStatus]);
 
     const stop = useCallback(async () => {
       try {
@@ -385,6 +391,10 @@
     const running = metadata ? metadata.running : status && status.running;
     const frameId = metadata ? metadata.frame_id : status && status.frame_id;
     const updated = metadata ? metadata.timestamp : status && status.timestamp;
+    const recognition = (metadata && metadata.recognition) || (status && status.recognition) || {};
+    const identity = identityStatus && identityStatus.status ? identityStatus.status : null;
+    const statusText = recognition.pipeline_status || (running ? "running" : status && status.enabled ? "ready" : "disabled");
+    const statusClass = statusText === "running" ? "ok" : statusText === "error" || statusText === "disabled" ? "err" : "dim";
 
     return h(React.Fragment, null,
       h("div", { className: "toolbar" },
@@ -396,16 +406,39 @@
         ? h("img", { src: frameUrl, alt: "Vision stream" })
         : h("div", { className: "dim", style: { padding: "12px" } }, "No frame yet.")),
       h("div", { className: "kv-grid" },
-        h("span", null, "Status"), h("span", { className: running ? "ok" : status && status.enabled ? "dim" : "err" }, running ? "running" : status && status.enabled ? "ready" : "disabled"),
+        h("span", null, "Status"), h("span", { className: statusClass }, statusText),
         h("span", null, "Frame"), h("span", null, frameId ?? "—"),
         h("span", null, "People"), h("span", null, detections.length),
         h("span", null, "Camera"), h("span", null, `${cfg.index ?? cfg.camera_index ?? "—"} · ${cfg.width ?? "—"}x${cfg.height ?? "—"} · ${cfg.fps ?? "—"}fps`),
         h("span", null, "Model"), h("span", { title: model }, String(model).split("/").pop()),
         h("span", null, "Updated"), h("span", null, formatTime(updated)),
       ),
+      h(RealtimeRecognitionStatus, { recognition, identity, detections }),
       error ? h("div", { className: "err" }, error) : null,
       h(DetectionList, { detections }),
       h(EventList, { events }),
+    );
+  }
+
+  function RealtimeRecognitionStatus({ recognition, identity, detections }) {
+    const personCount = recognition.person_count ?? (detections ? detections.length : 0);
+    const age = recognition.frame_age_ms == null ? "—" : `${recognition.frame_age_ms} ms`;
+    const presence = recognition.person_present ? "present" : "absent";
+    return h("div", { className: "recognition-status" },
+      h("div", { className: "item-meta" }, "Realtime Recognition"),
+      h("div", { className: "kv-grid" },
+        h("span", null, "Pipeline"), h("span", { className: recognition.pipeline_status === "running" ? "ok" : recognition.pipeline_status === "error" ? "err" : "dim" }, recognition.pipeline_status || "—"),
+        h("span", null, "Camera"), h("span", null, recognition.camera_status || "—"),
+        h("span", null, "Detector"), h("span", null, recognition.detector_status || "—"),
+        h("span", null, "Frame age"), h("span", null, age),
+        h("span", null, "Presence"), h("span", null, `${presence} · ${personCount} people`),
+        h("span", null, "Threshold"), h("span", null, `${recognition.confidence_threshold ?? "—"} · enter ${recognition.enter_frames ?? "—"} frames`),
+        h("span", null, "Access"), h("span", { className: recognition.access_hint ? "err" : "ok" }, recognition.access_hint ? "blocked or busy" : "available"),
+        h("span", null, "Identity gate"), h("span", null, identity ? `${identity.runtime_state || "—"} · ${identity.last_decision || "—"}` : "—"),
+        h("span", null, "Encounter"), h("span", null, identity ? `${identity.encounter_status || "—"} · ${identity.intent_status || "—"}` : "—"),
+        h("span", null, "Bio match"), h("span", null, identity ? `face ${identity.face_confidence_level || "none"} · voice ${identity.voice_confidence_level || "none"} · combined ${identity.combined_confidence_level || "none"}` : "—"),
+      ),
+      recognition.access_hint ? h("div", { className: "err" }, recognition.access_hint) : null,
     );
   }
 
@@ -676,9 +709,10 @@
     const [audioLatency, setAudioLatency] = useState(null);
     const [harness, setHarness] = useState(null);
     const [visitor, setVisitor] = useState(null);
+    const [identity, setIdentity] = useState(null);
 
     const load = useCallback(async () => {
-      const [llmConfig, embeddingConfig, llmStats, latencyStats, audioLatencyStats, harnessStatus, visitorStatus] = await Promise.all([
+      const [llmConfig, embeddingConfig, llmStats, latencyStats, audioLatencyStats, harnessStatus, visitorStatus, identityStatus] = await Promise.all([
         fetchJSON("/api/v1/config/llm").catch(() => null),
         fetchJSON("/api/v1/config/embedding").catch(() => null),
         fetchJSON("/api/v1/stats/llm").catch(() => null),
@@ -686,6 +720,7 @@
         fetchJSON("/api/v1/stats/audio-latency?n=8").catch(() => null),
         fetchJSON("/api/v1/harness/status").catch(() => null),
         fetchJSON("/api/v1/visitors/current").catch(() => null),
+        fetchJSON("/api/v1/identity/status").catch(() => null),
       ]);
       setLlm(llmConfig);
       setEmbedding(embeddingConfig);
@@ -694,6 +729,7 @@
       setAudioLatency(audioLatencyStats);
       setHarness(harnessStatus);
       setVisitor(visitorStatus);
+      setIdentity(identityStatus);
     }, []);
 
     useEffect(() => { load(); }, [load]);
@@ -701,6 +737,7 @@
 
     return h(React.Fragment, null,
       h(VisitorSection, { data: visitor, onSaved: load }),
+      h(IdentityGatingSection, { data: identity }),
       h(LLMConfigSection, { data: llm, onSaved: load }),
       h(EmbeddingConfigSection, { data: embedding, onSaved: load }),
       h(AudioPane),
@@ -804,6 +841,39 @@
           h("div", { className: "session-meta" }, `${item.session_count || 0} sessions · ${item.turn_count || 0} turns`),
         )),
       ) : h("div", { className: "dim" }, "No visitor profiles yet."),
+    );
+  }
+
+  function IdentityGatingSection({ data }) {
+    const status = data && data.status ? data.status : null;
+    const constraints = data && data.v1_constraints ? data.v1_constraints : {};
+    const events = data && Array.isArray(data.recent_events) ? data.recent_events : [];
+    return h("div", { className: "section" },
+      h("div", { className: "section-title" }, "Identity & Session Gating"),
+      status ? h(React.Fragment, null,
+        h("table", null, h("tbody", null,
+          h("tr", null, h("td", null, "Runtime"), h("td", null, status.runtime_state || "—")),
+          h("tr", null, h("td", null, "Session decision"), h("td", null, status.last_decision || "—")),
+          h("tr", null, h("td", null, "Primary visitor"), h("td", null, status.primary_visitor_id || "unknown")),
+          h("tr", null, h("td", null, "Candidate"), h("td", null, status.candidate_visitor_id || "none")),
+          h("tr", null, h("td", null, "Encounter / intent"), h("td", null, `${status.encounter_status || "—"} · ${status.intent_status || "—"}`)),
+          h("tr", null, h("td", null, "Identity"), h("td", null, `${status.identity_status || "—"} · face ${status.face_confidence_level || "none"} · voice ${status.voice_confidence_level || "none"} · combined ${status.combined_confidence_level || "none"}`)),
+          h("tr", null, h("td", null, "Waiting confirm"), h("td", null, status.waiting_for_identity_confirmation ? "yes" : "no")),
+          h("tr", null, h("td", null, "Interruptions"), h("td", null, status.interruption_count || 0)),
+        )),
+        h("div", { className: "item" },
+          h("div", { className: "item-meta" }, "V1 constraints"),
+          h("div", { className: "item-text" },
+            `single visitor ${constraints.single_primary_visitor_per_session ? "on" : "off"} · group session ${constraints.group_session_enabled ? "on" : "off"} · wide-angle identity ${constraints.wide_angle_identity_input_enabled ? "on" : "off"}`,
+          ),
+        ),
+        events.length ? h("details", { className: "item" },
+          h("summary", { className: "item-meta" }, "Recent gating events"),
+          events.slice().reverse().map((event) => h("div", { className: "item-text", key: event.id },
+            `${event.kind}: ${event.decision} · ${event.summary}`,
+          )),
+        ) : null,
+      ) : h("div", { className: "dim" }, "Identity/session gating status unavailable."),
     );
   }
 
