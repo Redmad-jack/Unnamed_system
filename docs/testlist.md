@@ -2,6 +2,22 @@
 
 This file tracks tests that require real devices, supplier APIs, exhibition space, or repeated manual observation. Unit and integration tests should still live under `tests/`.
 
+## Handoff Priority
+
+1. Complete voiceprint recognition, visual recognition, and the visitor library.
+2. Run capability self-description regression tests and optimize mismatches.
+3. Run behavior testing and tuning from this file; behavior cases are intentionally not duplicated in `docs/progress.md`.
+
+## Voiceprint / Visual Recognition / Visitor Library
+
+- [ ] Voice signature capture test: capture enough speech only after dialogue intent is clear, and reject low-quality or too-short audio.
+- [ ] Face signature capture test: capture normal front-camera frames only after encounter / intent gating, and reject blur, strong angle, occlusion, or insufficient face size.
+- [ ] Historical match test: compare new face / voice signatures against existing visitor profiles and produce high / medium / low confidence decisions.
+- [ ] Combined identity confidence test: verify face-only, voice-only, and combined face+voice matching, including disagreement cases.
+- [ ] Natural confirmation test: when confidence is high enough, ask a non-blocking confirmation such as whether the visitor is a known person; if there is no answer, continue without forcing identity input.
+- [ ] Visitor profile persistence test: store identity metadata and signature references in `visitor_profiles.metadata` or a documented companion structure without exposing raw biometric data in the developer panel.
+- [ ] Database pollution test: passing-by observers, distant onlookers, and non-responsive people should not create visitor profiles.
+
 ## Entity Self-Model And Capability Consistency
 
 - [ ] Vision self-awareness regression: when vision runtime is enabled and a person is present, asking whether Stranger can see or perceive the visitor should not produce a full denial of visual ability; it may acknowledge limited presence detection and its uncertainty.

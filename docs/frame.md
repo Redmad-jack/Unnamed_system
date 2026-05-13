@@ -112,9 +112,14 @@ conscious_entity/
 │       │   ├── api_models.py         # API request models
 │       │   ├── api_runtime.py        # API lifespan + runtime helpers
 │       │   ├── api_routes.py         # FastAPI route handlers
-│       │   └── api_audio.py          # Audio Adapter API routes
+│       │   ├── api_audio.py          # Audio Adapter API routes
+│       │   └── static/               # Developer dashboard and temporary /visitor surface
 │       │
 │       ├── audio/                    # Optional Volcengine STT/TTS adapter
+│       ├── vision/                   # Optional camera + YOLO person presence runtime
+│       ├── harness/                  # Runtime Harness trace recorder and ring buffer
+│       ├── identity/                 # Visitor Identity & Session Gating V1
+│       ├── telemetry/                # Latency tracking for LLM / memory / audio paths
 │       │
 │       └── core/
 │           ├── loop.py               # Main interaction loop — orchestrates pipeline
@@ -866,9 +871,9 @@ CREATE INDEX IF NOT EXISTS idx_reflective_active
 
 ## 7. Development Roadmap
 
-### Current — Text System + Developer API + Managed Memory
+### Current — Text System + Developer API + Managed Memory + Harness + Visitor Gating V1
 
-**Goal:** Verify that state machine + persistent memory produce perceivable continuity, preference, and tension through text alone, while making memory influence visible and auditable.
+**Goal:** Verify that state machine + persistent memory produce perceivable continuity, preference, and tension, while making memory influence, harness decisions, voice transcript input, vision presence events, and visitor/session gating visible and auditable.
 
 **Implemented:**
 - All `perception/`, `state/`, `policy/` modules
@@ -880,11 +885,16 @@ CREATE INDEX IF NOT EXISTS idx_reflective_active
 - `llm/claude_client.py` and `llm/embedding_client.py`
 - `db/migrations.py` + `scripts/init_db.py`
 - `core/loop.py`, `interfaces/cli.py`, and FastAPI developer API modules under `interfaces/api*.py`
-- Single-file local Web dashboard with Memory Preview and managed memory curation
+- Single-file local Web dashboard with Memory Preview, managed memory curation, Harness trace, Audio Adapter, Vision status, and Identity & Session Gating status
+- `audio/` Volcengine STT/TTS adapter: final transcripts enter the normal turn loop; TTS only speaks legal `ExpressionOutput`-derived stream ids
+- `vision/` Mac camera + YOLO `person` presence detection, with realtime status and camera error writeback
+- `harness/` Runtime Harness trace recorder and in-memory ring buffer
+- `identity/` Visitor Identity & Session Gating V1 with anonymous visitor profiles and single primary visitor boundary
 
 **Still deferred:**
 - Clock-based background decay; current decay runs per turn
-- Full local STT/TTS models, voice identity, or acoustic identity analysis
+- Complete voiceprint recognition, visual identity recognition, and visitor library automation
+- Full local STT/TTS models
 - Full spatial perception and final body-facing presentation layer
 - Appearance design for the physical or semi-physical body
 - Physical movement, path following, obstacle avoidance, and body safety boundaries
@@ -899,28 +909,44 @@ CREATE INDEX IF NOT EXISTS idx_reflective_active
 
 ---
 
-### Next — Non-Moving Embodiment
+### Next — Visitor Recognition + Capability Regression
 
-**Goal:** Strengthen bodily presence without requiring the Stranger to physically move yet. Make voice, vision, appearance, silence, delay, and visual disturbance expressive.
+**Goal:** Complete identity continuity without requiring hard visitor login: use voiceprint and visual recognition as candidate signals, confirm identity naturally, and keep Stranger's self-description aligned with its actual runtime capabilities.
 
 **What to build:**
-- Continue validating `audio/` Volcengine STT/TTS adapter with real credentials and exhibition-like latency
-- Extend visual / spatial perception from presence detection toward distance, lingering, and relation posture
-- Time-based decay using a background timer
-- Wire `delay_ms`, `spoken_text`, and `visual_mode` to a body-facing presentation layer
-- Appearance / display / projection / light surface that reads `ExpressionOutput` and state values without exposing operator-only internals
+- Complete voice signature and face signature capture with quality gates
+- Match signatures against `visitor_profiles` and produce high / medium / low confidence decisions
+- Combine face and voice confidence without forcing visitor identity input
+- Store visitor-library metadata and signature references without exposing raw biometric data in the developer panel
+- Run capability self-description regression tests and behavior tests from `docs/testlist.md`
+- Continue validating Audio / LLM / Embedding / Vision with real supplier credentials and exhibition-like latency
 
 **Deliberately deferred from this phase:**
+- Multi-user routing / group session arbitration beyond the current single primary visitor boundary
+- Final body appearance, projection, display, or light-surface design
 - Robot base control
 - Path following
 - Obstacle avoidance
 - Autonomous roaming or patrol behavior
 
 **Acceptance criteria:**
-- Spoken input flows correctly into the perception pipeline
-- Visual / body state responds to state variables in real time
-- Visitor-facing presentation feels like encountering a body, not operating a user interface
+- Known visitors can be matched or naturally confirmed across sessions without hard login
+- Unknown visitors do not pollute the visitor library merely by passing by
+- Stranger accurately describes whether it is receiving text, STT transcript, presence detection, identity match, or no such signal
+- Behavior test outcomes are recorded in `docs/testlist.md` or linked test notes
 - Operator-only memory and governance traces remain out of the visitor surface
+
+---
+
+### Following — Non-Moving Embodiment
+
+**Goal:** Strengthen bodily presence without requiring the Stranger to physically move yet. Make voice, vision, appearance, silence, delay, and visual disturbance expressive.
+
+**What to build:**
+- Extend visual / spatial perception from presence detection toward distance, lingering, and relation posture
+- Time-based decay using a background timer
+- Wire `delay_ms`, `spoken_text`, and `visual_mode` to a body-facing presentation layer
+- Appearance / display / projection / light surface that reads `ExpressionOutput` and state values without exposing operator-only internals
 
 ---
 

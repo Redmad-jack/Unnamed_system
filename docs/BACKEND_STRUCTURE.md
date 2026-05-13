@@ -167,7 +167,7 @@ CREATE TABLE visitor_profiles (
 );
 ```
 
-**说明：** 这是开发者/展陈路由用的匿名访客注册表，不是观众账户系统；不包含密码、登录态、人脸、声纹或真实身份字段。
+**说明：** 这是开发者/展陈路由用的匿名访客注册表，不是观众账户系统；不包含密码或登录态。V1 已可保存匿名 `visitor_id`、display name、notes 和 metadata，用于跨 session 记忆连续性。下一优先级是把 face signature / voice signature 的安全 reference、质量摘要、匹配置信度和自然确认状态纳入访客库设计；开发者面板不得暴露原始人脸、原始音频或 embedding 向量。
 
 ---
 
@@ -329,6 +329,7 @@ CREATE TABLE schema_version (
 | `src/conscious_entity/interfaces/api_routes.py` | HTTP 路由处理 |
 | `src/conscious_entity/interfaces/api_audio.py` | 可选 audio adapter 路由：STT stream、audio dialog、TTS stream |
 | `src/conscious_entity/harness/` | Runtime Harness trace 类型、recorder 和进程内 ring buffer |
+| `src/conscious_entity/identity/` | Visitor Identity & Session Gating V1：记录 encounter、intent、primary visitor、插入事件和安全开发者状态 |
 | `src/conscious_entity/vision/runtime.py` | 可选 vision runtime：摄像头采集、YOLO person detection、presence event debounce |
 | `src/conscious_entity/audio/` | 可选 audio runtime：火山 STT/TTS 配置、stream id、协议封装 |
 
@@ -353,6 +354,7 @@ CREATE TABLE schema_version (
 | `GET` | `/api/v1/stats/audio-latency` | 查看内存态 STT/TTS latency summary 与最近记录，不保存原始音频 | 本地开发面板，当前无认证 |
 | `GET` | `/api/v1/harness/status` | 查看 Runtime Harness 启用状态、layer 列表和最近一轮摘要 | 本地开发面板，当前无认证 |
 | `GET` | `/api/v1/harness/trace/recent` | 查看最近 N 轮 Harness trace，进程内 ring buffer，不写 SQLite | 本地开发面板，当前无认证 |
+| `GET` | `/api/v1/identity/status` | 查看 Visitor Identity & Session Gating V1 当前状态、约束和最近事件 | 本地开发面板，当前无认证 |
 | `GET` | `/api/v1/vision/status` | 查看可选视觉 runtime 状态、依赖、模型路径和最新 detections | 本地开发面板，当前无认证 |
 | `POST` | `/api/v1/vision/start` | 启动 Mac 摄像头和 YOLO worker | 本地开发面板，当前无认证 |
 | `POST` | `/api/v1/vision/stop` | 停止 vision worker 并释放摄像头 | 本地开发面板，当前无认证 |
@@ -365,9 +367,17 @@ CREATE TABLE schema_version (
 | `GET` | `/visitor` | 临时访客侧 body-facing surface，不展示内部调试信息 | 访客端，无认证 |
 
 **Vision 事件边界：**
-- 视觉层只检测 YOLO `person` class，不做访客身份识别。
+- 当前视觉层只检测 YOLO `person` class，不做访客身份识别；下一优先级会在此基础上增加视觉身份 signature、质量门控和历史匹配。
 - 稳定进入、离开、长时间静默分别转换为已有 `USER_ENTERED`、`USER_LEFT`、`LONG_SILENCE_DETECTED`。
 - 事件通过 `InteractionLoop.handle_system_event(...)` 进入现有状态规则，不新增 `EventType`、YAML 行为规则或 SQLite schema。
+- 同一事件也会进入 `VisitorSessionGatingController`：presence 只产生 `encounter_candidate` / `observe_only`，不会自动创建新 session、不会自动切换 visitor。
+
+**Identity / Session Gating V1 边界：**
+- V1 每个 session 只有一个 `primary_visitor_id`；未确认身份时继续使用当前 session 的 unidentified scope。
+- 当前正在对话时，不因为旁人出现或发声自动切换 active visitor；可记录 `interruption_event`，但不启用 group session。
+- 空闲 presence 不等于对话意图；只有文字或语音输入进入 turn loop 时才把 intent 标为 confirmed。
+- 开发者面板展示 runtime、decision、candidate、confidence level 和 interruption count；不展示原始人脸图、原始音频、embedding 向量或完整身份库。
+- 后续完整身份识别必须继续保持“非强制输入”：可以询问确认，但 visitor 不回答时仍继续当前对话，不因未确认身份阻断 turn loop。
 - 摄像头/YOLO 留在上位机；STM32 后续只接收事件、动作、灯光或电机命令，不接收视频流。
 
 **Audio 安全边界：**
@@ -400,8 +410,9 @@ OPERATOR_API_KEY=your_secret_here
 | 版本 | 身份策略 |
 |---|---|
 | 早期文本 MVP | 全部共用 `session_id="shared"`，无访客区分 |
-| 当前系统 | 开发者可创建匿名 `visitor_profiles`，把当前 session 绑定到 `visitor_id`；同一 visitor 的旧 session 可参与记忆召回 |
-| 后续展览阶段 | 多人并发输入、自动识别和 routing / 仲裁策略仍待设计；当前不做人脸、声纹或自动身份识别 |
+| 当前系统 | 开发者可创建匿名 `visitor_profiles`，把当前 session 绑定到 `visitor_id`；同一 visitor 的旧 session 可参与记忆召回；Identity & Session Gating V1 负责记录 encounter / intent / interruption，但不自动识别人脸或声纹 |
+| 下一优先级 | 完整声纹识别、视觉识别与访客库：face / voice signature capture、质量门控、历史匹配、combined confidence、自然确认、visitor profile metadata |
+| 后续展览阶段 | 多人 routing / 仲裁策略仍待现场测试；当前先收束为单 primary visitor session |
 
 **注：** 不引入账户注册或密码机制。匿名 `visitor_id` 是路由和连续性线索，不等于真实身份画像。
 
@@ -426,7 +437,7 @@ OPERATOR_API_KEY=your_secret_here
 - `episodic_memories.reflected` 标志只能从 0 改为 1，不可逆
 - `reflective_summaries.active` 标志：新反思生成时不删除旧记录，仅将旧记录的 active 置为 0
 - 展期全程不重置任何表，仅在展期结束时归档
-- Stranger 当前不保存原始音视频，也不新增访客身份画像；视觉第一版只在内存中保留最新 JPEG frame / detections / recent events，presence 结果只作为已有系统事件进入状态路径；语音第一版只在内存中保留最近 transcript、TTS stream id 和 sanitized error
+- Stranger 当前不保存原始音视频；视觉第一版只在内存中保留最新 JPEG frame / detections / recent events，presence 结果只作为已有系统事件进入状态路径；语音第一版只在内存中保留最近 transcript、TTS stream id 和 sanitized error。下一阶段若实现声纹/视觉识别，应优先保存可审计的 signature reference、质量摘要、置信度和确认状态，而不是把原始音视频直接暴露给开发者面板。
 - 自动调参建议不得直接写回 YAML；必须先作为待确认记录进入运营者流程
 
 ---

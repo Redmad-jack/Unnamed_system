@@ -8,26 +8,87 @@
 
 - 当前进行中：无
 - 当前可运行形态：CLI + 本地 FastAPI 开发者 API + Web 看板 + 可选 Vision 面板 + 可选 Audio Adapter + `/visitor` 临时身体表面；观众侧最终呈现方向是身体，不是传统 UI
-- 当前核心能力：Stranger 文本协议、状态机、短期/情节/反思记忆、匿名 visitor profile 与跨 session visitor 记忆召回、可解释/可选 embedding 召回、Memory Preview、managed memory proposal → commit、influence log / curation、Runtime Harness Trace、可选 YOLO person presence detection、可选火山 ASR 2.0 / TTS 2.0 双向流式 Audio Adapter
-- 当前验证基线：`PYTHONPATH=src python3 -m pytest -p no:debugging`，最近一次完整结果为 `355 passed`
+- 当前核心能力：Stranger 文本协议、状态机、短期/情节/反思记忆、匿名 visitor profile 与跨 session visitor 记忆召回、Visitor Identity & Session Gating V1、可解释/可选 embedding 召回、Memory Preview、managed memory proposal → commit、influence log / curation、Runtime Harness Trace、可选 YOLO person presence detection、可选火山 ASR 2.0 / TTS 2.0 双向流式 Audio Adapter
+- 当前验证基线：`PYTHONPATH=src python3 -m pytest -p no:debugging`，最近一次完整结果为 `364 passed`
+- 当前交接重点：下一步不再优先扩展 UI，而是先补齐完整声纹识别、视觉识别和访客库；随后做能力自我描述回归测试与行为测试调优
 - 当前注意事项：`AGENTS.md` 与 `CLAUDE.md` 有用户侧未提交差异；除非明确要求，不应在常规任务中触碰
 
 ---
 
-## 下一步
+## 下一步（交接优先级）
 
-- [ ] 使用已轮换的真实供应商凭证做一轮 CLI/API 联调，确认自定义模型名与网关鉴权在目标环境可用
+### P0：合作者优先处理
+
+- [ ] 完整声纹识别、视觉识别与访客库
+  - 基于当前 Visitor Identity & Session Gating V1 继续做，不要求观众硬性输入身份
+  - 完成 voice signature / face signature 的采集、质量门控、历史匹配、combined confidence、自然确认和 visitor profile metadata
+  - 当前 V1 只支持开发者手动绑定匿名 `visitor_id`；不能把它误读为已完成自动识别
+- [ ] 能力自我描述回归测试与优化
+  - 重点检查 Stranger 对“看见、听见、记得、识别、移动、身体、声音、记忆”的自我描述是否和 runtime 能力一致
+  - 测试入口见 `docs/testlist.md` 的 capability consistency 相关条目
+- [ ] 行为测试与调优
+  - 统一按 `docs/testlist.md` 执行和记录；这里不展开具体测试项
+
+### P1：保持在下一梯队
+
 - [ ] 继续观察真实对话中的记忆连续性：同一 visitor 的跨 session 召回是否稳定，Memory Preview 是否能解释召回来源，managed memory influence 是否可审计且不越界
+- [ ] 使用真实供应商环境做 Audio / LLM / Embedding 联调和延迟观察：确认火山 ASR/TTS、当前 Claude/Anthropic-compatible 网关、自定义模型名、embedding 配置和网络延迟在目标环境可用
 - [ ] 手动联调视觉层：安装 `.[dev,api,vision]`，配置本地 `ENTITY_VISION_MODEL_PATH`，确认 Mac 摄像头授权、实时标注帧、detections 和 presence events
-- [ ] 使用真实火山新版控制台 API Key 和 TTS 2.0 音色做一轮 Audio Adapter 联调：确认浏览器麦克风权限、ASR 2.0 partial/final、`/audio/dialog`、TTS 2.0 bidirection HTTP playback、`/visitor` enable sound
-- [ ] 后续单独设计多人并发策略：当前已支持开发者手动绑定匿名 visitor_id，但同一时刻仍只处理一个主要对话流；多用户 routing / 仲裁策略仍待确认
+- [ ] 后续单独设计多人并发策略：当前仍收束为单 primary visitor session；多人 routing / 仲裁策略仍待确认
+
+### P2：后续身体与展览阶段
+
 - [ ] 继续规划非移动身体阶段：身体外观、声音风格、显示/投影/光的呈现映射；更完整空间感知仍待设计
 - [ ] 物理移动、循路、避障、底盘控制和安全边界放到更后阶段，等非物理身体通道稳定后再实现
-- [ ] 部署认证、访客身份策略与展期终止仪式仍待设计确认
+- [ ] 部署认证、访客身份策略最终版与展期终止仪式仍待设计确认
 
 ---
 
 ## Changelog
+
+### 2026-05-13：交接文档与待办优先级整理
+
+- [x] 将下一步优先级调整为：
+  - P0：完整声纹识别、视觉识别与访客库
+  - P0：能力自我描述回归测试与优化
+  - P0：行为测试与调优，统一见 `docs/testlist.md`
+- [x] 明确当前 Visitor Identity & Session Gating 仍是 V1：支持匿名 visitor profile 和手动绑定，但未完成自动 face / voice identity matching
+- [x] 将真实供应商联调、真实记忆连续性观察、Vision 现场联调和多人并发策略下移为 P1
+
+### 2026-05-12：Vision 实时识别状态与 camera open 错误回写
+
+- [x] 修复 Vision 启动失败后 `/api/v1/vision/status` 仍显示 ready 的问题：
+  - `Could not open camera index N` 现在会写入 runtime error
+  - status recognition 会显示 `pipeline_status=error`、`camera_status=error`
+- [x] Vision 面板新增 `Realtime Recognition`：
+  - 显示 Pipeline、Camera、Detector、Frame age、Presence、Threshold
+  - 同步显示 Identity gate、Encounter、Bio match 的 V1 状态
+- [x] 验证：
+  - `PYTHONPATH=src python3 -m py_compile src/conscious_entity/vision/runtime.py`
+  - `node --check src/conscious_entity/interfaces/static/dashboard.js`
+  - `PYTHONPATH=src python3 -m pytest -p no:debugging`
+  - `364 passed`
+
+### 2026-05-12：Visitor Identity & Session Gating V1
+
+- [x] 新增 `src/conscious_entity/identity/`：
+  - `VisitorSessionGatingController` 记录 runtime state、encounter / intent、session decision、primary visitor、candidate、confidence level 和 interruption count
+  - V1 明确不从 vision presence 自动创建 session、不自动切换 visitor、不启用 group session、不使用广角身份输入
+- [x] 接入 runtime：
+  - vision `USER_ENTERED / USER_LEFT / LONG_SILENCE_DETECTED` 同步进入 identity/session gating
+  - `/dialog` 与 `/audio/dialog` 进入 turn loop 前补充 `identity_session` metadata
+  - Harness Input layer 记录 `session_decision` 与 identity/session 摘要
+- [x] 开发者 API / 面板：
+  - 新增 `GET /api/v1/identity/status`
+  - Runtime 面板新增 `Identity & Session Gating` 区，不暴露原始人脸、原始音频或 embedding 向量
+- [x] 文档：
+  - 新增 `docs/testlist.md`
+  - 更新 `APP_FLOW.md`、`BACKEND_STRUCTURE.md`、`HARNESS_ARCHITECTURE.md`
+- [x] 验证：
+  - `PYTHONPATH=src python3 -m py_compile src/conscious_entity/identity/*.py src/conscious_entity/interfaces/api_runtime.py src/conscious_entity/interfaces/api_routes.py src/conscious_entity/interfaces/api.py src/conscious_entity/core/loop.py`
+  - `node --check src/conscious_entity/interfaces/static/dashboard.js`
+  - `PYTHONPATH=src python3 -m pytest -p no:debugging`
+  - `363 passed`
 
 ### 2026-05-12：Visitor migration 启动错误与 STT close race 修复
 
@@ -770,13 +831,14 @@
 
 | 项目 | 状态 | 影响 |
 |---|---|---|
-| 访客身份识别方式 | 待确认 | 影响 per-visitor 记忆设计 |
+| 完整声纹识别、视觉识别与访客库 | 下一优先级 | 影响 per-visitor 记忆连续性与展览现场身份确认 |
+| 能力自我描述回归测试 | 下一优先级 | 影响 Stranger 是否准确描述当前可见、可听、可识别和可移动能力 |
+| 行为测试与调优 | 下一优先级 | 测试列表统一见 `docs/testlist.md` |
 | 身体外观、材料、尺度和移动姿态 | 待确认 | 影响 Stranger 的具身呈现方向 |
 | 视觉风格 / 设计语言 | 待确认 | 影响身体表面、投影、光或显示层 |
 | 访客呈现方式 | 待确认 | 影响后续身体呈现，不应收缩成传统 UI |
 | 展期终止仪式设计 | 待定 | 影响展览收束功能范围 |
 | 运营者面板访问方式 | 待确认 | 影响 FastAPI 部署与认证配置 |
-| TTS 具体选型 | 待确认 | 影响后续语音输出实现 |
-| STT 具体选型 | 待确认 | 影响后续语音输入实现 |
+| 声音现场稳定性与音色 | 待测试 | 当前已接入火山 STT/TTS，后续关注延迟、断线恢复、barge-in 和展览音色 |
 | 物理移动 / 循路 / 避障 | 后续阶段 | 当前不急，需等非移动身体通道稳定后再做 |
-| 供应商 Anthropic 兼容接口联调 | 待完成 | 影响真实 CLI/API 输出是否能走供应商网关而不是 fallback |
+| 真实供应商环境联调 | 待观察 | 影响 Audio / LLM / Embedding 在目标环境下的稳定性与延迟 |

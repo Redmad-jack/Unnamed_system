@@ -6,7 +6,7 @@
 
 ## 1. 目标
 
-Harness 不是一个新的模型，也不是新的 constitution。第一版目标是把当前分散在 perception、state、memory、policy、prompt、generation、output、audio/presentation 中的约束和影响整理成可观察的运行结构。
+Harness 不是一个新的模型，也不是新的 constitution。第一版目标是把当前分散在 perception、identity/session gating、state、memory、policy、prompt、generation、output、audio/presentation 中的约束和影响整理成可观察的运行结构。
 
 当前策略：
 
@@ -22,7 +22,7 @@ Harness 不是一个新的模型，也不是新的 constitution。第一版目�
 
 | Layer | 当前职责 | 能否拒绝 | 能否改写 | 能否影响长期记忆 |
 |---|---|---:|---:|---:|
-| Input Harness | 标注输入来源、输入模式和 perception event | 否 | 否 | 否 |
+| Input Harness | 标注输入来源、输入模式、identity/session decision 和 perception event | 否 | 否 | 否 |
 | State Harness | 记录 state rules、decay、bounded memory deltas 的影响 | 否 | 否 | 间接影响 |
 | Memory Harness | 记录 managed memory preview 和 retrieval 路径 | 否 | 否 | 是，但只通过 proposal/commit |
 | Policy Harness | 记录 policy rule 命中、constitution veto、managed memory policy influence | 是 | 否 | 否 |
@@ -32,6 +32,8 @@ Harness 不是一个新的模型，也不是新的 constitution。第一版目�
 | Presentation Harness | 记录 `ExpressionOutput` 如何进入文字、视觉、声音呈现 | 否 | 否 | 否 |
 
 第一版 `Generation Harness` 只预留观测位置，不做 streaming guard。后续如要做流式拦截，应在这一层扩展。
+
+Identity & Session Gating V1 位于 harness 前方：它为本轮输入补充 `identity_session` metadata，再由 Input Harness 记录。V1 只做可观察决策，不因为 presence 自动创建 session，不自动切换 visitor，不做 group session。
 
 ---
 

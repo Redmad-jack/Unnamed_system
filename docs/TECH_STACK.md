@@ -46,6 +46,11 @@
 - 可选 `ENTITY_MEMORY_BACKEND=mem0`，作为 mem0ai 后端预留；未安装时安全回退到本地 provider
 - 记忆形成采用 proposal → commit：第一版默认 auto-commit，但仍保留审批接口
 
+**Visitor Identity：**
+- 当前实现为匿名 `visitor_profiles` + Visitor Identity & Session Gating V1，不引入账号系统
+- 下一优先级是完整声纹识别、视觉识别与访客库；技术选型应优先复用 `vision` / `audio` optional groups，新增依赖必须先记录理由和安装路径
+- 初版使用正常前置镜头路线，不使用广角实时畸变还原作为默认方案
+
 ### 数据库
 
 | 项目 | 版本 | 用途 |
@@ -77,7 +82,7 @@
 | `dev` | pytest | 测试框架 | 已实现，开发时安装 |
 | `dev` | pytest-mock | Mock LLM 调用 | 已实现，开发时安装 |
 
-原则：后续语音、硬件或前端构建依赖不得并入核心 `dependencies`；只有完成设计确认并声明安装路径后，才加入对应 optional group。视觉第一版已进入 `vision` optional group，语音第一版已进入 `audio` optional group，但默认安装路径仍不包含 OpenCV / ultralytics / websockets。
+原则：后续硬件、访客识别模型或前端构建依赖不得并入核心 `dependencies`；只有完成设计确认并声明安装路径后，才加入对应 optional group。视觉第一版已进入 `vision` optional group，语音第一版已进入 `audio` optional group，但默认安装路径仍不包含 OpenCV / ultralytics / websockets。
 
 ---
 
@@ -187,3 +192,4 @@ ENTITY_AUDIO_ALLOW_DEBUG_RAW_TTS=0
 - FastAPI / uvicorn 必须继续保留在 `api` optional group 中
 - OpenCV / ultralytics 必须继续保留在 `vision` optional group 中，且模型路径必须显式配置，不自动下载模型
 - websockets 必须继续保留在 `audio` optional group 中；火山凭证不得写入客户端代码或公开状态响应
+- 声纹识别、视觉身份识别和访客库扩展不得把原始生物特征暴露到开发者面板；新增依赖和数据字段必须同步更新 `docs/BACKEND_STRUCTURE.md` 与 `docs/progress.md`

@@ -32,6 +32,8 @@
   ↓
 如有 presence event，则触发 USER_ENTERED
   ↓
+Identity & Session Gating 记录 encounter_candidate，但不创建 session / 不切 visitor
+  ↓
 状态更新：arousal +0.15, attention_focus +0.2, fatigue -0.05
   ↓
 策略可能触发欢迎或沉默（取决于当前 resistance / trust 水平）
@@ -40,7 +42,9 @@
 **成功状态：** 系统就绪，等待访客输入
 **错误状态：** 数据库连接失败 → fallback 到默认初始状态，记录错误日志
 
-**当前视觉入口：** 可选 vision runtime 使用 Mac 摄像头 + 本地 YOLO 模型，只检测 `person` class。稳定检测到人会触发 `USER_ENTERED`，人离开超过阈值会触发 `USER_LEFT`，持续存在但长时间没有文字交互会触发 `LONG_SILENCE_DETECTED`。这些事件走 `loop.handle_system_event(...)`，不新增 YAML 事件或数据库表。
+**当前视觉入口：** 可选 vision runtime 使用 Mac 摄像头 + 本地 YOLO 模型，只检测 `person` class。稳定检测到人会触发 `USER_ENTERED`，人离开超过阈值会触发 `USER_LEFT`，持续存在但长时间没有文字交互会触发 `LONG_SILENCE_DETECTED`。这些事件同时进入 `loop.handle_system_event(...)` 和 Identity & Session Gating：前者更新状态，后者只记录 encounter / intent 状态。presence 不等于对话意图，不会自动创建新 session 或切换 visitor。
+
+**macOS 摄像头权限注意：** 摄像头授权绑定启动 API 的宿主进程。Codex 启动的 Python 可能无法获得 Camera 权限；若出现 `Could not open camera index N`，优先从已授权的 Terminal / VS Code 启动同一 API 进程。
 
 **后续身体阶段：** 进入不一定来自文字输入，也可以来自靠近、停留、被观察、被呼唤或空间位置变化。当前不实现移动、循路或避障。
 
@@ -48,17 +52,18 @@
 
 ### 2.2 对话回合（Turn Loop）
 
-**触发条件：** 访客提交文字输入
+**触发条件：** 访客提交文字输入，或 audio adapter 送入 STT final transcript
 
 **当前流程（见 `src/conscious_entity/core/loop.py`）：**
 
 ```
 Step 0   创建 HarnessTraceRecorder
           └─ 只记录运行时治理 trace，不改变本轮决策结果，不写 SQLite
+          └─ 进入前由 VisitorSessionGatingController 补充 identity/session metadata
 
 Step 1   感知层解析输入 → 生成 PerceptionEvent 列表
           └─ 可能产生多个事件：USER_SPOKE + SHUTDOWN_KEYWORD_DETECTED 等
-          └─ Input Harness 记录 source、input_mode、event_types
+          └─ Input Harness 记录 source、input_mode、event_types、session_decision
 
 Step 2   将用户输入加入短期记忆
           └─ 重复追问、连续服务请求等判断可以看见当前输入
@@ -123,6 +128,8 @@ Step 15  发送 turn_complete 到 EventBus，供调试或后续 instrumentation 
 
 **当前语音入口：** 可选 audio runtime 使用火山 STT/TTS。浏览器或未来身体节点只把 16k / 16bit / mono PCM chunk 发到 `/api/v1/audio/stt/stream`；只有 `transcript.final` 可以通过 `/api/v1/audio/dialog` 进入现有 `run_turn()`。TTS 只朗读最终已过滤的 `ExpressionOutput` 派生文本，并通过 `tts_stream_id` 播放，不允许 visitor/body 直接指定任意 TTS 文本。
 
+**当前身份/会话入口：** V1 不做自动人脸/声纹识别。已绑定 visitor 时本轮标记为 `continue_current`；未绑定 visitor 时标记为 `continue_unidentified`；显式插入信号只记录 interruption，默认不替换当前 primary visitor。下一优先级是在这个边界上补齐声纹识别、视觉识别、历史匹配、自然确认和访客库。
+
 **错误状态：**
 - LLM 调用失败 → 使用规则生成 fallback 回应（简短、中性）
 - 数据库写入失败 → 记录日志，但不中断对话流程
@@ -167,6 +174,8 @@ python scripts/inspect_state.py
 **Audio 工作区：** 开发者 Web 看板 `Runtime` 区域显示 Audio Adapter，可启动/停止浏览器麦克风，查看 provider、disabled reason、STT partial/final transcript、TTS stream id 和错误，并将 final transcript 送入现有对话回合。
 
 **Harness 工作区：** 开发者 Web 看板 `Runtime` 区域显示最近一轮 Harness layer 状态、decision 和摘要。Prompt Harness 只显示 partial 名称与摘要，不显示完整 hidden prompt。
+
+**Identity & Session Gating 工作区：** 开发者 Web 看板 `Runtime` 区域显示当前 runtime state、session decision、primary visitor、candidate、encounter/intent、confidence level、是否等待确认和 interruption count。V1 不展示原始人脸、原始音频、embedding 向量或完整身份库。
 
 **访客 surface：** `/visitor` 只读取最新 `ExpressionOutput` 与少量 state 映射为文字、扰动、沉默和延迟感；如已启用声音，也只播放后端已创建的 `tts_stream_id`，不显示 dashboard 控件、内部规则、memory、prompt 或调试指标。
 
@@ -254,14 +263,23 @@ HarnessTraceStore.record(...)
 | 摄像头无法打开或帧读取失败 | vision worker 记录 runtime error，释放摄像头；主 loop 继续运行 |
 | Audio optional deps / 火山凭证 / 音色缺失 | `/api/v1/audio/status` 返回 disabled reason；文本系统继续运行 |
 | STT / TTS 流式连接失败 | 记录 sanitized error 与 logid，不保存原始音频，不影响现有文本 dialog |
+| Identity/session gating 状态异常 | 降级为未确认 visitor 的当前 session，不自动创建新 session，不影响主 turn loop |
 
 ---
 
-## 6. 待确认
+## 6. 待办与待确认
 
-- **[ 待确认 ]** Stranger 身体外观、材料、尺度、显示/投影/光等呈现方式
-- **[ 已完成第一版 ]** STT / TTS Audio Adapter：火山 STT/TTS，可降级 disabled，不改变核心 turn loop
-- **[ 已完成第一版 ]** 视觉 presence detection 输入边界：Mac 摄像头 + 本地 YOLO；后续空间感知仍待确认
-- **[ 待确认 ]** 物理移动、循路、避障和底盘方案（后续阶段）
-- **[ 待确认 ]** 运营者面板的具体页面布局和访问方式（本地 localhost？还是局域网访问？）
-- **[ 待确认 ]** presence detection 的具体触发机制（摄像头？距离传感器？）
+**P0 交接优先级：**
+- 完整声纹识别、视觉识别与访客库：基于当前 V1 gating，完成 signature capture、质量门控、历史匹配、combined confidence、自然确认和 visitor profile metadata。
+- 能力自我描述回归测试与优化：确保 Stranger 对看见、听见、识别、记忆、身体、移动等能力的描述与 runtime 上下文一致。
+- 行为测试与调优：统一见 `docs/testlist.md`，本文件不展开测试清单。
+
+**已完成第一版但仍需现场校准：**
+- STT / TTS Audio Adapter：火山 STT/TTS，可降级 disabled，不改变核心 turn loop。
+- 视觉 presence detection：Mac 摄像头 + 本地 YOLO，后续空间感知和视觉身份识别仍待扩展。
+- Visitor Identity & Session Gating V1：单 primary visitor session、presence 不创建 session、插入只记录事件。
+
+**后续待确认：**
+- Stranger 身体外观、材料、尺度、显示/投影/光等呈现方式。
+- 物理移动、循路、避障和底盘方案。
+- 运营者面板的局域网访问、部署认证和展览现场隔离方式。

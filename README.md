@@ -22,7 +22,7 @@
 
 ## 当前开发状态（2026-05）
 
-**核心文本系统、开发者 API、Memory Preview 与 managed memory 主路径已可运行。**
+**核心文本系统、开发者 API、Memory Preview、managed memory、Runtime Harness、Visitor Identity & Session Gating V1、视觉 presence 第一版与火山 Audio Adapter 已可运行。**
 
 | Phase | 内容 | 状态 |
 |---|---|---|
@@ -38,10 +38,12 @@
 | Phase 9 | Managed Memory（proposal → commit、influence preview/log、developer curation） | ✅ 完成 |
 | Phase 10 | 非移动视觉层第一版（Mac 摄像头 + YOLO person detection + presence events + `/visitor` surface） | ✅ 完成 |
 | Phase 11 | Audio Adapter Layer（火山 STT/TTS、stream id 安全边界、开发者 Audio workspace） | ✅ 完成 |
+| Phase 12 | Runtime Harness System + Visitor Identity & Session Gating V1 | ✅ 完成 |
+| Phase 13 | 完整声纹识别、视觉识别与访客库 | ⏭ 下一优先级 |
 
-**现在可以运行：** 通过命令行或本地 Web 看板与 Stranger 交互，实体有状态记忆、行为规则、LLM 表达、文本关系姿态识别、可解释记忆召回、Memory Preview 和可审计 managed memory 影响路径；可选视觉层能用本地 YOLO 模型和 Mac 摄像头产生 presence events；可选语音层能用火山 STT/TTS 把浏览器麦克风输入转成文本回合，并只朗读合法 `ExpressionOutput` 派生的 stream id。
+**现在可以运行：** 通过命令行或本地 Web 看板与 Stranger 交互，实体有状态记忆、行为规则、LLM 表达、文本关系姿态识别、可解释记忆召回、Memory Preview、可审计 managed memory 影响路径和 Runtime Harness Trace；可选视觉层能用本地 YOLO 模型和 Mac 摄像头产生 presence events；可选语音层能用火山 STT/TTS 把浏览器麦克风输入转成文本回合，并只朗读合法 `ExpressionOutput` 派生的 stream id；Identity & Session Gating V1 能记录 encounter / intent / interruption，但尚未自动做人脸或声纹识别。
 
-**还未做的（后续阶段）：** 更完整的空间感知、身体外观设计、访客身份识别、展期终止仪式。物理移动、循路和避障属于更后面的身体阶段，先不进入当前实现。
+**下一优先级：** 先做完整声纹识别、视觉识别和访客库；然后做能力自我描述回归测试与优化；再做 `docs/testlist.md` 中的行为测试与调优。更完整空间感知、身体外观、多人并发、展期终止仪式、物理移动、循路和避障都排在后面。
 
 ---
 
@@ -100,6 +102,8 @@ LLM 不直接改写 YAML、宪法、核心状态权重或策略规则。它可�
 | `src/conscious_entity/interfaces/api_runtime.py` | API lifespan、runtime 配置、数据库辅助函数 |
 | `src/conscious_entity/interfaces/api_routes.py` | API 路由处理函数 |
 | `src/conscious_entity/interfaces/api_audio.py` | 可选 Audio Adapter API：STT stream、audio dialog、TTS stream |
+| `src/conscious_entity/harness/` | Runtime Harness trace 类型、recorder 与进程内 ring buffer |
+| `src/conscious_entity/identity/` | Visitor Identity & Session Gating V1 |
 | `src/conscious_entity/interfaces/cli.py` | 终端 REPL 界面 |
 | `src/conscious_entity/vision/runtime.py` | 可选视觉 runtime：摄像头采集、YOLO person detection、presence event debounce |
 | `src/conscious_entity/audio/` | 可选语音 runtime：火山 STT/TTS 配置、stream id、协议封装 |
@@ -244,6 +248,8 @@ ENTITY_VISION_CONFIDENCE=0.45
 
 开发者面板左侧 `Entity State` 下方的 `Vision` 面板可启动/停止摄像头 worker，并通过 WebSocket 接收后端标注后的 JPEG frames。视觉层当前只检测 `person`，并把稳定进入、离开和长时间静默转换为已有 `USER_ENTERED` / `USER_LEFT` / `LONG_SILENCE_DETECTED` 系统事件。
 
+macOS 摄像头权限与启动进程有关。如果从 Codex 启动的 Python 没有 Camera 权限，Vision 会报 `Could not open camera index N`；从已获授权的 Terminal / VS Code 启动同一 API 进程通常可以正常读取摄像头。
+
 语音层默认关闭。启用后，开发者面板 `Runtime` 区域的 `Audio Adapter` 可以启动浏览器麦克风、查看 STT partial/final transcript、将 final transcript 送入现有 turn loop，并播放火山 TTS 生成的实体声音。TTS 不接受 visitor/body 直接提交的任意文本；它只能播放由合法 `ExpressionOutput` 创建的 `tts_stream_id`。调试 raw text TTS 必须显式设置 `ENTITY_AUDIO_ALLOW_DEBUG_RAW_TTS=1`，且不视为 Stranger speech。
 
 ```env
@@ -315,9 +321,10 @@ PYTHONPATH=src python3 -m pytest -p no:debugging
 | 身体外观、材料、尺度和移动姿态 | 后续具身呈现 |
 | 展览视觉风格、设计语言 | 身体表面、投影、光或显示层 |
 | 访客端呈现方式（投影？屏幕？身体表面？） | 观众可见呈现，不是传统 UI |
-| 语音输出的具体方案（TTS 选型） | 后续声音通道 |
-| 语音输入的具体方案（STT 选型） | 后续听觉 / 对话入口 |
-| 访客身份识别方式（摄像头？Token？完全匿名？） | per-visitor 记忆设计 |
+| 声音现场稳定性与音色 | 当前已接入火山 STT/TTS；后续重点是现场延迟、断线恢复、音色和 barge-in |
+| 完整声纹识别、视觉识别与访客库 | 下一优先级；当前 V1 只有匿名 visitor profile 与手动绑定 |
+| 能力自我描述回归测试 | 防止 Stranger 错称自己能/不能看见、听见、识别、移动或记忆 |
+| 行为测试与调优 | 统一见 `docs/testlist.md` |
 | 运营者面板的访问方式（本地 localhost 还是局域网？） | FastAPI 部署与认证配置 |
 | 物理移动、循路、避障方案 | 后续机器人 / 底盘阶段，当前不急 |
 | 展期终止仪式的设计 | 展览收束功能范围 |
@@ -333,8 +340,9 @@ PYTHONPATH=src python3 -m pytest -p no:debugging
 | `docs/PRD.md` | 产品需求文档（功能范围、用户故事、成功标准） |
 | `docs/APP_FLOW.md` | 应用流程详解（每一步的数据流和错误处理） |
 | `docs/BACKEND_STRUCTURE.md` | 后端结构文档 |
-| `docs/IMPLEMENTATION_PLAN.md` | 实现计划 |
+| `docs/IMPLEMENTATION_PLAN.md` | 历史实现计划归档；当前待办以 `docs/progress.md` 为准 |
 | `docs/TECH_STACK.md` | 依赖版本锁定 |
+| `docs/testlist.md` | 现场、供应商、能力自我描述和行为测试列表 |
 | `CLAUDE.md` | AI 编码规则（架构边界、禁止事项、开发约定） |
 
 ---
@@ -342,9 +350,11 @@ PYTHONPATH=src python3 -m pytest -p no:debugging
 ## 开发路线图
 
 ```
-当前文本系统  CLI + 本地 FastAPI 开发者 API + Memory Preview + Managed Memory
+当前系统      CLI + 本地 FastAPI 开发者 API + Memory Preview + Managed Memory + Harness + Visitor Gating V1
      ↓
-非移动身体    第一版视觉 presence + /visitor surface + 火山 STT/TTS Audio Adapter 已接入；下一步做真实现场联调、外观/声音/显示或投影呈现
+访客识别      完整声纹识别 + 视觉识别 + 访客库；随后做能力自我描述回归和行为测试调优
+     ↓
+非移动身体    第一版视觉 presence + /visitor surface + 火山 STT/TTS Audio Adapter 已接入；后续做现场联调、外观/声音/显示或投影呈现
      ↓
 物理身体      循路 + 避障 + 空间巡游 / 停留策略
      ↓
