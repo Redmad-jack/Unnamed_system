@@ -7,12 +7,18 @@ import base64
 import binascii
 import json
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, Response
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, StrictBool
+
+try:
+    from pydantic import ConfigDict
+except ImportError:  # pragma: no cover - Pydantic v1 fallback.
+    ConfigDict = None
 
 from conscious_entity.db.connection import get_connection
 from conscious_entity.runtime_env import load_project_env, project_root
@@ -121,6 +127,24 @@ class QueueUpdateRequest(BaseModel):
     staff_notes: str | None = None
 
 
+class DisplayStateUpdateRequest(BaseModel):
+    if ConfigDict is not None:
+        model_config = ConfigDict(extra="forbid")
+
+    mode: str | None = None
+    display_text: str | None = None
+    food_name: str | None = None
+    food_subtitle: str | None = None
+    robot_active: StrictBool | None = None
+    avatar_greeting: StrictBool | None = None
+    avatar_system_speaking: StrictBool | None = None
+    avatar_audience_speaking: StrictBool | None = None
+
+    if ConfigDict is None:  # pragma: no cover - Pydantic v1 fallback.
+        class Config:
+            extra = "forbid"
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     load_project_env()
@@ -156,6 +180,7 @@ async def lifespan(app: FastAPI):
     app.state.doubao_tts_client_cls = DoubaoTTSBidirectionalClient
     app.state.db_path = db_path
     app.state.config_dir = _config_dir()
+    app.state.display_state = _initial_display_state()
 
     yield
 
@@ -170,6 +195,10 @@ app = FastAPI(
 
 _THANK_YOU_SPEECH_TEXT = "Thank you. 谢谢。"
 _ASR_TARGET_CHUNK_BYTES = 16000 * 2 // 5
+_DISPLAY_MODES = {"idle", "question", "robot_speaking", "result", "error"}
+_DISPLAY_TEXT_LIMIT = 800
+_DISPLAY_FOOD_NAME_LIMIT = 80
+_DISPLAY_FOOD_SUBTITLE_LIMIT = 160
 
 
 def _service(request: Request) -> MealService:
@@ -205,12 +234,70 @@ def _model_data(model: BaseModel) -> dict[str, Any]:
     return model.dict()
 
 
+def _model_fields_set(model: BaseModel) -> set[str]:
+    fields = getattr(model, "model_fields_set", None)
+    if fields is not None:
+        return set(fields)
+    return set(getattr(model, "__fields_set__", set()))
+
+
+def _utc_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _initial_display_state() -> dict[str, Any]:
+    return {
+        "mode": "idle",
+        "display_text": "",
+        "food_name": None,
+        "food_subtitle": None,
+        "robot_active": False,
+        "avatar_greeting": False,
+        "avatar_system_speaking": False,
+        "avatar_audience_speaking": False,
+        "updated_at": _utc_iso(),
+    }
+
+
+def _truncate_text(value: str | None, limit: int) -> str | None:
+    if value is None:
+        return None
+    return value[:limit]
+
+
+def _display_state(request: Request) -> dict[str, Any]:
+    state = getattr(request.app.state, "display_state", None)
+    if state is None:
+        state = _initial_display_state()
+        request.app.state.display_state = state
+    return state
+
+
 @app.get("/", include_in_schema=False)
 async def dashboard():
     html_path = _static_dir() / "index.html"
     if not html_path.exists():
         raise HTTPException(status_code=404, detail="Dashboard not found")
     return FileResponse(str(html_path), media_type="text/html")
+
+
+@app.get("/display", include_in_schema=False)
+async def display_page():
+    html_path = _static_dir() / "display.html"
+    if not html_path.exists():
+        raise HTTPException(status_code=404, detail="Display page not found")
+    return FileResponse(str(html_path), media_type="text/html")
+
+
+@app.get("/display-assets/{filename}", include_in_schema=False)
+async def display_asset(filename: str):
+    allowed_assets = {"avatar-film-texture.png", "avatar-film-overlay.png", "amhand.png"}
+    if filename not in allowed_assets:
+        raise HTTPException(status_code=404, detail="Display asset not found")
+    asset_path = _static_dir() / "assets" / filename
+    if not asset_path.exists():
+        raise HTTPException(status_code=404, detail="Display asset not found")
+    return FileResponse(str(asset_path), media_type="image/png")
 
 
 @app.get("/health")
@@ -236,6 +323,46 @@ async def config(request: Request):
 @app.get("/api/v1/voice-config")
 async def voice_config(request: Request):
     return request.app.state.voice_config.public_data()
+
+
+@app.get("/api/v1/display-state")
+async def get_display_state(request: Request):
+    return dict(_display_state(request))
+
+
+@app.post("/api/v1/display-state")
+async def update_display_state(body: DisplayStateUpdateRequest, request: Request):
+    fields = _model_fields_set(body)
+    if "mode" in fields:
+        if body.mode not in _DISPLAY_MODES:
+            raise HTTPException(status_code=400, detail="Invalid display mode")
+    if "display_text" in fields and body.display_text is None:
+        raise HTTPException(status_code=400, detail="display_text must be a string")
+    if "robot_active" in fields and body.robot_active is None:
+        raise HTTPException(status_code=400, detail="robot_active must be a boolean")
+    for field in ("avatar_greeting", "avatar_system_speaking", "avatar_audience_speaking"):
+        if field in fields and getattr(body, field) is None:
+            raise HTTPException(status_code=400, detail=f"{field} must be a boolean")
+
+    state = _display_state(request)
+    if "mode" in fields:
+        state["mode"] = body.mode
+    if "display_text" in fields:
+        state["display_text"] = _truncate_text(body.display_text, _DISPLAY_TEXT_LIMIT) or ""
+    if "food_name" in fields:
+        state["food_name"] = _truncate_text(body.food_name, _DISPLAY_FOOD_NAME_LIMIT)
+    if "food_subtitle" in fields:
+        state["food_subtitle"] = _truncate_text(body.food_subtitle, _DISPLAY_FOOD_SUBTITLE_LIMIT)
+    if "robot_active" in fields:
+        state["robot_active"] = bool(body.robot_active)
+    if "avatar_greeting" in fields:
+        state["avatar_greeting"] = bool(body.avatar_greeting)
+    if "avatar_system_speaking" in fields:
+        state["avatar_system_speaking"] = bool(body.avatar_system_speaking)
+    if "avatar_audience_speaking" in fields:
+        state["avatar_audience_speaking"] = bool(body.avatar_audience_speaking)
+    state["updated_at"] = _utc_iso()
+    return dict(state)
 
 
 @app.post("/api/v1/participants")
@@ -708,7 +835,7 @@ async def _stream_tts_text(
     if not clean_text:
         return
     mic_muted.set()
-    await websocket.send_json({"type": "mic.muted_for_tts"})
+    await websocket.send_json({"type": "mic.muted_for_tts", "text": clean_text})
     try:
         async for event in tts_client.synthesize(clean_text):
             await _forward_tts_event(websocket, event)

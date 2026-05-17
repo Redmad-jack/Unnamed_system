@@ -20,12 +20,16 @@ src/
     ├── scoring.py             # 两轴正式答案到四种食物的规则映射
     ├── service.py             # 观众流程应用服务
     ├── chat.py                # 店主话术层；闲聊可用 Claude 生成 reply_text，模板兜底
+    ├── prompt_context.py      # 读取 AI 店主运行语境，仅注入闲聊话术 prompt
     ├── voice.py               # Claude 只判断正式 answer_attempt 的 A/B/unclear
     ├── voice_provider.py      # 语音 provider / STT mode 配置
     ├── doubao/                # 豆包 ASR/TTS 二进制 WebSocket 协议与客户端
     └── interfaces/
         ├── api.py             # FastAPI app
-        └── static/index.html  # 单文件观众/工作人员界面
+        └── static/
+            ├── index.html     # 控制页：真实录音、状态推进、工作人员队列
+            ├── display.html   # 只读观众展示页
+            └── assets/        # 展示页薄膜/装饰图片
 ```
 
 ## 配置文件
@@ -43,7 +47,7 @@ config/have_some_ai/
 当前系统已经支持：
 
 1. 新建匿名观众，生成 `A001` 形式的 public code
-2. Language Gate 先问 `Hi! 你好！Would you like to continue in English or 中文`；English / en / 英文 或明显英文输入固定本次会话 `response_language=en`，中文 / Chinese / zh 或明显中文输入使用中文默认逻辑
+2. Language Gate 先问 `Hi. 你好～ Do you want to talk in 中文 or English?`；English / en / 英文 或明显英文输入固定本次会话 `response_language=en`，中文 / Chinese / zh 或明显中文输入使用中文默认逻辑
 3. Food Gate 使用 `questions.yaml` 的 13 条开场轮换；中文问“想来点吃的吗？”，English 模式问 “Want something to eat?”
 4. `NO_FOOD` 进入 `not_eating_chat`，最多闲聊 3 回合后送客并删除 transient participant，不抽正式题、不分配食物
 5. `WANT_FOOD` 后从两个正式模块各随机抽一题
@@ -61,6 +65,17 @@ config/have_some_ai/
 13. 将分配结果写入工作人员队列
 14. 工作人员将队列项更新为 `preparing` 或 `served`
 15. 导出所有 Have Some "Ai" 数据
+
+## 双屏展览模式
+
+现场运行方式是 iMac 双屏：
+
+- `/` 控制页负责所有真实操作：开始会话、麦克风、`conversation-stream`、ASR/TTS、状态推进、食物分配、数据库写入和工作人员队列。
+- `/display` 展示页只读，只负责观众可见呈现：膜后存在、AI 字幕、当前题目和最终食物结果。
+- `GET /api/v1/display-state` 返回内存级展示状态；`POST /api/v1/display-state` 只更新内存状态，不写 SQLite，不调用业务服务。
+- `/display-assets/{filename}` 只返回展示页白名单图片资产：`avatar-film-texture.png`、`avatar-film-overlay.png`、`amhand.png`。
+
+`/display` 不得请求麦克风、调用 `getUserMedia`、创建 WebSocket、启动 `conversation-stream`、提交答案、操作工作人员队列、调用 `MealService`、推进 `ConversationOrchestrator` 或触发 ASR/TTS。
 
 ## 现场主链路
 
@@ -98,6 +113,8 @@ Browser PCM s16le 16k mono
 | `ScoringEngine` | 只接收两道正式题 accepted A/B，输出四种食物之一 |
 
 `chitchat` 不是 `unclear`。闲聊、侧问、评论由店主接住，不进入 Claude judge，不写 `meal_answers`，不触发 `ScoringEngine`。Claude 可以在话术层生成 `reply_text`，但返回值只被当作可听见文本，不能决定 `stage`、`next_action`、题目、A/B 或食物。
+
+AI 店主运行语境放在 `backend/prompts/shopkeeper_runtime_context.md`，由 `prompt_context.py` 缓存读取，只注入 `ShopkeeperReplyService` 的自由闲聊 system prompt。该语境不得影响 Claude rubric、`ScoringEngine`、food assignment 或任何 `meal_*` 落库逻辑。
 
 ## 运行
 
@@ -169,9 +186,13 @@ DOUBAO_TTS_SAMPLE_RATE=24000
 主要端点：
 
 ```text
+GET  /display
+GET  /display-assets/{filename}
 GET  /health
 GET  /api/v1/config
 GET  /api/v1/voice-config
+GET  /api/v1/display-state
+POST /api/v1/display-state
 POST /api/v1/participants
 GET  /api/v1/participants
 GET  /api/v1/participants/{id}

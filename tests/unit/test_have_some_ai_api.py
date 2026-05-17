@@ -2,10 +2,13 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import inspect
 import json
+from pathlib import Path
 
 from fastapi.testclient import TestClient
 
+from have_some_ai.interfaces import api as have_some_ai_api
 from have_some_ai.conversation import ConversationOrchestrator
 from have_some_ai.doubao.asr_protocol import ASRTranscriptEvent
 from have_some_ai.doubao.tts_protocol import (
@@ -65,6 +68,360 @@ class _FakeHTTPClient:
             "headers": headers,
             "request_json": json,
         })
+
+
+def test_display_page_returns_html(monkeypatch, tmp_path):
+    monkeypatch.setenv("HAVE_SOME_AI_DB_PATH", str(tmp_path / "meal.db"))
+
+    with TestClient(app) as client:
+        response = client.get("/display")
+
+    assert response.status_code == 200
+    assert "text/html" in response.headers["content-type"]
+    assert 'id="stage"' in response.text
+    assert 'id="promptCueCard"' in response.text
+
+
+def test_display_asset_serves_avatar_film_texture(monkeypatch, tmp_path):
+    monkeypatch.setenv("HAVE_SOME_AI_DB_PATH", str(tmp_path / "meal.db"))
+
+    with TestClient(app) as client:
+        response = client.get("/display-assets/avatar-film-texture.png")
+        overlay = client.get("/display-assets/avatar-film-overlay.png")
+        prompt_decoration = client.get("/display-assets/amhand.png")
+        missing = client.get("/display-assets/missing.png")
+
+    assert response.status_code == 200
+    assert "image/png" in response.headers["content-type"]
+    assert response.content.startswith(b"\x89PNG\r\n\x1a\n")
+    assert overlay.status_code == 200
+    assert "image/png" in overlay.headers["content-type"]
+    assert overlay.content.startswith(b"\x89PNG\r\n\x1a\n")
+    assert prompt_decoration.status_code == 200
+    assert "image/png" in prompt_decoration.headers["content-type"]
+    assert prompt_decoration.content.startswith(b"\x89PNG\r\n\x1a\n")
+    assert missing.status_code == 404
+
+
+def test_display_state_initial_idle(monkeypatch, tmp_path):
+    monkeypatch.setenv("HAVE_SOME_AI_DB_PATH", str(tmp_path / "meal.db"))
+
+    with TestClient(app) as client:
+        response = client.get("/api/v1/display-state")
+
+    payload = response.json()
+    assert response.status_code == 200
+    assert payload["mode"] == "idle"
+    assert payload["display_text"] == ""
+    assert payload["food_name"] is None
+    assert payload["food_subtitle"] is None
+    assert payload["robot_active"] is False
+    assert payload["avatar_greeting"] is False
+    assert payload["avatar_system_speaking"] is False
+    assert payload["avatar_audience_speaking"] is False
+    assert isinstance(payload["updated_at"], str)
+
+
+def test_display_state_post_updates_memory_state(monkeypatch, tmp_path):
+    monkeypatch.setenv("HAVE_SOME_AI_DB_PATH", str(tmp_path / "meal.db"))
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/v1/display-state",
+            json={
+                "mode": "robot_speaking",
+                "display_text": "你好。",
+                "robot_active": True,
+                "avatar_greeting": True,
+                "avatar_system_speaking": True,
+                "avatar_audience_speaking": False,
+            },
+        )
+        after = client.get("/api/v1/display-state")
+
+    payload = response.json()
+    assert response.status_code == 200
+    assert payload["mode"] == "robot_speaking"
+    assert payload["display_text"] == "你好。"
+    assert payload["robot_active"] is True
+    assert payload["avatar_greeting"] is True
+    assert payload["avatar_system_speaking"] is True
+    assert payload["avatar_audience_speaking"] is False
+    assert after.json() == payload
+
+
+def test_display_state_rejects_invalid_mode_without_polluting_state(monkeypatch, tmp_path):
+    monkeypatch.setenv("HAVE_SOME_AI_DB_PATH", str(tmp_path / "meal.db"))
+
+    with TestClient(app) as client:
+        before = client.get("/api/v1/display-state").json()
+        response = client.post("/api/v1/display-state", json={"mode": "working"})
+        after = client.get("/api/v1/display-state").json()
+
+    assert response.status_code == 400
+    assert after == before
+
+
+def test_display_state_requires_boolean_robot_active(monkeypatch, tmp_path):
+    monkeypatch.setenv("HAVE_SOME_AI_DB_PATH", str(tmp_path / "meal.db"))
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/v1/display-state",
+            json={"robot_active": "true"},
+        )
+
+    assert response.status_code == 422
+
+
+def test_display_state_truncates_long_display_text(monkeypatch, tmp_path):
+    monkeypatch.setenv("HAVE_SOME_AI_DB_PATH", str(tmp_path / "meal.db"))
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/v1/display-state",
+            json={"display_text": "a" * 900},
+        )
+
+    assert response.status_code == 200
+    assert response.json()["display_text"] == "a" * 800
+
+
+def test_display_state_post_does_not_write_business_database(monkeypatch, tmp_path):
+    monkeypatch.setenv("HAVE_SOME_AI_DB_PATH", str(tmp_path / "meal.db"))
+
+    with TestClient(app) as client:
+        before = client.get("/api/v1/export").json()
+        response = client.post(
+            "/api/v1/display-state",
+            json={
+                "mode": "result",
+                "display_text": "请取餐。",
+                "food_name": "Ai Miao Soup",
+                "food_subtitle": "今天的结果。",
+                "robot_active": False,
+            },
+        )
+        after = client.get("/api/v1/export").json()
+
+    assert response.status_code == 200
+    assert after == before
+
+
+def test_display_html_does_not_include_control_or_voice_entrypoints():
+    source = Path("src/have_some_ai/interfaces/static/display.html").read_text()
+
+    forbidden = [
+        "getUserMedia",
+        "navigator.mediaDevices",
+        "conversation-stream",
+        "WebSocket",
+        "PATCH",
+        "staff-queue",
+        "queueStatus",
+        "/api/v1/participants",
+        "conversation-turn",
+        "/answers",
+        "/assign",
+        "/observations",
+        "/speech",
+        "voice-audio",
+        "conversation-audio",
+        "ASR",
+        "TTS",
+        "麦克风",
+        "录音中",
+        "debug",
+        "database",
+        "queue",
+        "participant id",
+        "participant label",
+        "工作人员",
+        "管理员",
+        "<button",
+    ]
+    for item in forbidden:
+        assert item not in source
+
+
+def test_display_state_post_does_not_call_business_or_voice_services():
+    source = inspect.getsource(have_some_ai_api.update_display_state)
+
+    forbidden = [
+        "_service(",
+        "_conversation(",
+        "_file_stt(",
+        "_tts(",
+        "conn.execute",
+        "sqlite",
+        "ConversationOrchestrator",
+        "MealService",
+        "assign_food",
+        "conversation_stream",
+        "staff_queue",
+        "Doubao",
+        "OpenAI",
+    ]
+    for item in forbidden:
+        assert item not in source
+
+
+def test_display_html_uses_prompt_cue_card_component():
+    source = Path("src/have_some_ai/interfaces/static/display.html").read_text()
+
+    assert "function PromptCueCard" in source
+    assert 'class="prompt-cue-card"' in source
+    assert 'id="promptCueDecoration"' in source
+    assert "/display-assets/amhand.png" in source
+    assert "showDecoration: true" in source
+    assert "decorationVariant: 'corner'" in source
+    assert 'data-decoration-variant="corner"' in source
+    assert 'class="options-line"' in source
+    assert ".prompt-cue-card[hidden]" in source
+    assert "root.hidden = true" in source
+    assert "root.hidden = false" in source
+    assert "document.createElement('p')" in source
+    assert "prompt-cue-card-enter" in source
+
+
+def test_display_asset_whitelist_includes_prompt_decoration():
+    source = inspect.getsource(have_some_ai_api.display_asset)
+
+    assert '"amhand.png"' in source
+
+
+def test_control_page_display_state_sync_uses_single_helper():
+    source = Path("src/have_some_ai/interfaces/static/index.html").read_text()
+
+    assert "async function updateDisplayState(payload)" in source
+    assert source.count("fetch('/api/v1/display-state'") == 1
+    assert "display state sync failed" in source
+    assert "function createDisplayAvatarStateAdapter" in source
+    assert "function withDisplayAvatarState" in source
+    assert "function resolveDisplayAvatarState" in source
+    assert "isGreetingLanguageSelect" in source
+    assert "isSystemSpeaking" in source
+    assert "isAudienceSpeaking" in source
+    assert "DISPLAY_AVATAR_DEBUG" in source
+    assert "avatarDebug" in source
+    assert "syncDisplayRobotSpeaking" in source
+    assert "syncDisplayResult" in source
+    assert "function displayChoiceText" in source
+    assert "function syncDisplayTtsStart" in source
+    assert "function shouldShowQuestionDuringTts" in source
+    assert "deferReplyDisplay: useDoubaoStream" in source
+    assert "DISPLAY_SPEECH_FALLBACK_MS" in source
+    assert "setDisplayAudienceSpeaking(true)" in source
+    assert "avatar_greeting" in source
+    assert "avatar_system_speaking" in source
+    assert "avatar_audience_speaking" in source
+    assert ".join('\\n')" in source
+    assert "const DISPLAY_WAKE_TEXT = '按按钮叫醒我\\nPress the button to wake me'" in source
+    assert "function syncDisplayStandby()" in source
+    assert "function scheduleDisplayStandby" in source
+    assert "syncDisplayStandby();" in source
+    assert "syncDisplayIdle();" in source
+    assert "scheduleDisplayStandby();" in source
+
+
+def test_display_html_has_avatar_animation_state_controller():
+    source = Path("src/have_some_ai/interfaces/static/display.html").read_text()
+    avatar_stage = source[
+        source.index('id="avatarStage"') : source.index('<section class="text-plane"')
+    ]
+
+    assert "AVATAR_STATES" in source
+    assert "idle_breathing" in source
+    assert "greeting_wave" in source
+    assert "system_speaking" in source
+    assert "audience_speaking" in source
+    assert 'class="silhouette-stage avatar-state-idle-breathing"' in source
+    assert 'data-state="idle_breathing"' in source
+    assert "function createSilhouetteStage" in source
+    assert "createAvatarAnimationController" in source
+    assert "--film-opacity" in source
+    assert "--film-blur" in source
+    assert "--film-noise-opacity" in source
+    assert "--film-texture-opacity" in source
+    assert "--film-texture-overlay-opacity" in source
+    assert "--texture-tremble-x" in source
+    assert "backdrop-filter" in source
+    assert "@supports not" in source
+    for part in [
+        "avatar-head",
+        "avatar-torso",
+        "avatar-left-upper-arm",
+        "avatar-left-forearm",
+        "avatar-left-hand",
+        "avatar-right-upper-arm",
+        "avatar-right-forearm",
+        "avatar-right-hand",
+        "avatar-mouth-shadow",
+        "avatar-mouth-opening",
+        "membrane-texture",
+        "membrane-texture-overlay",
+        "membrane-dent-left",
+        "membrane-dent-right",
+        "membrane-strain-lines-left",
+        "membrane-strain-lines-right",
+    ]:
+        assert part in avatar_stage
+    assert "avatar-greeting-hand-wave" in source
+    assert "avatar-greeting-film-wave" in source
+    assert "avatar-tear-left-hand" in source
+    assert "avatar-presence-breathe" in source
+    assert "avatar-torso-breathe" in source
+    assert "avatar-head-breathe" in source
+    assert '.silhouette-stage[data-state="audience_speaking"] .avatar-mouth-opening' in source
+    assert "--presence-breath-duration" in source
+    assert "animationend" in source
+    assert "greetingReplay" in source
+    assert "--mouth-open" in source
+    assert "function startMouthMotion" in source
+    assert "function stopMouthMotion" in source
+    assert "window.setInterval(setMouthFrame, reducedMotion?.matches === true ? 320 : 160)" in source
+    assert "--film-press" in source
+    assert "--left-dent-pressure" in source
+    assert "function startFilmPressure" in source
+    assert "function stopFilmPressure" in source
+    assert "function setFilmPressureFrame" in source
+    assert "textureTrembleX" in source
+    assert "clearTimeout(pressureTimer)" in source
+    assert "@property --silhouette-scale" in source
+    assert "contain: layout paint" in source
+    assert "will-change: transform, opacity" in source
+    assert "top 320ms cubic-bezier" in source
+    assert "top 280ms cubic-bezier" in source
+    assert "scheduleFilmPressure(reducedMotion?.matches === true ? 520 : 220 + Math.random() * 180)" in source
+    assert "root.classList.remove(...classes)" in source
+    assert source.index("stopMouthMotion();") < source.index("root.classList.remove(...classes)")
+    assert source.index("stopFilmPressure();") < source.index("root.classList.remove(...classes)")
+    assert "function startRefreshLoop" in source
+    assert "function stopRefreshLoop" in source
+    assert "function pauseAvatarRuntime" in source
+    assert "visibilitychange" in source
+    assert "pagehide" in source
+    assert "pageshow" in source
+    assert "avatarController.destroy()" in source
+    assert "lastGreetingInput = false" in source
+    assert "lastGreetingKey = null" in source
+    assert "0% { transform: translate3d(2.8%, 3.8%, 0) rotate(-16deg); }" in source
+    assert "function createAvatarDevelopmentPanel" in source
+    assert "function isAvatarDevelopmentPanelAllowed" in source
+    assert "function setManualAvatarState" in source
+    assert "avatarPanel" in source
+    assert "allowedHosts" in source
+    assert "document.createElement('button')" in source
+    assert "latestAvatarBusinessInputs" in source
+    assert "latestAvatarAppliedInputs" in source
+    assert "Math.random" in source
+    assert "clearInterval(mouthTimer)" in source
+    assert avatar_stage.index("silhouette-glow") < avatar_stage.index("silhouette-body")
+    assert avatar_stage.index("silhouette-body") < avatar_stage.index("membrane-main")
+    assert avatar_stage.index("membrane-main") < avatar_stage.index("membrane-texture")
+    assert avatar_stage.index("membrane-texture") < avatar_stage.index("membrane-texture-overlay")
+    assert avatar_stage.index("membrane-texture-overlay") < avatar_stage.index("membrane-surface")
+    assert avatar_stage.index("membrane-surface") < avatar_stage.index("membrane-stress")
 
 
 def test_voice_config_keeps_file_stt_fallback(monkeypatch, tmp_path):
@@ -627,7 +984,7 @@ def test_conversation_turn_can_return_reply_audio(monkeypatch, tmp_path):
     assert payload["reply_audio_mime_type"] == "audio/mpeg"
     assert payload["reply_audio_provider"] == "openai_compatible"
     assert len(speech_posts) == 1
-    assert "Would you like to continue in English or 中文" in speech_posts[0]["json"]["input"]
+    assert "Hi. 你好～ Do you want to talk in 中文 or English?" in speech_posts[0]["json"]["input"]
 
 
 def test_conversation_turn_doubao_mode_never_uses_openai_tts(monkeypatch, tmp_path):
@@ -974,6 +1331,7 @@ def test_conversation_stream_uses_doubao_asr_tts_and_existing_claude_judge(
     assert conversation["conversation"]["stage"] == "formal_question_2"
     assert judge == {"type": "judge", "label": "B", "confidence": 0.93}
     assert muted["type"] == "mic.muted_for_tts"
+    assert muted["text"] == tts.spoken_texts[0]
     assert tts_audio == b"fake-pcm-24k"
     assert resumed["type"] == "mic.resumed_after_tts"
     assert asr.audio_chunks == [b"x" * 6400]
@@ -1008,13 +1366,14 @@ def test_conversation_stream_tts_only_uses_task_request_path(monkeypatch, tmp_pa
             websocket.send_json({"type": "session.start", "prepare_turn": False})
             websocket.receive_json()
             websocket.send_json({"type": "tts.speak", "text": "想来点吃的吗？"})
-            _receive_json_type(websocket, "mic.muted_for_tts")
+            muted = _receive_json_type(websocket, "mic.muted_for_tts")
             websocket.receive_json()
             audio = websocket.receive_bytes()
             _receive_json_type(websocket, "mic.resumed_after_tts")
             websocket.send_json({"type": "session.cancel"})
 
     tts = _FakeTTSClient.instances[0]
+    assert muted["text"] == "想来点吃的吗？"
     assert audio == b"fake-pcm-24k"
     assert tts.spoken_texts == ["想来点吃的吗？"]
 
@@ -1040,7 +1399,7 @@ def test_conversation_stream_barge_in_cancels_tts_session(monkeypatch, tmp_path)
             websocket.send_json({"type": "session.start", "prepare_turn": False})
             websocket.receive_json()
             websocket.send_json({"type": "tts.speak", "text": "很长的一句话"})
-            _receive_json_type(websocket, "mic.muted_for_tts")
+            muted = _receive_json_type(websocket, "mic.muted_for_tts")
             websocket.send_json({"type": "barge_in"})
             canceling = _receive_json_type(websocket, "tts.canceling")
             canceled = _receive_json_event(websocket, "tts.event", TTS_SESSION_CANCELED)
@@ -1048,6 +1407,7 @@ def test_conversation_stream_barge_in_cancels_tts_session(monkeypatch, tmp_path)
             websocket.send_json({"type": "session.cancel"})
 
     tts = _SlowTTSClient.instances[0]
+    assert muted["text"] == "很长的一句话"
     assert canceling["type"] == "tts.canceling"
     assert canceled["event"] == TTS_SESSION_CANCELED
     assert resumed["type"] == "mic.resumed_after_tts"
@@ -1108,6 +1468,7 @@ def test_conversation_stream_tts_error_keeps_asr_mic_path_open(
 
     asr = _FakeASRClient.instances[0]
     assert muted["type"] == "mic.muted_for_tts"
+    assert muted["text"] == "会失败的一句话"
     assert error["provider"] == "doubao_tts"
     assert "DOUBAO_TTS_API_KEY" in error["message"]
     assert resumed["type"] == "mic.resumed_after_tts"

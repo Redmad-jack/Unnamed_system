@@ -122,3 +122,79 @@ Keep this file compact. Only keep rules here that are useful in most sessions.
 - User-facing conversation: Chinese unless the user asks otherwise
 - Project documentation: Chinese by default, with technical terms kept in English where clearer
 - YAML `note` fields: English
+
+---
+
+## Have Some Ai 双屏展览模式约束
+
+本项目最终现场运行方式为 iMac 双屏展览模式：iMac 主屏显示观众展示页 `/display`；iPad 仅作为 iMac 的 Sidecar 拓展屏，显示控制页 `/` 或 `/control`。两个页面本质上都运行在 iMac 浏览器中。录音设备使用 iMac 当前选择的麦克风或外接麦克风，不使用 iPad 麦克风。
+
+### `/display` 展示页只读边界
+
+`/display` 必须是只读页面，只负责观众可见的展览呈现。它不得：
+
+- 请求麦克风或调用 `getUserMedia`。
+- 启动 `conversation-stream` 或创建真实语音 WebSocket。
+- 写数据库、提交答案、操作工作人员队列。
+- 推进真实对话状态机。
+- 调用 `MealService` 的真实分配逻辑。
+- 触发 ASR 或 TTS。
+
+### `/` 或 `/control` 控制页职责
+
+所有真实操作继续只由控制页负责，包括：
+
+- 开始会话与麦克风录音。
+- `conversation-stream`、ASR、TTS。
+- `ConversationOrchestrator` 状态推进。
+- 食物分配、数据库写入、工作人员队列操作。
+
+### 核心业务逻辑保护
+
+除非任务明确要求，不要修改：
+
+- `ConversationOrchestrator`。
+- `MealService` 的分配算法。
+- 数据库结构。
+- 语音 provider。
+- 真实会话推进逻辑。
+
+### AI 店主运行语境边界
+
+- 本项目是艺术装置，不是普通点餐系统。
+- AI 店主不是普通客服、点餐机或百科问答机器人。
+- 店主运行语境只能影响自然语言回复，不得影响 A/B 判题、`ScoringEngine` 或 food assignment。
+- 不得把自由聊天写入 `meal_answers`、`meal_voice_answer_interpretations`、`meal_assignments`。
+- 只有正式问题回答才进入 A/B rubric 和 `ScoringEngine`。
+- 豆包 / realtime 语音模型只能作为 ASR/TTS 或低延迟语音通道，不可接管食物分配、A/B 判断或店主核心逻辑。
+- Claude rubric 只做 A/B/unclear 映射。
+- 食物结果必须来自受控规则。
+- 任何模型不得直接生成最终食物名称作为权威结果。
+
+### 前端实现边界
+
+- 不要引入复杂前端框架：不要引入 React、Vue、Node 新服务或外部 CDN。
+- 优先使用现有 FastAPI + 静态 HTML/CSS/JS。
+
+### `/display` 视觉方向
+
+- 整体是淡淡的冷灰绿色磨砂薄膜。
+- 背后有一个模糊、看不清的机器人 / 存在。
+- AI 说话时，这个存在像在膜后挣扎着要冒出来。
+- 底部中央只有一个核心文本区。
+- 文本区只显示：AI 字幕、当前题目、最终食物结果。
+- 不显示其他系统信息。
+
+### `/display` 禁止显示的信息
+
+展示页不得显示以下词或概念：录音中、麦克风、ASR、TTS、WebSocket、conversation-stream、listening、transcribing、thinking、queue、participant id、debug、API、database、工作人员按钮、管理员面板、状态面板、流程图。
+
+### 修改后的验证要求
+
+每次修改后必须尽量运行可用的测试或手动检查命令。若没有合适的自动测试，至少说明如何手动验证：
+
+- `/` 正常打开。
+- `/display` 正常打开。
+- 展示页不会请求麦克风。
+- 展示页不会启动 `conversation-stream`。
+- 展示页不会写数据库。

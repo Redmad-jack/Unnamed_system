@@ -150,9 +150,12 @@ websockets==16.0
 | 作品 | 文件 |
 | --- | --- |
 | The "Stranger" | `src/conscious_entity/interfaces/static/index.html` |
-| Have Some "Ai" | `src/have_some_ai/interfaces/static/index.html` |
+| Have Some "Ai" 控制页 | `src/have_some_ai/interfaces/static/index.html` |
+| Have Some "Ai" 只读展示页 | `src/have_some_ai/interfaces/static/display.html` + `src/have_some_ai/interfaces/static/assets/` |
 
 选型理由：展览环境下零依赖、完全可控、无需 Node.js 构建链，2s 轮询 + 原生 fetch 满足当前需求。
+
+Have Some "Ai" 双屏模式中，`/` 控制页承担真实录音、ASR/TTS、状态机推进和工作人员队列；`/display` 展示页只轮询内存级 `/api/v1/display-state`，不得请求麦克风、创建语音 WebSocket、写数据库或推进业务流程。
 
 ---
 
@@ -166,6 +169,8 @@ websockets==16.0
 | OpenAI-compatible TTS | 非豆包 provider 的店主回复 fallback，默认模型 `gpt-4o-mini-tts` |
 | 火山引擎豆包 ASR 2.0 + TTS 2.0 | Have Some "Ai" 后端 WebSocket 分离接入：ASR 使用 `bigmodel_async` 常驻 session，只消费 `definite=true` 分句；TTS 使用 V3 双向流式 `tts/bidirection`，固定 Tina 老师 2.0 音色，输出 PCM 24k；正式 A/B/unclear 判题仍由 Claude rubric judge 执行，chitchat 可由 Claude 话术层生成 `reply_text` |
 | sentence-transformers | Conscious Entity 语义记忆检索（Embedding），当前仍为 deferred，未安装为项目依赖 |
+
+Have Some "Ai" 的 AI 店主运行语境保存在 `backend/prompts/shopkeeper_runtime_context.md`，只作为 `ShopkeeperReplyService` 自由闲聊 system prompt 的附加上下文，不进入正式 A/B rubric、`ScoringEngine`、food assignment 或数据库写入决策。
 
 Have Some "Ai" 豆包音频接口：
 

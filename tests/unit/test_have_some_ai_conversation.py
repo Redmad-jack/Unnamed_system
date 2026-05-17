@@ -60,7 +60,7 @@ def test_new_participant_first_turn_asks_language_gate_without_draws():
         assert result["total_questions"] == 2
         assert result["current_question_id"] is None
         assert result["assignment"] is None
-        assert "Would you like to continue in English or 中文" in result["reply_text"]
+        assert "Hi. 你好～ Do you want to talk in 中文 or English?" in result["reply_text"]
         assert len(detail["draws"]) == 0
         assert len(detail["answers"]) == 0
     finally:
@@ -408,6 +408,55 @@ def test_formal_chitchat_is_routed_before_judge_and_limited():
         conn.close()
 
 
+def test_unrelated_formal_speech_enters_chitchat_without_rubric_and_is_limited():
+    conn, service, orchestrator, repo = _conversation_stack([])
+    try:
+        participant = service.create_participant()
+        question = _enter_food_questions(orchestrator, participant.id)
+
+        first = orchestrator.handle_turn(
+            participant.id,
+            "我今天刚从学校过来，外面还在下雨",
+        )
+        second = orchestrator.handle_turn(participant.id, "旁边那个机器声音有点怪")
+        third = orchestrator.handle_turn(participant.id, "我朋友刚才还在笑这个项目")
+
+        assert first["stage"] == "formal_question_1"
+        assert first["interpretation"] == {"route": "chitchat", "count": 1}
+        assert first["formal_chitchat_count"] == 1
+        assert second["formal_chitchat_count"] == 2
+        assert third["formal_chitchat_count"] == 3
+        assert "回到这题" in third["reply_text"]
+        assert third["current_question_id"] == question["current_question_id"]
+        assert repo.get_answers(participant.id) == []
+        assert service._rubric_interpreter.calls == []
+    finally:
+        conn.close()
+
+
+@pytest.mark.parametrize(
+    ("transcript", "rng_seed", "rubric"),
+    [
+        ("我选 B", 7, RubricInterpretation("B", 0.93, "清楚选择 B。", "Clear B.", "zh", {})),
+        ("我通常不关门", 2, RubricInterpretation("B", 0.9, "清楚。", "Clear.", "zh", {})),
+        ("都行", 7, RubricInterpretation("B", 0.4, "不清楚。", "Unclear.", "zh", {})),
+        ("不知道", 7, RubricInterpretation("A", 0.4, "不清楚。", "Unclear.", "zh", {})),
+    ],
+)
+def test_formal_answer_like_speech_still_uses_rubric(transcript, rng_seed, rubric):
+    conn, service, orchestrator, _repo = _conversation_stack([rubric], rng_seed=rng_seed)
+    try:
+        participant = service.create_participant()
+        _enter_food_questions(orchestrator, participant.id)
+
+        result = orchestrator.handle_turn(participant.id, transcript)
+
+        assert result["interpretation"] != {"route": "chitchat", "count": 1}
+        assert service._rubric_interpreter.calls
+    finally:
+        conn.close()
+
+
 def test_orchestrator_decides_flow_reply_service_only_supplies_text():
     conn, service, _orchestrator, _repo = _conversation_stack([])
     orchestrator = ConversationOrchestrator(service, reply_service=FixedReplyService())
@@ -443,13 +492,13 @@ def test_conversation_turn_api_returns_language_gate(monkeypatch, tmp_path):
     assert payload["assignment"] is None
 
 
-def _conversation_stack(results):
+def _conversation_stack(results, *, rng_seed=7):
     conn = sqlite3.connect(":memory:")
     conn.row_factory = sqlite3.Row
     run_migrations(conn)
 
     configs = load_have_some_ai_config(Path("config/have_some_ai"))
-    bank = QuestionBank(configs["questions"], rng=random.Random(7))
+    bank = QuestionBank(configs["questions"], rng=random.Random(rng_seed))
     repo = MealRepository(conn)
     service = MealService(
         repo,

@@ -4,6 +4,8 @@ import json
 import logging
 from typing import Any, Protocol
 
+from have_some_ai.prompt_context import shopkeeper_runtime_context
+
 
 logger = logging.getLogger(__name__)
 
@@ -102,7 +104,7 @@ class ShopkeeperReplyService:
             return None
         try:
             text = client.complete(
-                system=_FREEFORM_CHAT_SYSTEM_PROMPT,
+                system=_freeform_chat_system_prompt(),
                 messages=[{
                     "role": "user",
                     "content": self.build_prompt(context),
@@ -289,6 +291,17 @@ Hard boundaries:
 """
 
 
+def _freeform_chat_system_prompt() -> str:
+    runtime_context = shopkeeper_runtime_context()
+    if not runtime_context:
+        return _FREEFORM_CHAT_SYSTEM_PROMPT
+    return (
+        f"{_FREEFORM_CHAT_SYSTEM_PROMPT.rstrip()}\n\n"
+        "Shopkeeper runtime context:\n"
+        f"{runtime_context}"
+    )
+
+
 def _with_question(prefix: str, question_text: str | None) -> str:
     if not question_text:
         return prefix
@@ -296,10 +309,7 @@ def _with_question(prefix: str, question_text: str | None) -> str:
 
 
 def _language_gate_prompt() -> str:
-    return (
-        "Hi! 你好！\n"
-        "Would you like to continue in English or 中文"
-    )
+    return "Hi. 你好～ Do you want to talk in 中文 or English?"
 
 
 def _response_language(context: dict[str, Any]) -> str:

@@ -391,6 +391,11 @@ let doubaoLastMicRms = 0;
 let doubaoPlaybackSpeechFrames = 0;
 let doubaoMicMutedForTts = false;
 let doubaoOutputSampleRate = 24000;
+let currentTtsDisplayText = '';
+let displaySpeechFallbackTimer = null;
+let displayAudienceSpeaking = false;
+let displayAudienceSpeakingTimer = null;
+let displayStandbyTimer = null;
 
 const VAD = {
   calibrationMs: 600,
@@ -408,12 +413,20 @@ const DOUBAO_STREAM = {
   interruptResetMs: 4500,
 };
 
+const DISPLAY_SPEECH_FALLBACK_MS = 20000;
+const DISPLAY_AUDIENCE_SPEECH_HOLD_MS = 1200;
+const DISPLAY_RESULT_HOLD_MS = 8000;
+const DISPLAY_WAKE_TEXT = '按按钮叫醒我\nPress the button to wake me';
+const DISPLAY_AVATAR_DEBUG = new URLSearchParams(window.location.search).has('avatarDebug');
+
 const foodZh = {
   soup: '汤',
   salad: '沙拉',
   aimiao_soup: '艾苗汤',
   aimiao_salad: '艾苗沙拉',
 };
+
+const displayAvatarAdapter = createDisplayAvatarStateAdapter();
 
 async function api(path, options = {}) {
   const response = await fetch(path, {
@@ -425,6 +438,367 @@ async function api(path, options = {}) {
     throw new Error(body.detail || response.statusText);
   }
   return response.json();
+}
+
+const DISPLAY_FIELDS = [
+  'mode',
+  'display_text',
+  'food_name',
+  'food_subtitle',
+  'robot_active',
+  'avatar_greeting',
+  'avatar_system_speaking',
+  'avatar_audience_speaking',
+];
+const DISPLAY_FORBIDDEN_TEXT = [
+  '录音中',
+  '麦克风',
+  'ASR',
+  'TTS',
+  'WebSocket',
+  'conversation-stream',
+  'listening',
+  'transcribing',
+  'thinking',
+  'debug',
+  'database',
+  'queue',
+  'participant id',
+];
+
+async function updateDisplayState(payload) {
+  const body = {};
+  for (const field of DISPLAY_FIELDS) {
+    if (Object.prototype.hasOwnProperty.call(payload, field)) {
+      body[field] = payload[field];
+    }
+  }
+  if (Object.prototype.hasOwnProperty.call(body, 'display_text')) {
+    body.display_text = displaySafeText(body.display_text);
+  }
+  if (Object.prototype.hasOwnProperty.call(body, 'food_name')) {
+    body.food_name = displaySafeNullableText(body.food_name);
+  }
+  if (Object.prototype.hasOwnProperty.call(body, 'food_subtitle')) {
+    body.food_subtitle = displaySafeNullableText(body.food_subtitle);
+  }
+  try {
+    const response = await fetch('/api/v1/display-state', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    if (!response.ok) throw new Error(response.statusText);
+  } catch (error) {
+    console.debug('display state sync failed', {
+      reason: String(error?.message || error),
+    });
+  }
+}
+
+function createDisplayAvatarStateAdapter() {
+  let lastResolvedState = '';
+
+  function withDisplayAvatarState(payload, signals = {}) {
+    const isGreetingLanguageSelect = signals.isGreetingLanguageSelect ?? isGreetingDisplayActive();
+    const isSystemSpeaking = signals.isSystemSpeaking ?? (
+      payload.robot_active === true ||
+      payload.mode === 'robot_speaking'
+    );
+    const isAudienceSpeaking = signals.isAudienceSpeaking ?? displayAudienceSpeaking;
+    const avatarSignals = {
+      avatar_greeting: isGreetingLanguageSelect,
+      avatar_system_speaking: isSystemSpeaking,
+      avatar_audience_speaking: isAudienceSpeaking && !isSystemSpeaking,
+    };
+    const resolvedState = resolveDisplayAvatarState(avatarSignals);
+    if (DISPLAY_AVATAR_DEBUG && resolvedState !== lastResolvedState) {
+      console.debug('display avatar state', {
+        state: resolvedState,
+        source: signals.source || 'display_sync',
+        isGreetingLanguageSelect,
+        isSystemSpeaking,
+        isAudienceSpeaking,
+      });
+    }
+    lastResolvedState = resolvedState;
+    return { ...payload, ...avatarSignals };
+  }
+
+  return { withDisplayAvatarState };
+}
+
+function resolveDisplayAvatarState(signals) {
+  if (signals.avatar_greeting) return 'greeting_wave';
+  if (signals.avatar_system_speaking) return 'system_speaking';
+  if (signals.avatar_audience_speaking) return 'audience_speaking';
+  return 'idle_breathing';
+}
+
+function withDisplayAvatarState(payload, signals = {}) {
+  return displayAvatarAdapter.withDisplayAvatarState(payload, signals);
+}
+
+function displaySafeText(value) {
+  const text = String(value ?? '').trim();
+  if (!text) return '';
+  return DISPLAY_FORBIDDEN_TEXT.some(term => text.toLowerCase().includes(term.toLowerCase()))
+    ? ''
+    : text;
+}
+
+function displaySafeNullableText(value) {
+  if (value === null || value === undefined) return null;
+  const text = displaySafeText(value);
+  return text || null;
+}
+
+function clearDisplayStandbyTimer() {
+  if (displayStandbyTimer) {
+    clearTimeout(displayStandbyTimer);
+    displayStandbyTimer = null;
+  }
+}
+
+function syncDisplayStandby() {
+  clearDisplaySpeechFallback();
+  clearDisplayAudienceSpeaking();
+  clearDisplayStandbyTimer();
+  currentTtsDisplayText = '';
+  void updateDisplayState(withDisplayAvatarState({
+    mode: 'idle',
+    display_text: DISPLAY_WAKE_TEXT,
+    food_name: null,
+    food_subtitle: null,
+    robot_active: false,
+  }, {
+    source: 'standby',
+    isGreetingLanguageSelect: false,
+    isSystemSpeaking: false,
+    isAudienceSpeaking: false,
+  }));
+}
+
+function scheduleDisplayStandby(delayMs = DISPLAY_RESULT_HOLD_MS) {
+  clearDisplayStandbyTimer();
+  displayStandbyTimer = window.setTimeout(syncDisplayStandby, delayMs);
+}
+
+function syncDisplayIdle() {
+  clearDisplaySpeechFallback();
+  clearDisplayAudienceSpeaking();
+  clearDisplayStandbyTimer();
+  currentTtsDisplayText = '';
+  void updateDisplayState(withDisplayAvatarState({
+    mode: 'idle',
+    display_text: '',
+    food_name: null,
+    food_subtitle: null,
+    robot_active: false,
+  }, {
+    source: 'idle',
+    isGreetingLanguageSelect: false,
+    isSystemSpeaking: false,
+    isAudienceSpeaking: false,
+  }));
+}
+
+function syncDisplayQuestion(robotActive = false) {
+  clearDisplayStandbyTimer();
+  const questionText = currentDisplayQuestionText();
+  if (!questionText) {
+    syncDisplayIdle();
+    return;
+  }
+  void updateDisplayState(withDisplayAvatarState({
+    mode: 'question',
+    display_text: questionText,
+    food_name: null,
+    food_subtitle: null,
+    robot_active: robotActive,
+  }, {
+    source: robotActive ? 'question_speech' : 'question',
+    isGreetingLanguageSelect: isGreetingDisplayActive(),
+    isSystemSpeaking: robotActive,
+    isAudienceSpeaking: displayAudienceSpeaking,
+  }));
+}
+
+function syncDisplayRobotSpeaking(text) {
+  clearDisplayStandbyTimer();
+  const displayText = displaySafeText(text) || currentDisplayQuestionText() || '';
+  void updateDisplayState(withDisplayAvatarState({
+    mode: 'robot_speaking',
+    display_text: displayText,
+    food_name: null,
+    food_subtitle: null,
+    robot_active: true,
+  }, {
+    source: 'system_speaking',
+    isGreetingLanguageSelect: isGreetingDisplayActive(),
+    isSystemSpeaking: true,
+    isAudienceSpeaking: false,
+  }));
+}
+
+function syncDisplayAfterSpeech() {
+  clearDisplaySpeechFallback();
+  currentTtsDisplayText = '';
+  if (conversationState?.assignment) {
+    syncDisplayResult(conversationState.assignment);
+    return;
+  }
+  syncDisplayQuestion();
+}
+
+function syncDisplayResult(assignment) {
+  if (!assignment) return;
+  clearDisplayStandbyTimer();
+  const language = selectedResponseLanguage();
+  const zhLabel = foodZh[assignment.food_code] || '';
+  const foodName = language === 'en'
+    ? assignment.food_label
+    : (zhLabel || assignment.food_label);
+  const foodSubtitle = language === 'en'
+    ? (zhLabel || null)
+    : (assignment.food_label || null);
+  void updateDisplayState(withDisplayAvatarState({
+    mode: 'result',
+    display_text: language === 'en' ? "Today's food is ready" : '今日食物已生成',
+    food_name: foodName,
+    food_subtitle: foodSubtitle,
+    robot_active: false,
+  }, {
+    source: 'result',
+    isGreetingLanguageSelect: false,
+    isSystemSpeaking: false,
+    isAudienceSpeaking: false,
+  }));
+  scheduleDisplayStandby();
+}
+
+function syncDisplayError() {
+  clearDisplaySpeechFallback();
+  clearDisplayStandbyTimer();
+  currentTtsDisplayText = '';
+  void updateDisplayState(withDisplayAvatarState({
+    mode: 'error',
+    display_text: '暂时无法生成结果',
+    food_name: null,
+    food_subtitle: null,
+    robot_active: false,
+  }, {
+    source: 'error',
+    isGreetingLanguageSelect: false,
+    isSystemSpeaking: false,
+    isAudienceSpeaking: false,
+  }));
+}
+
+function isGreetingDisplayActive() {
+  return conversationState?.stage === 'language_gate';
+}
+
+function currentDisplayQuestionText() {
+  if (conversationState?.stage === 'language_gate') {
+    return 'Hi. 你好～ Do you want to talk in 中文 or English?\nEnglish\n中文';
+  }
+  const question = currentDisplayQuestion();
+  const language = selectedResponseLanguage();
+  const questionText = question
+    ? displayQuestionText(question, language)
+    : (conversationState?.current_question_text || '');
+  if (!questionText) return '';
+  const choices = question ? visibleChoices(question)
+    .map(choice => displayChoiceText(choice, language))
+    .filter(Boolean) : [];
+  return [questionText, ...choices].join('\n');
+}
+
+function syncDisplayTtsStart(text) {
+  clearDisplayAudienceSpeaking();
+  currentTtsDisplayText = displaySafeText(text);
+  if (shouldShowQuestionDuringTts()) {
+    syncDisplayQuestion(true);
+  } else {
+    syncDisplayRobotSpeaking(currentTtsDisplayText || conversationState?.reply_text || currentDisplayQuestionText());
+  }
+  scheduleDisplaySpeechFallback();
+}
+
+function shouldShowQuestionDuringTts() {
+  return /^formal_question_/.test(String(conversationState?.stage || '')) && Boolean(
+    currentDisplayQuestion() ||
+    conversationState?.current_question_id ||
+    conversationState?.current_question_text
+  );
+}
+
+function scheduleDisplaySpeechFallback() {
+  clearDisplaySpeechFallback();
+  displaySpeechFallbackTimer = window.setTimeout(syncDisplayAfterSpeech, DISPLAY_SPEECH_FALLBACK_MS);
+}
+
+function clearDisplaySpeechFallback() {
+  if (displaySpeechFallbackTimer) {
+    clearTimeout(displaySpeechFallbackTimer);
+    displaySpeechFallbackTimer = null;
+  }
+}
+
+function markDisplayAudienceSpeaking(holdMs = DISPLAY_AUDIENCE_SPEECH_HOLD_MS) {
+  setDisplayAudienceSpeaking(true);
+  if (displayAudienceSpeakingTimer) clearTimeout(displayAudienceSpeakingTimer);
+  displayAudienceSpeakingTimer = window.setTimeout(() => {
+    setDisplayAudienceSpeaking(false);
+  }, holdMs);
+}
+
+function setDisplayAudienceSpeaking(active) {
+  if (!active && displayAudienceSpeakingTimer) {
+    clearTimeout(displayAudienceSpeakingTimer);
+    displayAudienceSpeakingTimer = null;
+  }
+  if (displayAudienceSpeaking === active) return;
+  displayAudienceSpeaking = active;
+  void updateDisplayState(withDisplayAvatarState({
+    robot_active: false,
+  }, {
+    source: active ? 'audience_input_active' : 'audience_input_idle',
+    isGreetingLanguageSelect: isGreetingDisplayActive(),
+    isSystemSpeaking: false,
+    isAudienceSpeaking: active,
+  }));
+}
+
+function clearDisplayAudienceSpeaking() {
+  if (displayAudienceSpeakingTimer) {
+    clearTimeout(displayAudienceSpeakingTimer);
+    displayAudienceSpeakingTimer = null;
+  }
+  displayAudienceSpeaking = false;
+}
+
+function currentDisplayQuestion() {
+  if (conversationState?.current_question_id) {
+    const matched = currentQuestions.find(q => q.question_id === conversationState.current_question_id);
+    if (matched) return matched;
+  }
+  return currentQuestions[activeQuestionIndex] || null;
+}
+
+function displayQuestionText(question, language) {
+  if (language === 'en') {
+    return question.question_text || question.question_text_zh || '';
+  }
+  return question.question_text_zh || question.question_text || '';
+}
+
+function displayChoiceText(choice, language) {
+  const value = language === 'en'
+    ? (choice.text || choice.text_zh || '')
+    : (choice.text_zh || choice.text || '');
+  return value ? `${choice.id}. ${value}` : '';
 }
 
 async function getVoiceConfig() {
@@ -467,11 +841,13 @@ async function newParticipant() {
   document.getElementById('voiceBtn').disabled = true;
   document.getElementById('manualSubmitBtn').disabled = true;
   setVoiceState('voice idle');
+  syncDisplayIdle();
   try {
     await startConversationEntry();
   } catch (error) {
     console.error(error);
     setVoiceState('conversation unavailable');
+    syncDisplayError();
   }
 }
 
@@ -512,7 +888,10 @@ async function startConversationEntry() {
       body: JSON.stringify({ transcript: '', include_audio: false }),
     });
   }
-  await handleConversationResult(result, { playReplyAudio: !useDoubaoStream });
+  await handleConversationResult(result, {
+    playReplyAudio: !useDoubaoStream,
+    deferReplyDisplay: useDoubaoStream,
+  });
 }
 
 function renderQuestions() {
@@ -521,8 +900,7 @@ function renderQuestions() {
     body.innerHTML = `
       <div class="question active">
         <div class="module">language / 语言</div>
-        <div class="q-text">Hi! 你好！</div>
-        <div class="q-text">Would you like to continue in English or 中文</div>
+        <div class="q-text">Hi. 你好～ Do you want to talk in 中文 or English?</div>
         <div class="choices">
           <button class="choice" onclick="submitLanguageChoice('English')">
             <div class="choice-text"><div>English</div></div>
@@ -665,6 +1043,7 @@ async function startVoiceSession() {
     console.error(error);
     voiceRunActive = false;
     document.getElementById('voiceBtn').disabled = false;
+    syncDisplayError();
   }
 }
 
@@ -762,6 +1141,7 @@ async function startDoubaoStreamConversation(config, options = {}) {
     document.getElementById('voiceBtn').disabled = false;
     document.getElementById('stopVoiceBtn').disabled = true;
     document.getElementById('manualSubmitBtn').disabled = false;
+    syncDisplayError();
   }
 }
 
@@ -787,6 +1167,7 @@ async function playDoubaoStreamReplyText(text, config) {
   doubaoLastMicRms = 0;
   doubaoPlaybackSpeechFrames = 0;
   doubaoPlaybackTime = context.currentTime || 0;
+  currentTtsDisplayText = displaySafeText(text);
   document.getElementById('voiceBtn').disabled = true;
   document.getElementById('stopVoiceBtn').disabled = false;
   document.getElementById('manualSubmitBtn').disabled = true;
@@ -854,6 +1235,7 @@ function startDoubaoPcmCapture(config) {
   doubaoSource = doubaoInputContext.createMediaStreamSource(mediaStream);
   doubaoProcessor = doubaoInputContext.createScriptProcessor(4096, 1, 1);
   doubaoStreamCaptureActive = true;
+  setDisplayAudienceSpeaking(true);
   doubaoProcessor.onaudioprocess = event => {
     const output = event.outputBuffer.getChannelData(0);
     output.fill(0);
@@ -954,26 +1336,32 @@ async function handleDoubaoStreamMessage(event, config) {
   if (payload.type === 'mic.muted_for_tts') {
     doubaoMicMutedForTts = true;
     setVoiceState('doubao speaking');
+    syncDisplayTtsStart(payload.text || currentTtsDisplayText || conversationState?.reply_text || '');
     return;
   }
   if (payload.type === 'mic.resumed_after_tts') {
     doubaoMicMutedForTts = false;
     setVoiceState('listening');
+    syncDisplayAfterSpeech();
+    if (doubaoStreamCaptureActive) setDisplayAudienceSpeaking(true);
     return;
   }
   if (payload.type === 'tts.error') {
     console.error(payload.message || 'doubao tts failed');
     doubaoMicMutedForTts = false;
     setVoiceState('doubao tts failed · mic listening');
+    syncDisplayError();
     return;
   }
   if (payload.type === 'asr.partial') {
     pendingTranscript = payload.text || '';
+    if (pendingTranscript) markDisplayAudienceSpeaking();
     renderQuestions();
     return;
   }
   if (payload.type === 'asr.final') {
     pendingTranscript = payload.text || '';
+    if (pendingTranscript) markDisplayAudienceSpeaking(900);
     const transcriptEl = document.getElementById('visitorTranscript');
     if (transcriptEl) transcriptEl.textContent = pendingTranscript ? `Visitor: ${pendingTranscript}` : '';
     renderQuestions();
@@ -985,6 +1373,7 @@ async function handleDoubaoStreamMessage(event, config) {
       await handleConversationResult(payload.conversation, {
         playReplyAudio: false,
         keepVoiceActive: true,
+        deferReplyDisplay: true,
       });
     }
     setVoiceState('listening');
@@ -995,6 +1384,7 @@ async function handleDoubaoStreamMessage(event, config) {
     await handleConversationResult(payload.conversation, {
       playReplyAudio: false,
       keepVoiceActive: true,
+      deferReplyDisplay: true,
     });
     scheduleDoubaoStreamClose(15000);
     return;
@@ -1010,6 +1400,7 @@ async function handleDoubaoStreamMessage(event, config) {
     releaseDoubaoStreamResources('server_error');
     document.getElementById('voiceBtn').disabled = false;
     document.getElementById('stopVoiceBtn').disabled = true;
+    syncDisplayError();
     return;
   }
 }
@@ -1025,6 +1416,7 @@ function scheduleDoubaoStreamClose(delayMs) {
 
 function stopDoubaoCaptureOnly() {
   doubaoStreamCaptureActive = false;
+  setDisplayAudienceSpeaking(false);
   if (doubaoProcessor) {
     try { doubaoProcessor.disconnect(); } catch {}
     doubaoProcessor.onaudioprocess = null;
@@ -1043,6 +1435,8 @@ function stopDoubaoCaptureOnly() {
 function releaseDoubaoStreamResources(reason = 'user_cancel') {
   clearTimeout(doubaoCloseTimer);
   doubaoCloseTimer = null;
+  clearDisplaySpeechFallback();
+  currentTtsDisplayText = '';
   clearDoubaoInterruptResetTimer();
   stopDoubaoPlayback(reason);
   stopDoubaoCaptureOnly();
@@ -1250,6 +1644,7 @@ function stopVoiceSession() {
 
 function cancelVoiceResources(reason = 'user_cancel') {
   clearVadHelpers();
+  setDisplayAudienceSpeaking(false);
   releaseDoubaoStreamResources(reason);
   if (mediaRecorder && mediaRecorder.state !== 'inactive') {
     recordingCancelled = true;
@@ -1295,6 +1690,7 @@ async function startFileRecording() {
     mediaRecorder.addEventListener('stop', handleFileRecordingStop, { once: true });
     mediaRecorder.start(200);
     setVoiceState('recording');
+    setDisplayAudienceSpeaking(true);
     console.debug('voice recording started', {
       mime_type: activeRecordingMimeType || mediaRecorder.mimeType || 'default',
     });
@@ -1367,6 +1763,7 @@ function startVadMonitor() {
 
       const speaking = rms > threshold;
       if (speaking) {
+        markDisplayAudienceSpeaking();
         if (speechStartedAt === null) speechStartedAt = now;
         lastSpeechAt = now;
         speechMs += delta;
@@ -1416,6 +1813,7 @@ function stopRecordingForUpload(reason = 'manual_finish') {
   recordingStopReason = reason;
   recordingStopRequested = true;
   clearVadHelpers();
+  setDisplayAudienceSpeaking(false);
   setVoiceState('stopping');
   console.debug('voice recording stopping', { reason });
   try { mediaRecorder.requestData(); } catch {}
@@ -1521,6 +1919,7 @@ async function submitAudioBlob(blob, mimeType, durationMs) {
     console.error(error);
     setVoiceState('stt upload failed');
     document.getElementById('voiceBtn').disabled = false;
+    syncDisplayError();
   }
 }
 
@@ -1567,7 +1966,10 @@ async function submitTranscript(transcript) {
       include_audio: !useDoubaoStream,
     }),
   });
-  await handleConversationResult(result, { playReplyAudio: !useDoubaoStream });
+  await handleConversationResult(result, {
+    playReplyAudio: !useDoubaoStream,
+    deferReplyDisplay: useDoubaoStream,
+  });
   if (useDoubaoStream && result.reply_text) {
     await playDoubaoStreamReplyText(result.reply_text, config).catch(error => {
       console.error(error);
@@ -1577,7 +1979,11 @@ async function submitTranscript(transcript) {
 }
 
 async function handleConversationResult(result, options = {}) {
-  const { playReplyAudio = true, keepVoiceActive = false } = options;
+  const {
+    playReplyAudio = true,
+    keepVoiceActive = false,
+    deferReplyDisplay = false,
+  } = options;
   conversationState = result;
   if (result.response_language) responseLanguage = result.response_language;
   pendingTranscript = '';
@@ -1588,6 +1994,15 @@ async function handleConversationResult(result, options = {}) {
   if (result.assignment) {
     renderAssignment(result.assignment);
     await refreshQueue();
+  }
+  if (!result.assignment && result.reply_text && !deferReplyDisplay) {
+    if (shouldShowQuestionDuringTts()) {
+      syncDisplayQuestion(true);
+    } else {
+      syncDisplayRobotSpeaking(result.reply_text);
+    }
+  } else if (!result.assignment) {
+    syncDisplayQuestion();
   }
   setVoiceState(`${result.stage} · ${result.answered_count}/${result.total_questions}`);
   if (playReplyAudio && result.reply_audio_base64) {
@@ -1600,12 +2015,16 @@ async function handleConversationResult(result, options = {}) {
         reason: String(error?.message || error),
       });
     });
+    syncDisplayAfterSpeech();
+  } else if (result.reply_text && !keepVoiceActive && !deferReplyDisplay) {
+    window.setTimeout(syncDisplayAfterSpeech, 2200);
   }
   if (result.participant_deleted || result.next_action === 'end_session') {
     voiceRunActive = false;
     document.getElementById('stopVoiceBtn').disabled = true;
     document.getElementById('voiceBtn').disabled = true;
     document.getElementById('manualSubmitBtn').disabled = true;
+    if (!result.assignment) scheduleDisplayStandby(3600);
     return;
   }
   if (keepVoiceActive) {
@@ -1705,6 +2124,7 @@ function renderAssignment(assignment) {
     selectedResponseLanguage() === 'en' ? '' : (foodZh[assignment.food_code] || assignment.food_label);
   document.getElementById('scoreLine').textContent =
     `ai_trace=${assignment.ai_trace_score} · relational=${assignment.relational_score}`;
+  syncDisplayResult(assignment);
 }
 
 async function refreshQueue() {
@@ -1767,6 +2187,7 @@ function handleLanguageGateShortcut(event) {
 
 document.addEventListener('keydown', handleLanguageGateShortcut);
 
+syncDisplayStandby();
 pollHealth();
 refreshQueue();
 setInterval(pollHealth, 4000);

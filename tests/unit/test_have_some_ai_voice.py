@@ -126,6 +126,7 @@ def test_claude_prompt_forbids_flow_and_food_decisions():
     assert "score, or assign food" in system
     assert "FormalTurnRouter" in system
     assert '"label":"A"' in system
+    assert "Shopkeeper runtime context" not in system
 
     prompt_payload = json.loads(llm.calls[0]["messages"][0]["content"])
     assert set(prompt_payload["visible_choices"]) == {"A", "B"}

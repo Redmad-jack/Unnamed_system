@@ -166,12 +166,36 @@ Exhibition System: Have Some "Ai"
 - [x] 正式题选项显示收口（2026-05-09）：屏幕和 Claude judge 的 visible choices 只保留 A/B；freeform/chitchat 仍不写入正式答案
 - [x] Food Gate 语言选择后路径修正（2026-05-09）：选择 English 后进入 `questions.yaml` 的 13 条英文开场轮换 + “Want something to eat?”；中文继续使用 13 条中文开场 + “想来点吃的吗？”
 - [x] `v1.2.1-EC` 发布前收口（2026-05-09）：README / 结构文档同步 Language Gate、A/B-only 显示、双语 Food Gate、最终固定出餐话术与测试合同
+- [x] 双屏展示第 3 步（2026-05-10）：新增只读 `/display`、内存级 `GET/POST /api/v1/display-state` 和基础 `display.html`；完整验证 `pytest` 296 passed，本地 curl 验证 `/`、`/display`、display-state GET/POST 可用
+- [x] 双屏展示控制页同步（2026-05-10）：`index.html` 新增统一 `updateDisplayState()`，在初始化、创建观众、题目/AI 回复、TTS 结束、结果和错误节点同步观众可见状态；完整验证 `pytest` 297 passed，本地 curl 验证 `/`、`/display`、display-state question / robot_speaking / result 可用
+- [x] 双屏展览模式最终验收（2026-05-10）：复核 `/display` 只读安全边界、`POST /api/v1/display-state` 仅更新内存状态、控制页仍为唯一真实录音/会话推进入口；补充边界回归测试，完整验证 `pytest` 298 passed
+- [x] `/display` 字号与文本同步修补（2026-05-10）：展示页底部文本字号约减半并保留换行；控制页同步题目时包含题干和 A/B 选项，普通 AI 回复继续同步整段 `reply_text`；display_text 上限放宽到 800，完整验证 `pytest` 298 passed
+- [x] 豆包 TTS 展示同步修补（2026-05-10）：`conversation-stream` 的 `mic.muted_for_tts` 事件携带实际 TTS 文本；控制页在豆包真正开始说话时再同步展示页，正式判断题说话时仍显示题干和 A/B 选项；完整验证 `pytest` 298 passed
+- [x] `/display` Avatar 动画状态机（2026-05-11）：新增 `idle_breathing` / `greeting_wave` / `system_speaking` / `audience_speaking` 四态优先级控制；控制页通过 display-state 传入 avatar 布尔信号，展示页仍只读且不接入真实语音链路；完整验证 `pytest` 299 passed，HTML 内联脚本解析通过
+- [x] `/display` SilhouetteStage 组件化（2026-05-11）：将背景微光、人形虚影、浅绿色磨砂薄膜、高光噪声边缘、局部压痕撕扯假象收拢到独立 `#avatarStage` 五层结构；根节点按 avatar state 写入 `data-state` 和状态 class；完整验证 `pytest` 299 passed，本地 `/`、`/display`、display-state HTTP 200
+- [x] `/display` 浅绿色磨砂薄膜细化（2026-05-11）：膜层改为可调 CSS 变量、多层渐变、轻颗粒、高光边缘和 no-backdrop fallback；未引入图片或新依赖；完整验证 `pytest` 299 passed，HTML 内联脚本解析通过
+- [x] `/display` 代码生成人形虚影（2026-05-11）：AvatarStage 中人形改为 head / torso / upper arm / forearm / hand / mouth shadow / mouth opening 独立 DOM 图层，支持呼吸、挥手、开口和轻量贴膜撕扯动作；未引入图片或第三方库；完整验证 `pytest` 299 passed
+- [x] `/display` idle / audience 呼吸动画（2026-05-11）：`idle_breathing` 新增整体慢浮动、torso 缩放和 head 延迟移动；`audience_speaking` 关闭嘴部、挥手和撕扯动作，只保留更低幅度呼吸；支持 `prefers-reduced-motion` 降低幅度；完整验证 `pytest` 299 passed
+- [x] `/display` greeting_wave 挥手动画（2026-05-11）：`greeting_wave` 改为一次 2.05s CSS 动画，右上臂、前臂、手掌分层挥动两次，头身轻微跟随，膜层轻微同步波动；展示页本地 avatar controller 通过 `animationend` 回落到 system/audience/idle，并支持重复 greeting 触发重播；完整验证 `pytest` 299 passed
+- [x] `/display` system_speaking 嘴部开合动画（2026-05-11）：人形虚影嘴部改为 CSS 变量驱动的模糊暗影开合，展示页本地 controller 在 `system_speaking` 内轻量随机调节开合幅度、透明度和横向微偏移；离开 system 或进入 audience 时立即闭合；完整验证 `pytest` 299 passed，HTML 内联脚本解析通过
+- [x] `/display` system_speaking 薄膜撕扯假象（2026-05-11）：`membrane-stress` 内新增双手局部压痕和淡拉伸纹理 overlay；展示页本地 controller 只在 `system_speaking` 内随机短促调节压痕强度和膜面 tremble，切到 greeting/audience/idle 会清零；完整验证 `pytest` 299 passed，`/display` 禁止入口扫描无命中
+- [x] Avatar 业务状态接入（2026-05-11）：控制页新增 `createDisplayAvatarStateAdapter()`，集中把 Language Gate greeting、TTS/robot speaking、文件录音/VAD、豆包流式麦克风采集与 ASR partial/final 映射为 avatar 布尔信号；debug 仅 `?avatarDebug` 开启；完整验证 `pytest` 299 passed，HTML 内联脚本解析通过
+- [x] Avatar 开发面板（2026-05-11）：`/display` 新增本地开发限定的 Avatar Dev 面板，仅 `localhost/127.0.0.1/0.0.0.0/::1 + ?avatarPanel=1` 时动态创建；支持 Auto、idle、重复 greeting、system、audience 手动切换，并显示当前 avatarState 与 business/applied 输入；完整验证 `pytest` 299 passed，`/display` 禁止入口扫描无命中
+- [x] Avatar 状态切换收尾优化（2026-05-11）：`greeting_wave` 手臂 keyframes 末尾回到自然位，避免回落 idle/system 时跳变；状态变量和手臂过渡统一到 260-320ms；离开 system 前先关闭嘴部和膜面压力，进入 system 后延迟 220-400ms 干净启动撕扯假象；完整验证 `pytest` 299 passed，HTML 内联脚本解析通过
+- [x] Avatar 动画性能优化（2026-05-11）：高频挥手 keyframes 改为只修改 `transform`，降低膜面/虚影 blur 与 `backdrop-filter` 强度；关键动画层少量使用 `will-change` 和 `contain`；展示页隐藏或离开时清理 polling interval、嘴部 interval 与膜面 timer；完整验证 `pytest` 299 passed，`/display` 禁止入口扫描无命中
+- [x] Avatar 最终验收修补（2026-05-11）：复核四态动画、膜后层次、主 UI 遮挡、状态收尾与性能边界；补充 `pageshow` 恢复轮询和销毁时 greeting replay 标记清理；项目无独立 lint/typecheck/build 脚本，已用 HTML 解析、展示页边界扫描和完整 `pytest` 299 passed 验收
+- [x] Avatar 灰色虚影可见度修补（2026-05-11）：人形肢体改为中性灰色剪影，降低虚影 blur、提高 idle/audience/system/greeting 可见度，并略降薄膜不透明度；保持人形仍在膜层之后；完整验证 `pytest` 299 passed
+- [x] Avatar 强可见灰色剪影调参（2026-05-11）：进一步把人形改为深灰高不透明剪影，显著降低 blur 和薄膜遮挡，用于现场优先确认挥手、说话和贴膜动作可读性；验证 `test_have_some_ai_api.py` 40 passed，展示页禁用入口扫描无命中
+- [x] Avatar 薄膜图片纹理叠加（2026-05-12）：将 `pu/aa117.png` 复制为展示页静态纹理资产，新增 `.membrane-texture` 层叠在人形之后、膜面高光之前；保留原 CSS tint / blur / 高光 / dent / tremble，并让 system_speaking 时纹理只做极小幅同步抖动；完整验证 `pytest` 303 passed，展示页禁用入口扫描无命中
+- [x] AI 店主运行语境注入机制（2026-05-11）：新增 `backend/prompts/shopkeeper_runtime_context.md` 和缓存 loader；仅注入 `ShopkeeperReplyService` 的自由闲聊 Claude prompt，`conversation-turn` / `conversation-audio` / `conversation-stream` 通过同一 Orchestrator 受益；Claude rubric、`ScoringEngine`、food assignment 和 `meal_*` 落库逻辑保持隔离。运行语境正文待用户提供后填入 prompt 文件；完整验证 `pytest` 302 passed
+- [x] Language Gate 开场语调整（2026-05-12）：豆包/店主固定开场语改为 `Hi. 你好～ Do you want to talk in 中文 or English?`；同步控制页、展示页 greeting 检测、README、结构文档和测试断言；完整验证 `pytest` 303 passed
+- [x] 正式题跑题口述闲聊修复（2026-05-17）：`FormalTurnRouter` 在默认进入 Claude A/B judge 前新增明显跑题实质句识别；正式题期间和当前题目无关的口述先进入 `chitchat`，不写 `meal_answers`、不调用 rubric、第 3 句仍按本地规则拉回当前题；完整验证 `pytest` 310 passed，`/display` 禁止入口扫描无命中，`index.html` / `display.html` HTML 解析通过
 
 ### 进行中（Work 2）
 
 - 语音层真实端到端联调：AIHubMix file-STT 已保留；豆包主链路已改为 ASR/TTS 分离 WebSocket，仍需用真实火山凭证和浏览器麦克风确认 ASR definite 分句、Claude judge、TTS PCM 播放、barge-in 和完整答题流程
 - 本地 8010 服务当前未监听；如需重新测试，运行 `./.venv/bin/python scripts/start_have_some_ai.py --port 8010`，再用 `lsof`、`/health`、`/api/v1/voice-config` 确认服务可达
-- 最近完整测试套件：`288 passed`
+- 最近完整测试套件：`310 passed`
 
 ### 下一步（Work 2）
 

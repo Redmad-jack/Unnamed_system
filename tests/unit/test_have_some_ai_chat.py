@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from have_some_ai import chat as chat_module
 from have_some_ai.chat import ShopkeeperReplyService
 
 
@@ -110,10 +111,7 @@ def test_shopkeeper_language_gate_uses_required_prompt():
         "total_questions": 2,
     })
 
-    assert result["reply_text"] == (
-        "Hi! 你好！\n"
-        "Would you like to continue in English or 中文"
-    )
+    assert result["reply_text"] == "Hi. 你好～ Do you want to talk in 中文 or English?"
 
 
 def test_shopkeeper_reply_after_assigned_does_not_reinterpret_result():
@@ -179,6 +177,34 @@ def test_shopkeeper_freeform_not_eating_chat_uses_llm_without_echoing_template()
     assert len(llm.calls) == 1
     assert "我今天有点累" in llm.calls[0]["messages"][0]["content"]
     assert "freeform_chitchat_turn\":1" in llm.calls[0]["messages"][0]["content"]
+
+
+def test_shopkeeper_freeform_system_prompt_includes_runtime_context(monkeypatch):
+    monkeypatch.setattr(
+        chat_module,
+        "shopkeeper_runtime_context",
+        lambda: "The shopkeeper is inside an art installation, not a normal restaurant.",
+    )
+    llm = FakeReplyLLM(["我知道这里不是普通小店，所以我说话会留一点余地。"])
+    service = ShopkeeperReplyService(llm_client=llm)
+
+    service.generate_reply({
+        "stage": "not_eating_chat",
+        "participant_status": "new",
+        "next_action": "not_eating_chat",
+        "answered_count": 0,
+        "total_questions": 2,
+        "current_question_text": None,
+        "last_user_transcript": "这是什么作品？",
+        "interpretation": {"route": "chitchat", "count": 1},
+        "chat_mode": "A_NO_FOOD",
+        "not_eating_chat_count": 1,
+        "assignment": None,
+    })
+
+    assert "Shopkeeper runtime context:" in llm.calls[0]["system"]
+    assert "art installation" in llm.calls[0]["system"]
+    assert "art installation" not in llm.calls[0]["messages"][0]["content"]
 
 
 def test_shopkeeper_formal_chitchat_uses_llm_for_first_two_turns_only():

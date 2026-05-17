@@ -752,6 +752,8 @@ class FormalTurnRouter:
             return TurnRoute(ROUTE_ANSWER_ATTEMPT)
         if _matches_any(compact, _FORMAL_UNCLEAR_ANSWER_TOKENS):
             return TurnRoute(ROUTE_ANSWER_ATTEMPT)
+        if _looks_like_unrelated_formal_chitchat(transcript, compact, current_question):
+            return TurnRoute(ROUTE_CHITCHAT)
         return TurnRoute(ROUTE_ANSWER_ATTEMPT)
 
 
@@ -875,6 +877,137 @@ _SIDE_CHAT_TOKENS = {
     "haha",
 }
 
+_OFF_TOPIC_CONTEXT_TOKENS = {
+    "今天",
+    "刚才",
+    "刚刚",
+    "朋友",
+    "同学",
+    "学校",
+    "上班",
+    "工作",
+    "天气",
+    "下雨",
+    "雨",
+    "外面",
+    "旁边",
+    "声音",
+    "机器",
+    "机器人",
+    "摊位",
+    "项目",
+    "作品",
+    "展览",
+    "装置",
+    "路上",
+    "吃饭",
+    "喝水",
+    "衣服",
+    "today",
+    "yesterday",
+    "tomorrow",
+    "friend",
+    "school",
+    "work",
+    "weather",
+    "rain",
+    "outside",
+    "nearby",
+    "voice",
+    "sound",
+    "machine",
+    "robot",
+    "project",
+    "booth",
+    "installation",
+    "exhibition",
+}
+
+_QUESTION_RELATED_TOKEN_CANDIDATES = {
+    "ai",
+    "answer",
+    "apologized",
+    "angry",
+    "analyze",
+    "beside",
+    "bedroom",
+    "closed",
+    "confides",
+    "difference",
+    "door",
+    "idea",
+    "loneliness",
+    "meant",
+    "open",
+    "opinion",
+    "physically",
+    "repeated",
+    "sad",
+    "sadder",
+    "sleep",
+    "thank",
+    "troubles",
+    "understand",
+    "understood",
+    "不必要",
+    "倾诉",
+    "关着",
+    "关门",
+    "分析",
+    "卧室",
+    "原谅",
+    "孤独",
+    "开着",
+    "开门",
+    "想法",
+    "感谢",
+    "懂",
+    "歉",
+    "生气",
+    "真正",
+    "睡觉",
+    "观点",
+    "说过",
+    "谢谢",
+    "身边",
+    "道歉",
+    "门",
+    "难过",
+}
+
+_LATIN_STOP_WORDS = {
+    "about",
+    "after",
+    "and",
+    "are",
+    "but",
+    "can",
+    "did",
+    "does",
+    "ever",
+    "for",
+    "from",
+    "has",
+    "have",
+    "having",
+    "kind",
+    "one",
+    "someone",
+    "something",
+    "that",
+    "the",
+    "their",
+    "them",
+    "then",
+    "they",
+    "this",
+    "when",
+    "which",
+    "with",
+    "you",
+    "your",
+}
+
 _FORMAL_UNCLEAR_ANSWER_TOKENS = {
     "随便",
     "都行",
@@ -956,6 +1089,90 @@ def _looks_like_side_chat(transcript: str, compact: str) -> bool:
     ):
         return True
     return False
+
+
+def _looks_like_unrelated_formal_chitchat(
+    transcript: str,
+    compact: str,
+    current_question: dict[str, Any],
+) -> bool:
+    if not _has_substantive_formal_content(transcript):
+        return False
+    if _has_choice_marker(transcript, compact):
+        return False
+    if _is_related_to_current_question(compact, current_question):
+        return False
+    return _matches_any(compact, _OFF_TOPIC_CONTEXT_TOKENS) or _has_side_question_shape(
+        transcript,
+        compact,
+    )
+
+
+def _has_side_question_shape(transcript: str, compact: str) -> bool:
+    if "?" not in transcript and "？" not in transcript:
+        return False
+    return any(
+        token in compact
+        for token in {"你", "这个", "什么", "为什么", "怎么", "who", "what", "why", "how"}
+    )
+
+
+def _has_substantive_formal_content(transcript: str) -> bool:
+    if sum(1 for ch in transcript if "\u4e00" <= ch <= "\u9fff") >= 4:
+        return True
+    return len(_latin_words(transcript)) >= 3
+
+
+def _is_related_to_current_question(
+    compact: str,
+    current_question: dict[str, Any],
+) -> bool:
+    return any(
+        token and token in compact
+        for token in _question_related_tokens(current_question)
+    )
+
+
+def _question_related_tokens(current_question: dict[str, Any]) -> set[str]:
+    source_text = _formal_question_source_text(current_question)
+    compact_source = _compact(source_text)
+    tokens = {
+        token
+        for token in _QUESTION_RELATED_TOKEN_CANDIDATES
+        if token in compact_source
+    }
+    tokens.update(_latin_words(source_text))
+    return tokens
+
+
+def _formal_question_source_text(current_question: dict[str, Any]) -> str:
+    parts = [
+        str(current_question.get("question_text") or ""),
+        str(current_question.get("question_text_zh") or ""),
+    ]
+    for option in current_question.get("options") or []:
+        parts.append(str(option.get("text") or ""))
+        parts.append(str(option.get("text_zh") or ""))
+    return " ".join(parts)
+
+
+def _latin_words(text: str) -> list[str]:
+    words: list[str] = []
+    current: list[str] = []
+    for ch in text.lower():
+        if "a" <= ch <= "z":
+            current.append(ch)
+            continue
+        if current:
+            word = "".join(current)
+            if len(word) >= 3 and word not in _LATIN_STOP_WORDS:
+                words.append(word)
+            current = []
+    if current:
+        word = "".join(current)
+        if len(word) >= 3 and word not in _LATIN_STOP_WORDS:
+            words.append(word)
+    return words
 
 
 def _looks_like_option_semantics(compact: str, current_question: dict[str, Any]) -> bool:

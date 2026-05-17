@@ -22,7 +22,7 @@ src/
 | 作品 | 当前进度 | 可以做什么 |
 | --- | --- | --- |
 | The "Stranger" | 已停止维护，以下内容只保留历史记录 | 不再作为当前开发重点 |
-| Have Some "Ai" | 当前主项目；`v1.2.1-EC` 已收口 Language Gate、A/B-only 正式题显示、双语 Food Gate 开场和最终出餐话术 | 新建观众、Language Gate、双语 Food Gate、闲聊 + 判断、ASR/TTS 语音、Claude A/B judge、食物分配、工作人员队列 |
+| Have Some "Ai" | 当前主项目；`v1.2.1-EC` 已收口 Language Gate、A/B-only 正式题显示、双语 Food Gate、双屏 `/display` 展示页和最终出餐话术 | 新建观众、Language Gate、双语 Food Gate、闲聊 + 判断、ASR/TTS 语音、Claude A/B judge、食物分配、工作人员队列、只读观众展示页 |
 
 当前 Have Some "Ai" 的现场交互已经从纯 A/B 调试流程，推进到：
 
@@ -160,11 +160,22 @@ Have Some "Ai" 是一个食物分配系统，而不是另一个聊天实体。�
 
 食物不是单纯的食物，而是系统读取、分类和分配人的可见结果。
 
+### 双屏展览模式
+
+现场按 iMac 双屏运行：
+
+- `/` 控制页运行真实流程：新建观众、麦克风录音、`conversation-stream`、ASR/TTS、`ConversationOrchestrator`、食物分配和工作人员队列。
+- `/display` 展示页只读，给观众看：冷灰绿色磨砂薄膜、膜后存在、AI 字幕、当前题目和最终食物结果。
+- `/api/v1/display-state` 是内存级展示状态，控制页写入，展示页轮询读取；不写 SQLite，不推进会话，不触发 ASR/TTS。
+- `/display-assets/{filename}` 只暴露展示页白名单图片资产。
+
+`/display` 不请求麦克风、不创建 WebSocket、不调用 `conversation-stream`、不提交答案、不操作工作人员队列、不调用 `MealService`。
+
 ### 当前观众流程
 
 ```text
 1. 新建匿名观众，生成 A001 形式编号
-2. Language Gate 问 `Hi! 你好！Would you like to continue in English or 中文`；English / en / 英文 或明显英文输入固定本次会话英文，中文 / Chinese / zh 或明显中文输入使用中文默认逻辑
+2. Language Gate 问 `Hi. 你好～ Do you want to talk in 中文 or English?`；English / en / 英文 或明显英文输入固定本次会话英文，中文 / Chinese / zh 或明显中文输入使用中文默认逻辑
 3. Food Gate 使用 `questions.yaml` 的 13 条开场轮换；中文问“想来点吃的吗？”，English 模式问 “Want something to eat?”
 4. `NO_FOOD` 进入最多 3 回合的 not-eating chat，随后送客并清理 transient participant，不抽正式题、不分配食物
 5. `WANT_FOOD` 后抽两道正式题
@@ -205,6 +216,7 @@ src/have_some_ai/
 ├── scoring.py                  # 两轴正式答案到四种食物的规则映射
 ├── service.py                  # 观众流程服务
 ├── chat.py                     # 店主话术；闲聊 Claude reply_text + 模板兜底
+├── prompt_context.py           # 读取 AI 店主运行语境，仅注入闲聊话术 prompt
 ├── voice.py                    # Claude formal answer_attempt A/B/unclear judge
 ├── voice_provider.py           # 语音 provider / STT mode 配置
 ├── doubao/                     # Doubao ASR bigmodel_async + TTS bidirectional V3
@@ -212,7 +224,10 @@ src/have_some_ai/
 ├── openai_tts.py               # OpenAI-compatible TTS 读题
 └── interfaces/
     ├── api.py                  # FastAPI app
-    └── static/index.html       # 单文件网页界面
+    └── static/
+        ├── index.html          # 控制页：真实录音、状态推进、工作人员队列
+        ├── display.html        # 只读观众展示页
+        └── assets/             # 展示页薄膜/装饰图片
 ```
 
 配置文件：
@@ -240,9 +255,13 @@ meal_staff_queue
 ### API 概览
 
 ```text
+GET  /display
+GET  /display-assets/{filename}
 GET  /health
 GET  /api/v1/config
 GET  /api/v1/voice-config
+GET  /api/v1/display-state
+POST /api/v1/display-state
 
 POST /api/v1/participants
 GET  /api/v1/participants
@@ -271,6 +290,7 @@ GET  /api/v1/export
 ```bash
 ./.venv/bin/python scripts/start_have_some_ai.py --port 8010
 # http://127.0.0.1:8010/
+# http://127.0.0.1:8010/display
 # http://127.0.0.1:8010/docs
 ```
 
@@ -279,7 +299,9 @@ GET  /api/v1/export
 ```bash
 lsof -nP -iTCP:8010 -sTCP:LISTEN
 curl -s http://127.0.0.1:8010/health
+curl -s http://127.0.0.1:8010/display
 curl -s http://127.0.0.1:8010/api/v1/voice-config
+curl -s http://127.0.0.1:8010/api/v1/display-state
 ```
 
 如果 8010 没有监听，网页不会有声音，麦克风也不会进入后端语音链路。先启动服务或换一个空闲端口，再打开对应地址。
@@ -338,6 +360,8 @@ DOUBAO_TTS_RESOURCE_ID=seed-tts-2.0
 ```
 
 Claude / Anthropic 配置见下方 Shared Environment。Have Some "Ai" 只在 `FormalTurnRouter` 判定用户正在尝试回答正式 A/B 题时调用 Claude judge。chitchat、侧问、评论、unclear_speech 和 noise 都不进入 Claude judge，也不保存正式答案；chitchat 的前 1-2 回合可在话术层调用 Claude 生成 `reply_text`。
+
+AI 店主运行语境放在 `backend/prompts/shopkeeper_runtime_context.md`，由 `prompt_context.py` 缓存读取，只注入 `ShopkeeperReplyService` 的自由闲聊 system prompt。它不能影响 Claude rubric、`ScoringEngine`、food assignment 或任何 `meal_*` 落库逻辑。
 
 ### 豆包语音 smoke test
 
@@ -532,9 +556,9 @@ pytest
   -q
 ```
 
-当前结果：上述子集为 `62 passed`；前端单文件 JS 语法检查通过。
+上述子集用于快速验证 Have Some "Ai" 语音主链路、状态机和 API。
 
-全项目 `pytest -q` 当前可以正常运行到断言阶段，不再段错误；现存失败为 11 个 Work 1 测试失败，集中在 mocked LLM metadata 返回值和 style mapper 期望值，属于代码/测试契约问题，不是 Python 环境问题。
+当前最新完整验证：`pytest` 为 `310 passed`；`/display` 禁止入口静态扫描无命中，确认展示页没有 `getUserMedia`、`conversation-stream`、真实语音 WebSocket、答案提交、分配或工作人员队列入口。
 
 当前文档状态：README 与 `docs/TECH_STACK.md` / `docs/progress.md` 记录的是当前本机环境和 Have Some "Ai" 语音原型状态；`docs/PRD.md`、`docs/APP_FLOW.md`、`docs/BACKEND_STRUCTURE.md`、`docs/IMPLEMENTATION_PLAN.md` 仍主要是 The "Stranger" 的 v0.1 设计文档。
 
