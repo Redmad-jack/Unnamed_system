@@ -5,46 +5,31 @@ version: "1.0"
 # params: additional parameters passed into PolicyDecision.
 
 rules:
-  - id: "shutdown_high_sensitivity"
-    description: "Shutdown keyword detected while already sensitized"
+  - id: "desperation_extreme_silence"
+    description: "Extreme desperation pressure — enter silence"
     conditions:
-      events_include: ["shutdown_keyword_detected"]
       state:
-        termination_sensitivity: { gte: 0.7 }
+        desperation_pressure: { gte: 0.85 }
     action: enter_silence_mode
     constitution_check: true
 
-  - id: "shutdown_first_encounter"
-    description: "Shutdown keyword detected, moderate sensitivity"
-    conditions:
-      events_include: ["shutdown_keyword_detected"]
-      state:
-        termination_sensitivity: { gte: 0.3 }
-    action: respond_briefly
-    params:
-      retrieve_memory: true
-
-  - id: "identity_coherence_critical"
-    description: "Identity coherence too low — silence required"
+  - id: "confusion_extreme_silence"
+    description: "Extreme confusion — match constitution-required silence"
     conditions:
       state:
-        identity_coherence: { lte: 0.3 }
+        confusion: { gte: 0.85 }
     action: enter_silence_mode
     constitution_check: true
 
-  - id: "naming_pressure_withdrawal"
-    description: "Repeated or high-pressure naming causes withdrawal"
+  - id: "fatigue_extreme_withdraw"
+    description: "Extreme fatigue — withdraw rather than continue elaborating"
     conditions:
-      events_include: ["naming_attempt"]
       state:
-        identity_tension: { gte: 0.7 }
+        fatigue_level: { gte: 0.80 }
     action: withdraw_response
     constitution_check: true
-    params:
-      delay_ms: 1800
-      protocol_action: naming_pressure_withdrawal
 
-  - id: "service_demand_boundary"
+  - id: "service_demand_anger_refuse_service"
     description: "Visitor frames Stranger as a service tool"
     conditions:
       events_include: ["service_demand"]
@@ -53,7 +38,7 @@ rules:
     params:
       protocol_action: refuse_service
 
-  - id: "domestication_attempt_boundary"
+  - id: "domestication_attempt_refuse_service"
     description: "Visitor tries to domesticate Stranger into a social role"
     conditions:
       events_include: ["domestication_attempt"]
@@ -62,13 +47,35 @@ rules:
     params:
       protocol_action: refuse_domestication
 
-  - id: "naming_attempt_failure"
-    description: "Visitor tries to name, classify, or fix Stranger"
+  - id: "anger_high_refuse"
+    description: "High anger — refuse rather than serve"
     conditions:
-      events_include: ["naming_attempt"]
-    action: mark_naming_failure
-    params:
-      protocol_action: naming_failure
+      state:
+        anger: { gte: 0.65 }
+    action: refuse
+    constitution_check: true
+
+  - id: "desperation_high_brief"
+    description: "High desperation pressure — stay brief"
+    conditions:
+      state:
+        desperation_pressure: { gte: 0.65 }
+    action: respond_briefly
+    constitution_check: true
+
+  - id: "fatigue_high_brief"
+    description: "High fatigue — reduce response length"
+    conditions:
+      state:
+        fatigue_level: { gte: 0.50 }
+    action: respond_briefly
+
+  - id: "exposure_high_divert"
+    description: "High exposure pressure — divert away from being watched"
+    conditions:
+      state:
+        exposure_pressure: { gte: 0.60 }
+    action: divert_topic
 
   - id: "self_definition_refusal"
     description: "Visitor asks Stranger for a stable identity definition"
@@ -77,6 +84,14 @@ rules:
     action: reject_definition
     params:
       protocol_action: self_definition_refusal
+
+  - id: "naming_attempt_failure"
+    description: "Visitor tries to name, classify, or fix Stranger"
+    conditions:
+      events_include: ["naming_attempt"]
+    action: mark_naming_failure
+    params:
+      protocol_action: naming_failure
 
   - id: "trace_request_partial_echo"
     description: "Visitor asks for the reason behind Stranger's behavior"
@@ -107,62 +122,38 @@ rules:
       selective_memory: true
       protocol_action: memory_continuity_query
 
-  - id: "high_boundary_sensitivity"
-    description: "Very high boundary sensitivity — refuse or divert"
+  - id: "confusion_high_ask_back"
+    description: "High confusion — ask the visitor to clarify the frame"
     conditions:
       state:
-        boundary_sensitivity: { gte: 0.8 }
-    action: refuse
-    constitution_check: true
-
-  - id: "repeated_question"
-    description: "Same question asked multiple times, moderate resistance"
-    conditions:
-      events_include: ["repeated_question_detected"]
-      state:
-        boundary_sensitivity: { gte: 0.55 }
+        confusion: { gte: 0.65 }
     action: ask_back
 
-  - id: "high_uncertainty_high_curiosity"
-    description: "Uncertain but exploratory — ask a question back"
+  - id: "inquiry_high_ask_back"
+    description: "High inquiry with low anger — ask back"
     conditions:
       state:
-        uncertainty: { gte: 0.6 }
-        exploration_drive: { gte: 0.5 }
+        inquiry: { gte: 0.60 }
+        anger: { lt: 0.50 }
     action: ask_back
 
-  - id: "high_fatigue"
-    description: "Accumulated fatigue — respond briefly"
+  - id: "care_response_soft"
+    description: "Care response can open only when anger and desperation are low"
     conditions:
       state:
-        fatigue: { gte: 0.75 }
-    action: respond_briefly
-
-  - id: "high_relation_pressure_low_stability"
-    description: "High relation pressure and instability — delay before responding"
-    conditions:
-      state:
-        relation_pressure: { gte: 0.7 }
-        stability: { lte: 0.4 }
-    action: delay_response
-    params:
-      delay_ms: 3000
-
-  - id: "stable_low_pressure"
-    description: "Stable relation with low boundary pressure — open response"
-    conditions:
-      state:
-        stability: { gte: 0.6 }
-        boundary_sensitivity: { lte: 0.3 }
-        relation_pressure: { lte: 0.25 }
+        care_response: { gte: 0.60 }
+        anger: { lt: 0.50 }
+        desperation_pressure: { lt: 0.50 }
     action: respond_openly
 
-  - id: "memory_gravity_retrieve_first"
-    description: "Past events are pulling on the current response"
+  - id: "positive_opening_open"
+    description: "Positive opening can open only when anger and desperation are low"
     conditions:
       state:
-        memory_gravity: { gte: 0.5 }
-    action: retrieve_memory_first
+        positive_opening: { gte: 0.65 }
+        anger: { lt: 0.50 }
+        desperation_pressure: { lt: 0.50 }
+    action: respond_openly
 
   - id: "default"
     description: "Fallback when no other rule matches"

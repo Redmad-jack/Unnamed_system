@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from conscious_entity.audio.speech_text import extract_speakable_text
-from conscious_entity.expression.output_model import ExpressionOutput
+from conscious_entity.expression.output_model import ExpressionOutput, build_response_plan
 
 
 def _output(text: str, spoken_text: str | None = None) -> ExpressionOutput:
@@ -25,6 +25,32 @@ def test_spoken_text_overrides_output_text():
     speakable = extract_speakable_text(_output("shown", spoken_text="spoken"))
 
     assert speakable.segments == ["spoken"]
+
+
+def test_tts_reads_combined_response_plan_text():
+    plan = build_response_plan(
+        first_unit="嗯……",
+        second_unit="我还在听。",
+        third_unit="我还没整理好。",
+        vocal_marker="thinking",
+        body_action="pause",
+        visual_mode="confused",
+    )
+    output = ExpressionOutput(
+        text=plan.combined_text,
+        spoken_text=plan.combined_text,
+        delay_ms=0,
+        visual_mode="confused",
+        raw_prompt="prompt",
+        vocal_marker="thinking",
+        body_action="pause",
+        response_plan=plan,
+    )
+
+    speakable = extract_speakable_text(output)
+
+    assert speakable.segments == ["嗯……\n我还在听。"]
+    assert "我还没整理好。" not in speakable.normalized_text
 
 
 def test_empty_output_returns_should_speak_false():

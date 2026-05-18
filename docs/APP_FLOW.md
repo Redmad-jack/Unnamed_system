@@ -65,33 +65,38 @@ Step 1   感知层解析输入 → 生成 PerceptionEvent 列表
           └─ 可能产生多个事件：USER_SPOKE + SHUTDOWN_KEYWORD_DETECTED 等
           └─ Input Harness 记录 source、input_mode、event_types、session_decision
 
-Step 2   将用户输入加入短期记忆
-          └─ 重复追问、连续服务请求等判断可以看见当前输入
-
-Step 3   加载当前 EntityState，并对每个事件应用状态增量（state_rules.yaml）
+Step 2   加载当前 EntityState，并对每个事件应用状态增量（state_rules.yaml）
           └─ 返回新 EntityState（不可变更新）
 
-Step 4   应用 per-turn 时间衰减
+Step 3   应用 per-turn 时间衰减
           └─ State Harness 记录 snapshot、trigger events、changed fields
 
-Step 5   预览 managed memory influence
+Step 4   生成低延迟 `first_unit`
+          └─ 发生在本轮 `short_term.add_user`、managed memory preview、retrieval 和主 LLM 前
+          └─ 只使用当前输入、事件、状态/表达姿态，以及上一轮 user / first / second 的轻量 bridge
+          └─ progressive callback 可立即发出 `first_unit`
+
+Step 5   将本轮用户输入加入短期记忆
+          └─ 后续 policy、memory 和 main response 可看见当前输入
+
+Step 6   预览 managed memory influence
           └─ preview_influence() 不写入数据库
           └─ 只应用被允许的 state deltas，并通过 clamp_all() 限制到 [0,1]
           └─ Memory Harness 记录 expression context 数量、policy suggestion、state delta keys
 
-Step 6   持久化状态快照到 SQLite（state_snapshots 表）
+Step 7   持久化状态快照到 SQLite（state_snapshots 表）
 
-Step 7   将显著事件（salience ≥ 0.5）存入情节记忆（episodic_memories 表）
+Step 8   将显著事件（salience ≥ 0.5）存入情节记忆（episodic_memories 表）
           └─ embedding 可用时补写向量；失败时退回可解释召回
 
-Step 8   策略选择
+Step 9   策略选择
           └─ PolicySelector 从上到下匹配 policy_rules.yaml
           └─ Constitution 先行检查是否允许
           └─ 返回 PolicyDecision（含 action + rationale）
           └─ managed memory policy influence 可把开放回应牵引为选择性记忆召回
           └─ Policy Harness 记录 rule id、selected / vetoed、decision
 
-Step 9   [条件] 若策略或 managed memory 要求检索记忆
+Step 10  [条件] 若策略或 managed memory 要求检索记忆
           └─ 检索当前 session 的最近对话、情节记忆和反思摘要
           └─ 若当前 session 绑定匿名 visitor_id，同一 visitor 的旧 session 可作为 continuity hint 参与召回
           └─ embedding 启用时，同 `session_type` 的语义池可参与 hybrid retrieval
@@ -99,28 +104,30 @@ Step 9   [条件] 若策略或 managed memory 要求检索记忆
           └─ `RETRIEVE_MEMORY_FIRST` 取回材料后进入开放表达，其它检索策略保持原 action
           └─ Memory Harness 记录 retrieval 路径和取回数量
 
-Step 10  表达层生成输出
+Step 11  表达层生成 `second_unit`
           └─ ContextBuilder 组装 ExpressionContext
+          └─ prompt 明确知道本轮 `first_unit` 已经说出口，主回应只续写、不重答
           └─ StyleMapper 计算 StyleHints（tone, delay, fragmentation, visual_mode）
           └─ ClaudeClient 调用 LLM
           └─ Constitution 过滤输出文本
           └─ Prompt / Generation / Output Harness 记录 prompt partial、LLM 状态、constitution filter
 
-Step 11  将实体回应加入短期记忆缓冲
+Step 12  将实体回应加入短期记忆缓冲
+          └─ content 仍只保存 `second_unit`；完整 response_plan 仅作为 metadata 供下一轮 bridge 使用
 
-Step 12  写入 interaction_log，并记录 memory_influence_log
+Step 13  写入 interaction_log，并记录 memory_influence_log
           └─ influence log 记录 expression / policy / state 影响，不公开 prompt 或 YAML 全量规则
 
-Step 13  生成 managed memory proposal，并在 auto-commit 开启时提交
+Step 14  生成 managed memory proposal，并在 auto-commit 开启时提交
           └─ propose() 不直接改变行为记忆
           └─ commit() 后才进入 committed managed memories
 
-Step 14  触发反思检查
+Step 15  触发反思检查
           └─ 若未反思事件数 ≥ threshold → 调用 ReflectionEngine
           └─ 存储反思摘要到 reflective_summaries 表
           └─ 标记已处理的情节记忆
 
-Step 15  发送 turn_complete 到 EventBus，供调试或后续 instrumentation 使用
+Step 16  发送 turn_complete 到 EventBus，供调试或后续 instrumentation 使用
           └─ Presentation Harness 记录 delay、visual_mode、spoken_text 状态
 ```
 
@@ -213,10 +220,13 @@ HarnessTraceRecorder.start(...)
 TextParser / KeywordDetector / SalienceScorer
   → [PerceptionEvent, ...]
   ↓
-ShortTermMemory.add(user)
-  ↓
 StateEngine.apply_event(...) + apply_decay(...)
   → new EntityState
+  ↓
+ExpressionEngine.plan_first_unit(...)
+  → progressive first_unit callback
+  ↓
+ShortTermMemory.add(user)
   ↓
 ManagedMemory.preview_influence(...)
   → expression_context / policy_influence / bounded state_influence
@@ -231,7 +241,7 @@ Managed memory policy influence may request RETRIEVE_SELECTIVE_MEMORY
 MemoryRetriever.retrieve(...) or managed expression_context fallback
   ↓
 ExpressionEngine
-  → ContextBuilder + StyleMapper + ClaudeClient + Constitution filter
+  → ContextBuilder + already-spoken first_unit + StyleMapper + ClaudeClient + Constitution filter
   ↓
 ExpressionOutput
   ↓

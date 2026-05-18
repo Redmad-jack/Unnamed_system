@@ -12,7 +12,7 @@ from fastapi.responses import StreamingResponse
 
 from conscious_entity.audio import AudioManager, AudioRuntimeError
 from conscious_entity.interfaces.api_models import AudioDialogRequest
-from conscious_entity.interfaces.api_runtime import _run_dialog_turn
+from conscious_entity.interfaces.api_runtime import _run_dialog_turn, _run_dialog_turn_progressive
 from conscious_entity.telemetry.latency import record_audio_latency
 
 
@@ -67,11 +67,69 @@ async def audio_dialog(body: AudioDialogRequest, request: Request):
         "spoken_text": output.spoken_text,
         "delay_ms": output.delay_ms,
         "visual_mode": output.visual_mode,
+        "vocal_marker": output.vocal_marker,
+        "body_action": output.body_action,
+        "response_plan": (
+            output.response_plan.to_dict()
+            if output.response_plan is not None
+            else None
+        ),
         "should_speak": should_speak,
         "tts_stream_id": stream.stream_id if stream else None,
         "output_format": manager.config.output_format,
         "audio_disabled_reason": disabled_reason,
     }
+
+
+@audio_router.post("/dialog/progressive")
+async def audio_dialog_progressive(body: AudioDialogRequest, request: Request):
+    transcript = body.transcript.strip()
+    if not transcript:
+        raise HTTPException(status_code=400, detail="transcript is required")
+    if getattr(request.app.state, "loop", None) is None:
+        raise HTTPException(status_code=503, detail="Loop not initialised")
+
+    manager = _audio_manager(request)
+
+    async def stream():
+        try:
+            async for event in _run_dialog_turn_progressive(
+                request,
+                transcript,
+                source="audio_dialog_progressive",
+                input_metadata={
+                    "input_mode": "voice_transcript",
+                    "source": "audio_dialog_progressive",
+                    "audio_session_id": body.audio_session_id,
+                    "transcript_state": "final",
+                },
+            ):
+                payload = dict(event)
+                phase = payload.get("phase")
+                if phase == "first_unit":
+                    _attach_tts_stream(
+                        payload,
+                        manager,
+                        source="dialog_first_unit",
+                        latency_name="audio_dialog_progressive.first_tts_stream_create",
+                        audio_session_id=body.audio_session_id,
+                    )
+                elif phase == "final":
+                    _attach_tts_stream(
+                        payload,
+                        manager,
+                        source="dialog_second_unit",
+                        latency_name="audio_dialog_progressive.second_tts_stream_create",
+                        audio_session_id=body.audio_session_id,
+                    )
+                payload["input_text"] = transcript
+                payload["audio_session_id"] = body.audio_session_id
+                payload["output_format"] = manager.config.output_format
+                yield _ndjson(payload)
+        except Exception as exc:
+            yield _ndjson({"phase": "error", "error": str(exc), "done": True})
+
+    return StreamingResponse(stream(), media_type="application/x-ndjson")
 
 
 @audio_router.get("/tts/stream/{stream_id}")
@@ -275,6 +333,42 @@ def _is_websocket_send_after_close(exc: RuntimeError) -> bool:
     return "websocket.send" in message and (
         "websocket.close" in message or "response already completed" in message
     )
+
+
+def _attach_tts_stream(
+    payload: dict[str, Any],
+    manager: AudioManager,
+    *,
+    source: str,
+    latency_name: str,
+    audio_session_id: str | None,
+) -> None:
+    start = time.perf_counter()
+    stream, should_speak = manager.create_tts_stream_from_text(
+        str(payload.get("text") or ""),
+        source=source,
+    )
+    record_audio_latency(
+        latency_name,
+        (time.perf_counter() - start) * 1000,
+        metadata={
+            "phase": payload.get("phase"),
+            "should_speak": should_speak,
+            "has_stream": stream is not None,
+            "audio_session_id": audio_session_id,
+        },
+    )
+    payload["should_speak"] = should_speak
+    payload["tts_stream_id"] = stream.stream_id if stream else None
+    payload["audio_disabled_reason"] = (
+        manager.config.disabled_reason()
+        if should_speak and stream is None
+        else None
+    )
+
+
+def _ndjson(payload: dict[str, Any]) -> str:
+    return json.dumps(payload, ensure_ascii=False) + "\n"
 
 
 def _audio_manager(request_or_websocket: Request | WebSocket) -> AudioManager:

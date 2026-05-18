@@ -103,6 +103,45 @@ def test_preview_influence_does_not_write(conn, prompts_dir):
 
     assert preview["explanation"]["writes"] is False
     assert after == before
+    deltas = preview["state_influence"]["deltas"]
+    assert deltas["memory_gravity"] > 0
+    assert deltas["inquiry"] > 0
+    assert deltas["positive_opening"] > 0
+    assert "happiness" not in deltas
+    assert preview["results"]
+    assert preview["expression_context"] == []
+    assert preview["policy_influence"]["suggested_action"] is None
+    assert preview["explanation"]["memory_gravity_gate"]["passed"] is False
+
+
+def test_preview_influence_allows_memory_context_when_memory_gravity_gate_passes(conn, prompts_dir):
+    provider = _provider(conn, prompts_dir)
+    provider.commit(operations=[
+        MemoryOperationProposal(operation="add", content="Visitor returned to naming pressure.", topics=["naming"])
+    ])
+
+    preview = provider.preview_influence("naming", {"state": {"memory_gravity": 0.24}})
+
+    assert preview["expression_context"]
+    assert preview["policy_influence"]["suggested_action"] == "retrieve_selective_memory"
+    assert preview["policy_influence"]["memory_gravity_gate_passed"] is True
+    assert preview["explanation"]["memory_gravity_gate"]["effective"] >= 0.25
+
+
+def test_explicit_memory_event_bypasses_memory_gravity_gate(conn, prompts_dir):
+    provider = _provider(conn, prompts_dir)
+    provider.commit(operations=[
+        MemoryOperationProposal(operation="add", content="Visitor asked about memory continuity.", topics=["memory"])
+    ])
+
+    preview = provider.preview_influence(
+        "memory",
+        {"events": ["memory_continuity_query"], "state": {"memory_gravity": 0.0}},
+    )
+
+    assert preview["expression_context"]
+    assert preview["policy_influence"]["suggested_action"] == "retrieve_selective_memory"
+    assert preview["explanation"]["memory_gravity_gate"]["explicit_memory_event"] is True
 
 
 def test_archive_hides_memory_and_restore_reactivates(conn, prompts_dir):

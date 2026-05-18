@@ -120,7 +120,7 @@ class TTSStream:
     output_format: str
     created_at: datetime
     expires_at: datetime
-    source: Literal["dialog_output", "debug_preview"]
+    source: Literal["dialog_output", "dialog_first_unit", "dialog_second_unit", "debug_preview"]
     consumed: bool = False
     last_logid: str | None = None
 

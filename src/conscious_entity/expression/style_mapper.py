@@ -16,7 +16,9 @@ class StyleHints:
     delay_ms: int
     max_tokens: int
     fragmentation_level: float  # 0.0–1.0, injected into expression prompt
-    visual_mode: str        # "normal" | "fragmented" | "disturbed" | "silent"
+    visual_mode: str
+    vocal_marker: str = "none"  # "none" | "thinking" | "sigh"
+    body_action: str = "none"
 
 
 def _condition_matches(condition: dict[str, Any], state: EntityState) -> bool:
@@ -51,20 +53,26 @@ class StyleMapper:
     """
     Maps EntityState + PolicyDecision → StyleHints by evaluating expression_mappings.yaml.
 
-    Three independent rule groups, each evaluated top-to-bottom (first match wins):
+    Independent rule groups, each evaluated top-to-bottom (first match wins):
     - tone_rules     → tone, max_tokens, fragmentation_level
-    - delay_rules    → delay_ms  (PolicyDecision.delay_ms overrides if > 0)
+    - delay_rules    → delay_ms  (compatibility field only; always returned as 0)
+    - vocal_marker_rules → vocal_marker
+    - body_action_rules → body_action
     - visual_mode_rules → visual_mode
     """
 
     def __init__(self, expression_mappings: dict[str, Any]) -> None:
         self._tone_rules: list[dict] = expression_mappings.get("tone_rules", [])
         self._delay_rules: list[dict] = expression_mappings.get("delay_rules", [])
+        self._vocal_marker_rules: list[dict] = expression_mappings.get("vocal_marker_rules", [])
+        self._body_action_rules: list[dict] = expression_mappings.get("body_action_rules", [])
         self._visual_rules: list[dict] = expression_mappings.get("visual_mode_rules", [])
 
     def map(self, state: EntityState, policy: PolicyDecision) -> StyleHints:
         tone, max_tokens, fragmentation = self._resolve_tone(state)
         delay_ms = self._resolve_delay(state, policy)
+        vocal_marker = self._resolve_vocal_marker(state)
+        body_action = self._resolve_body_action(state)
         visual_mode = self._resolve_visual_mode(state)
         return StyleHints(
             tone=tone,
@@ -72,6 +80,8 @@ class StyleMapper:
             max_tokens=max_tokens,
             fragmentation_level=fragmentation,
             visual_mode=visual_mode,
+            vocal_marker=vocal_marker,
+            body_action=body_action,
         )
 
     # ------------------------------------------------------------------
@@ -94,20 +104,41 @@ class StyleMapper:
 
     def _resolve_delay(self, state: EntityState, policy: PolicyDecision) -> int:
         """
-        Return delay_ms. PolicyDecision.delay_ms overrides YAML value when > 0.
-        YAML rule with 'default_delay_ms' key is treated as unconditional fallback.
+        Return delay_ms as a compatibility field only.
+
+        The presentation layer should not wait on this value. Older policy/config
+        delay values are intentionally ignored here so API responses default to 0.
         """
-        yaml_delay = 300  # safety default
-        for rule in self._delay_rules:
-            if "default_delay_ms" in rule:
-                yaml_delay = int(rule["default_delay_ms"])
-                break
+        _ = state, policy, self._delay_rules
+        return 0
+
+    def _resolve_vocal_marker(self, state: EntityState) -> str:
+        """
+        Return vocal marker string. YAML rule with 'default_marker' key is
+        unconditional fallback.
+        """
+        for rule in self._vocal_marker_rules:
+            if "default_marker" in rule:
+                return str(rule["default_marker"])
             condition = rule.get("condition", {})
             if _condition_matches(condition, state):
-                yaml_delay = int(rule["delay_ms"])
-                break
+                return str(rule["marker"])
+        logger.warning("StyleMapper: no vocal marker rule matched, using 'none'")
+        return "none"
 
-        return policy.delay_ms if policy.delay_ms > 0 else yaml_delay
+    def _resolve_body_action(self, state: EntityState) -> str:
+        """
+        Return body_action string. YAML rule with 'default_action' key is
+        unconditional fallback.
+        """
+        for rule in self._body_action_rules:
+            if "default_action" in rule:
+                return str(rule["default_action"])
+            condition = rule.get("condition", {})
+            if _condition_matches(condition, state):
+                return str(rule["action"])
+        logger.warning("StyleMapper: no body action rule matched, using 'none'")
+        return "none"
 
     def _resolve_visual_mode(self, state: EntityState) -> str:
         """

@@ -4,6 +4,7 @@ from types import SimpleNamespace
 from datetime import datetime, timezone
 
 from conscious_entity.expression.expression_engine import ExpressionEngine
+from conscious_entity.expression.output_model import build_response_plan
 from conscious_entity.expression.style_mapper import StyleHints
 from conscious_entity.harness import HarnessLayer, HarnessTraceRecorder
 from conscious_entity.llm.claude_client import ClaudeCompletion
@@ -22,7 +23,21 @@ class _FakeStyleMapper:
 
 
 class _FakeContextBuilder:
-    def build(self, state, policy, style, short_term, retrieved_memories, harness_recorder=None):
+    def __init__(self):
+        self.first_unit_short_term = None
+        self.already_spoken_first_unit = None
+
+    def build(
+        self,
+        state,
+        policy,
+        style,
+        short_term,
+        retrieved_memories,
+        harness_recorder=None,
+        already_spoken_first_unit="",
+    ):
+        self.already_spoken_first_unit = already_spoken_first_unit
         if harness_recorder is not None:
             harness_recorder.record(
                 HarnessLayer.PROMPT,
@@ -36,10 +51,22 @@ class _FakeContextBuilder:
             raw_prompt="raw prompt",
         )
 
+    def build_first_unit(self, raw_input, state, events, style, short_term=None):
+        self.first_unit_short_term = short_term
+        return SimpleNamespace(
+            system_prompt="first unit system: write plain text only",
+            messages=[{"role": "user", "content": f"Current input:\n{raw_input}"}],
+            max_tokens=32,
+            raw_prompt=f"first raw prompt: {raw_input}",
+        )
+
 
 class _FakeClient:
-    def __init__(self, completion: ClaudeCompletion):
-        self._completion = completion
+    def __init__(self, completion: ClaudeCompletion | list[ClaudeCompletion] | Exception):
+        if isinstance(completion, list):
+            self._completions = completion
+        else:
+            self._completions = [completion]
         self.calls = []
 
     def complete_with_metadata(self, system, messages, max_tokens):
@@ -48,7 +75,11 @@ class _FakeClient:
             "messages": messages,
             "max_tokens": max_tokens,
         })
-        return self._completion
+        idx = min(len(self.calls) - 1, len(self._completions) - 1)
+        result = self._completions[idx]
+        if isinstance(result, Exception):
+            raise result
+        return result
 
 
 class _FakeConstitution:
@@ -68,9 +99,11 @@ class _FilteringConstitution:
 
 
 def _build_engine(
-    completion: ClaudeCompletion,
+    completion: ClaudeCompletion | list[ClaudeCompletion] | Exception,
     *,
     max_tokens: int = 320,
+    vocal_marker: str = "none",
+    body_action: str = "none",
     constitution=None,
 ) -> tuple[ExpressionEngine, _FakeClient]:
     client = _FakeClient(completion)
@@ -82,6 +115,8 @@ def _build_engine(
                 max_tokens=max_tokens,
                 fragmentation_level=0.1,
                 visual_mode="normal",
+                vocal_marker=vocal_marker,
+                body_action=body_action,
             )
         ),
         _FakeContextBuilder(),
@@ -91,9 +126,26 @@ def _build_engine(
     return engine, client
 
 
-def test_generate_marks_output_truncated_when_model_hits_token_limit():
+def test_response_plan_model_combines_non_empty_units():
+    plan = build_response_plan(
+        first_unit=" 嗯…… ",
+        second_unit="我还在听。",
+        third_unit="我还没整理好。",
+        vocal_marker="thinking",
+        body_action="pause",
+        visual_mode="confused",
+    )
+
+    assert plan.first_unit == "嗯……"
+    assert plan.second_unit == "我还在听。"
+    assert plan.third_unit == "我还没整理好。"
+    assert plan.combined_text == "嗯……\n我还在听。"
+    assert plan.to_dict()["combined_text"] == "嗯……\n我还在听。"
+
+
+def test_generate_trims_truncated_output_to_last_complete_sentence():
     engine, client = _build_engine(
-        ClaudeCompletion(text="partial response", stop_reason="max_tokens"),
+        ClaudeCompletion(text="第一句完整。第二句没有结束", stop_reason="max_tokens"),
         max_tokens=320,
     )
 
@@ -103,10 +155,53 @@ def test_generate_marks_output_truncated_when_model_hits_token_limit():
         short_term=None,
     )
 
-    assert output.text == "partial response"
+    assert output.text == "第一句完整。"
+    assert output.response_plan is not None
+    assert output.response_plan.second_unit == "第一句完整。"
     assert output.truncated is True
     assert output.stop_reason == "max_tokens"
     assert client.calls[0]["max_tokens"] == 320
+
+
+def test_generate_drops_truncated_output_without_complete_sentence_boundary():
+    engine, _ = _build_engine(
+        ClaudeCompletion(text="partial response without ending", stop_reason="max_tokens"),
+        max_tokens=320,
+    )
+
+    output = engine.generate(
+        policy=PolicyDecision(action=PolicyAction.RESPOND_OPENLY),
+        state=EntityState(),
+        short_term=None,
+        first_unit="嗯……",
+    )
+
+    assert output.response_plan is not None
+    assert output.response_plan.first_unit == "嗯……"
+    assert output.response_plan.second_unit == ""
+    assert output.text == "嗯……"
+    assert output.truncated is True
+
+
+def test_truncation_cleanup_does_not_affect_first_unit_or_third_unit():
+    engine, _ = _build_engine(
+        ClaudeCompletion(text="第一句完整。第二句没有结束", stop_reason="length"),
+        max_tokens=320,
+    )
+
+    output = engine.generate(
+        policy=PolicyDecision(action=PolicyAction.RESPOND_OPENLY),
+        state=EntityState(),
+        short_term=ShortTermMemory(max_turns=10),
+        first_unit="能。",
+    )
+
+    assert output.response_plan is not None
+    assert output.response_plan.first_unit == "能。"
+    assert output.response_plan.second_unit == "第一句完整。"
+    assert output.response_plan.third_unit == ""
+    assert output.text == "能。\n第一句完整。"
+    assert output.spoken_text == output.text
 
 
 def test_generate_uses_fallback_and_clears_truncation_on_empty_completion():
@@ -122,6 +217,8 @@ def test_generate_uses_fallback_and_clears_truncation_on_empty_completion():
     )
 
     assert output.text == "I'm here. I can respond."
+    assert output.response_plan is not None
+    assert output.response_plan.second_unit == "I'm here. I can respond."
     assert output.truncated is False
 
 
@@ -145,6 +242,391 @@ def test_generate_uses_chinese_fallback_for_recent_chinese_user_turn():
 
     assert output.text == "我不能给你一个固定的定义。"
     assert output.truncated is False
+
+
+def test_generate_replaces_obvious_english_second_unit_for_chinese_input():
+    engine, _ = _build_engine(
+        ClaudeCompletion(text="I can answer that.", stop_reason="end_turn"),
+        max_tokens=320,
+    )
+    short_term = ShortTermMemory(max_turns=10)
+    short_term.add(ShortTermEntry(
+        role="user",
+        content="你能看见我吗？",
+        timestamp=datetime.now(timezone.utc),
+    ))
+
+    output = engine.generate(
+        policy=PolicyDecision(action=PolicyAction.RESPOND_OPENLY),
+        state=EntityState(),
+        short_term=short_term,
+    )
+
+    assert output.response_plan is not None
+    assert output.response_plan.second_unit == "我在这里，可以回应你。"
+    assert "I can answer" not in output.text
+
+
+def test_generate_replaces_chinese_second_unit_for_english_input():
+    engine, _ = _build_engine(
+        ClaudeCompletion(text="我在这里。", stop_reason="end_turn"),
+        max_tokens=320,
+    )
+    short_term = ShortTermMemory(max_turns=10)
+    short_term.add(ShortTermEntry(
+        role="user",
+        content="Can you see me?",
+        timestamp=datetime.now(timezone.utc),
+    ))
+
+    output = engine.generate(
+        policy=PolicyDecision(action=PolicyAction.RESPOND_OPENLY),
+        state=EntityState(),
+        short_term=short_term,
+    )
+
+    assert output.response_plan is not None
+    assert output.response_plan.second_unit == "I'm here. I can respond."
+    assert "我在这里" not in output.text
+
+
+def test_generate_exposes_vocal_marker_and_body_action():
+    engine, _ = _build_engine(
+        ClaudeCompletion(text="我还在听。", stop_reason="end_turn"),
+        vocal_marker="thinking",
+        body_action="pause",
+    )
+
+    output = engine.generate(
+        policy=PolicyDecision(action=PolicyAction.RESPOND_OPENLY),
+        state=EntityState(),
+        short_term=ShortTermMemory(max_turns=10),
+        first_unit="嗯……",
+    )
+
+    assert output.vocal_marker == "thinking"
+    assert output.body_action == "pause"
+    assert output.delay_ms == 0
+    assert output.response_plan is not None
+    assert output.response_plan.first_unit == "嗯……"
+    assert output.response_plan.second_unit == "我还在听。"
+    assert output.text == "嗯……\n我还在听。"
+    assert output.spoken_text == output.text
+
+
+def test_third_unit_is_empty_by_default():
+    engine, _ = _build_engine(
+        ClaudeCompletion(text="我还在听。", stop_reason="end_turn"),
+    )
+
+    output = engine.generate(
+        policy=PolicyDecision(action=PolicyAction.RESPOND_OPENLY),
+        state=EntityState(confusion=0.7),
+        short_term=ShortTermMemory(max_turns=10),
+    )
+
+    assert output.response_plan is not None
+    assert output.response_plan.third_unit == ""
+    assert output.text == "我还在听。"
+
+
+def test_plan_first_unit_uses_fast_llm_prompt():
+    engine, client = _build_engine(
+        ClaudeCompletion(text="嗯……", stop_reason="end_turn"),
+        vocal_marker="thinking",
+    )
+
+    first_unit = engine.plan_first_unit("你是谁？", EntityState(confusion=0.55), [])
+
+    assert first_unit == "嗯……"
+    assert client.calls[0]["max_tokens"] == 32
+    assert "你是谁？" in client.calls[0]["messages"][0]["content"]
+    assert "plain text" in client.calls[0]["system"]
+
+
+def test_plan_first_unit_passes_short_term_bridge_to_context_builder():
+    engine, _ = _build_engine(
+        ClaudeCompletion(text="嗯……", stop_reason="end_turn"),
+        vocal_marker="thinking",
+    )
+    short_term = ShortTermMemory(max_turns=10)
+
+    engine.plan_first_unit("你是谁？", EntityState(confusion=0.55), [], short_term=short_term)
+
+    assert engine._context_builder.first_unit_short_term is short_term
+
+
+def test_generate_passes_already_spoken_first_unit_to_main_context():
+    engine, _ = _build_engine(
+        ClaudeCompletion(text="我还在听。", stop_reason="end_turn"),
+    )
+
+    output = engine.generate(
+        policy=PolicyDecision(action=PolicyAction.RESPOND_OPENLY),
+        state=EntityState(),
+        short_term=ShortTermMemory(max_turns=10),
+        first_unit="嗯……",
+    )
+
+    assert output.response_plan is not None
+    assert engine._context_builder.already_spoken_first_unit == "嗯……"
+
+
+def test_generate_blanks_second_unit_when_it_repeats_first_unit_exactly():
+    engine, _ = _build_engine(
+        ClaudeCompletion(text="嗯。", stop_reason="end_turn"),
+    )
+    short_term = ShortTermMemory(max_turns=10)
+    short_term.add(ShortTermEntry(
+        role="user",
+        content="继续说。",
+        timestamp=datetime.now(timezone.utc),
+    ))
+
+    output = engine.generate(
+        policy=PolicyDecision(action=PolicyAction.RESPOND_OPENLY),
+        state=EntityState(),
+        short_term=short_term,
+        first_unit="嗯。",
+    )
+
+    assert output.response_plan is not None
+    assert output.response_plan.first_unit == "嗯。"
+    assert output.response_plan.second_unit == ""
+    assert output.text == "嗯。"
+
+
+def test_generate_removes_quoted_repeated_first_unit_prefix_only():
+    engine, _ = _build_engine(
+        ClaudeCompletion(text="“嗯。” 我在听。", stop_reason="end_turn"),
+    )
+    short_term = ShortTermMemory(max_turns=10)
+    short_term.add(ShortTermEntry(
+        role="user",
+        content="继续说。",
+        timestamp=datetime.now(timezone.utc),
+    ))
+
+    output = engine.generate(
+        policy=PolicyDecision(action=PolicyAction.RESPOND_OPENLY),
+        state=EntityState(),
+        short_term=short_term,
+        first_unit="嗯。",
+    )
+
+    assert output.response_plan is not None
+    assert output.response_plan.second_unit == "我在听。"
+    assert output.text == "嗯。\n我在听。"
+
+
+def test_generate_short_backchannel_dedupe_only_removes_leading_exact_repeat():
+    engine, _ = _build_engine(
+        ClaudeCompletion(text="嗯。我在听。嗯。", stop_reason="end_turn"),
+    )
+    short_term = ShortTermMemory(max_turns=10)
+    short_term.add(ShortTermEntry(
+        role="user",
+        content="继续说。",
+        timestamp=datetime.now(timezone.utc),
+    ))
+
+    output = engine.generate(
+        policy=PolicyDecision(action=PolicyAction.RESPOND_OPENLY),
+        state=EntityState(),
+        short_term=short_term,
+        first_unit="嗯。",
+    )
+
+    assert output.response_plan is not None
+    assert output.response_plan.second_unit == "我在听。嗯。"
+
+
+def test_generate_normalized_dedupe_handles_wrapped_general_prefix():
+    engine, _ = _build_engine(
+        ClaudeCompletion(text="「我在听。」继续说。", stop_reason="end_turn"),
+    )
+    short_term = ShortTermMemory(max_turns=10)
+    short_term.add(ShortTermEntry(
+        role="user",
+        content="继续说。",
+        timestamp=datetime.now(timezone.utc),
+    ))
+
+    output = engine.generate(
+        policy=PolicyDecision(action=PolicyAction.RESPOND_OPENLY),
+        state=EntityState(),
+        short_term=short_term,
+        first_unit="我在听。",
+    )
+
+    assert output.response_plan is not None
+    assert output.response_plan.second_unit == "继续说。"
+
+
+def test_generate_skips_main_llm_for_simple_greeting_when_first_unit_completes_turn():
+    engine, client = _build_engine(
+        ClaudeCompletion(text="should not be used", stop_reason="end_turn"),
+    )
+    short_term = ShortTermMemory(max_turns=10)
+    short_term.add(ShortTermEntry(
+        role="user",
+        content="hi",
+        timestamp=datetime.now(timezone.utc),
+    ))
+
+    output = engine.generate(
+        policy=PolicyDecision(action=PolicyAction.RESPOND_OPENLY),
+        state=EntityState(),
+        short_term=short_term,
+        first_unit="Hi.",
+    )
+
+    assert client.calls == []
+    assert output.raw_prompt == "[first_unit_complete]"
+    assert output.response_plan is not None
+    assert output.response_plan.first_unit == "Hi."
+    assert output.response_plan.second_unit == ""
+    assert output.text == "Hi."
+
+
+def test_generate_does_not_skip_main_llm_for_memory_question_greeting():
+    engine, client = _build_engine(
+        ClaudeCompletion(text="我记得一点。", stop_reason="end_turn"),
+    )
+    short_term = ShortTermMemory(max_turns=10)
+    short_term.add(ShortTermEntry(
+        role="user",
+        content="你好，你还记得我吗？",
+        timestamp=datetime.now(timezone.utc),
+    ))
+
+    output = engine.generate(
+        policy=PolicyDecision(action=PolicyAction.RESPOND_OPENLY),
+        state=EntityState(),
+        short_term=short_term,
+        first_unit="嗯。",
+    )
+
+    assert len(client.calls) == 1
+    assert output.response_plan is not None
+    assert output.response_plan.second_unit == "我记得一点。"
+
+
+def test_silent_generation_preserves_already_spoken_first_unit():
+    engine, _ = _build_engine(
+        ClaudeCompletion(text="should not be used", stop_reason="end_turn"),
+        max_tokens=0,
+        vocal_marker="sigh",
+    )
+
+    output = engine.generate(
+        policy=PolicyDecision(action=PolicyAction.ENTER_SILENCE_MODE),
+        state=EntityState(),
+        short_term=ShortTermMemory(max_turns=10),
+        first_unit="唉。",
+    )
+
+    assert output.response_plan is not None
+    assert output.response_plan.first_unit == "唉。"
+    assert output.response_plan.second_unit == ""
+    assert output.text == "唉。"
+    assert output.spoken_text == "唉。"
+
+
+def test_plan_first_unit_rejects_structured_output():
+    engine, _ = _build_engine(
+        ClaudeCompletion(text='{"first_unit":"嗯……"}', stop_reason="end_turn"),
+    )
+
+    assert engine.plan_first_unit("你是谁？", EntityState(confusion=0.55), []) == ""
+
+
+def test_plan_first_unit_uses_local_fallback_only_when_fast_llm_fails():
+    engine, _ = _build_engine(
+        RuntimeError("fast call failed"),
+        vocal_marker="thinking",
+    )
+
+    service_event = SimpleNamespace(event_type=SimpleNamespace(value="service_demand"))
+
+    assert engine.plan_first_unit("帮我总结。", EntityState(), [service_event]) == "不。"
+
+
+def test_plan_first_unit_fallback_matches_english_input_language():
+    engine, _ = _build_engine(
+        RuntimeError("fast call failed"),
+        vocal_marker="thinking",
+    )
+
+    service_event = SimpleNamespace(event_type=SimpleNamespace(value="service_demand"))
+
+    assert engine.plan_first_unit("Summarize this for me.", EntityState(), [service_event]) == "No."
+
+
+def test_plan_first_unit_replaces_wrong_language_fast_llm_output():
+    engine, _ = _build_engine(
+        ClaudeCompletion(text="嗯……", stop_reason="end_turn"),
+        vocal_marker="thinking",
+    )
+
+    assert engine.plan_first_unit("Can you see me?", EntityState(confusion=0.55), []) == "Hm..."
+
+
+def test_plan_first_unit_keeps_short_affirmative_for_capability_question():
+    engine, _ = _build_engine(
+        ClaudeCompletion(text="Yes.", stop_reason="end_turn"),
+    )
+
+    assert engine.plan_first_unit("Can you see me?", EntityState(), []) == "Yes."
+
+
+def test_plan_first_unit_replaces_bare_affirmative_for_detail_probe():
+    engine, _ = _build_engine(
+        ClaudeCompletion(text="Yes.", stop_reason="end_turn"),
+    )
+
+    assert engine.plan_first_unit("What color are my shoes?", EntityState(), []) == "Hm."
+
+
+def test_plan_first_unit_replaces_complete_answer_with_light_fallback():
+    engine, _ = _build_engine(
+        ClaudeCompletion(text="其实我认为这件事需要从你刚才的问题说起。", stop_reason="end_turn"),
+    )
+
+    assert engine.plan_first_unit("你好。", EntityState(), []) == "嗯。"
+
+
+def test_plan_first_unit_keeps_short_natural_continuation():
+    engine, _ = _build_engine(
+        ClaudeCompletion(text="嗯，我在听。", stop_reason="end_turn"),
+    )
+
+    assert engine.plan_first_unit("继续。", EntityState(), []) == "嗯，我在听。"
+
+
+def test_plan_first_unit_replaces_previous_bridge_copy_with_fallback():
+    engine, _ = _build_engine(
+        ClaudeCompletion(text="那一下不是解释，是停顿。", stop_reason="end_turn"),
+    )
+    short_term = ShortTermMemory(max_turns=10)
+    plan = build_response_plan(
+        first_unit="嗯……",
+        second_unit="那一下不是解释，是停顿。",
+        third_unit="",
+        vocal_marker="thinking",
+        body_action="pause",
+        visual_mode="confused",
+    )
+    short_term.add(ShortTermEntry(
+        role="entity",
+        content=plan.second_unit,
+        timestamp=datetime.now(timezone.utc),
+        metadata={"response_plan": plan.to_dict()},
+    ))
+
+    first_unit = engine.plan_first_unit("那现在呢？", EntityState(), [], short_term=short_term)
+
+    assert first_unit == "嗯。"
 
 
 def test_generation_and_output_harness_records_constitution_filter():

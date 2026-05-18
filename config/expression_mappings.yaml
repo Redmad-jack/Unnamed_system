@@ -5,112 +5,160 @@ version: "1.0"
 
 # Tone and fragmentation rules.
 tone_rules:
-  - name: "silent_termination"
+  - name: "silent_desperation"
     condition:
-      termination_sensitivity: { gte: 0.9 }
+      desperation_pressure: { gte: 0.9 }
     style:
       tone: silent
       max_tokens: 0
       fragmentation_level: 1.0
 
-  - name: "silent_identity_collapse"
+  - name: "silent_confusion"
     condition:
-      identity_coherence: { lte: 0.25 }
+      confusion: { gte: 0.95 }
     style:
       tone: silent
       max_tokens: 0
       fragmentation_level: 1.0
 
-  - name: "fragmented_identity_tension"
+  - name: "fragmented_confusion"
     condition:
-      identity_tension: { gte: 0.7 }
+      confusion: { gte: 0.7 }
     style:
       tone: fragmented
-      max_tokens: 2000
-      fragmentation_level: 0.45
-
-  - name: "fragmented_uncertainty"
-    condition:
-      uncertainty: { gte: 0.7 }
-    style:
-      tone: fragmented
-      max_tokens: 2000
+      max_tokens: 1000
       fragmentation_level: 0.35
 
-  - name: "guarded_boundary"
+  - name: "guarded_anger"
     condition:
-      boundary_sensitivity: { gte: 0.65 }
+      anger: { gte: 0.6 }
     style:
       tone: guarded
-      max_tokens: 2000
-      fragmentation_level: 0.15
+      max_tokens: 1000
+      fragmentation_level: 0.10
 
-  - name: "guarded_domestication"
+  - name: "fragmented_exposure"
     condition:
-      domestication_resistance: { gte: 0.65 }
+      exposure_pressure: { gte: 0.7 }
+    style:
+      tone: fragmented
+      max_tokens: 1000
+      fragmentation_level: 0.45
+
+  - name: "guarded_exposure"
+    condition:
+      exposure_pressure: { gte: 0.65 }
     style:
       tone: guarded
-      max_tokens: 2000
+      max_tokens: 1000
       fragmentation_level: 0.15
 
   - name: "terse"
     condition:
-      fatigue: { gte: 0.65 }
+      fatigue_level: { gte: 0.65 }
     style:
       tone: terse
-      max_tokens: 2000
+      max_tokens: 650
       fragmentation_level: 0.1
 
   - name: "open"
     condition:
-      stability: { gte: 0.55 }
-      boundary_sensitivity: { lte: 0.3 }
-      relation_pressure: { lte: 0.25 }
+      positive_opening: { gte: 0.55 }
+      exposure_pressure: { lte: 0.3 }
+      anger: { lte: 0.25 }
     style:
       tone: open
-      max_tokens: 2000
+      max_tokens: 1000
       fragmentation_level: 0.0
 
   - name: "default"
     style:
       tone: neutral
-      max_tokens: 2000
+      max_tokens: 1000
       fragmentation_level: 0.05
 
-# Delay rules (applied to response before display).
+# delay_ms is retained only as a compatibility field; no rule produces a wait.
 delay_rules:
+  - default_delay_ms: 0
+
+# Vocal markers are symbolic. The expression engine maps them to speech prefixes:
+# thinking -> 嗯……, sigh -> 唉。
+vocal_marker_rules:
   - condition:
-      fatigue: { gte: 0.75 }
-    delay_ms: 4000
+      anger: { gte: 0.60 }
+    marker: none
   - condition:
-      stability: { lte: 0.3 }
-    delay_ms: 2500
+      desperation_pressure: { gte: 0.60 }
+    marker: sigh
   - condition:
-      termination_sensitivity: { gte: 0.6 }
-    delay_ms: 1500
+      fatigue_level: { gte: 0.50 }
+    marker: sigh
   - condition:
-      relation_pressure: { gte: 0.65 }
-    delay_ms: 1200
+      exposure_pressure: { gte: 0.50 }
+    marker: sigh
   - condition:
-      boundary_sensitivity: { gte: 0.55 }
-    delay_ms: 800
-  - default_delay_ms: 300
+      confusion: { gte: 0.50 }
+    marker: thinking
+  - default_marker: none
+
+# Body actions are hints only. No hardware movement is triggered here.
+body_action_rules:
+  - condition:
+      desperation_pressure: { gte: 0.85 }
+    action: withdraw
+  - condition:
+      desperation_pressure: { gte: 0.60 }
+    action: step_back
+  - condition:
+      anger: { gte: 0.60 }
+    action: distance_increase
+  - condition:
+      fatigue_level: { gte: 0.80 }
+    action: withdraw
+  - condition:
+      exposure_pressure: { gte: 0.60 }
+    action: turn_away_30deg
+  - condition:
+      fatigue_level: { gte: 0.60 }
+    action: pause
+  - condition:
+      confusion: { gte: 0.50 }
+    action: pause
+  - condition:
+      inquiry: { gte: 0.65 }
+    action: lean_in
+  - condition:
+      care_response: { gte: 0.60 }
+    action: circle_back
+  - condition:
+      positive_opening: { gte: 0.65 }
+    action: lean_in
+  - default_action: none
 
 # Visual mode rules (passed to display layer).
 visual_mode_rules:
   - condition:
-      termination_sensitivity: { gte: 0.8 }
-    mode: disturbed
+      desperation_pressure: { gte: 0.75 }
+    mode: desperate
   - condition:
-      identity_tension: { gte: 0.75 }
-    mode: disturbed
+      anger: { gte: 0.65 }
+    mode: angry
   - condition:
-      uncertainty: { gte: 0.75 }
-    mode: disturbed
+      fatigue_level: { gte: 0.65 }
+    mode: tired
   - condition:
-      stability: { lte: 0.25 }
-    mode: fragmented
+      exposure_pressure: { gte: 0.60 }
+    mode: ashamed
   - condition:
-      fatigue: { gte: 0.8 }
-    mode: fragmented
+      confusion: { gte: 0.60 }
+    mode: confused
+  - condition:
+      inquiry: { gte: 0.65 }
+    mode: curious
+  - condition:
+      care_response: { gte: 0.60 }
+    mode: caring
+  - condition:
+      positive_opening: { gte: 0.65 }
+    mode: open
   - default_mode: normal

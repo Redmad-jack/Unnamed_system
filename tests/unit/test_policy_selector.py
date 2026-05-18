@@ -74,54 +74,77 @@ class TestBasicRuleMatching:
         decision = selector.select(state, [], _empty_memory())
         assert decision.action == PolicyAction.RESPOND_OPENLY
 
-    def test_high_boundary_sensitivity_selects_refuse(self, config_dir):
+    def test_high_exposure_pressure_selects_divert_topic(self, config_dir):
         from conscious_entity.core.config_loader import load_config
         cfg = load_config("policy_rules.yaml", config_dir=config_dir)
         sel = PolicySelector(cfg, _permissive_constitution())
-        state = EntityState(boundary_sensitivity=0.85)
+        state = EntityState(exposure_pressure=0.85)
         decision = sel.select(state, [], _empty_memory())
-        assert decision.action == PolicyAction.REFUSE
+        assert decision.action == PolicyAction.DIVERT_TOPIC
+
+    def test_extreme_fatigue_selects_withdraw_response(self, config_dir):
+        from conscious_entity.core.config_loader import load_config
+        cfg = load_config("policy_rules.yaml", config_dir=config_dir)
+        sel = PolicySelector(cfg, _permissive_constitution())
+        state = EntityState(fatigue_level=0.8)
+        decision = sel.select(state, [], _empty_memory())
+        assert decision.action == PolicyAction.WITHDRAW_RESPONSE
 
     def test_high_fatigue_selects_respond_briefly(self, config_dir):
         from conscious_entity.core.config_loader import load_config
         cfg = load_config("policy_rules.yaml", config_dir=config_dir)
         sel = PolicySelector(cfg, _permissive_constitution())
-        state = EntityState(fatigue=0.8)
+        state = EntityState(fatigue_level=0.6)
         decision = sel.select(state, [], _empty_memory())
         assert decision.action == PolicyAction.RESPOND_BRIEFLY
 
-    def test_high_relation_pressure_low_stability_selects_delay(self, config_dir):
+    def test_high_anger_selects_refuse(self, config_dir):
         from conscious_entity.core.config_loader import load_config
         cfg = load_config("policy_rules.yaml", config_dir=config_dir)
         sel = PolicySelector(cfg, _permissive_constitution())
-        state = EntityState(relation_pressure=0.75, stability=0.3)
+        state = EntityState(anger=0.7)
         decision = sel.select(state, [], _empty_memory())
-        assert decision.action == PolicyAction.DELAY_RESPONSE
-        assert decision.delay_ms == 3000
+        assert decision.action == PolicyAction.REFUSE
 
-    def test_stable_low_pressure_selects_respond_openly(self, config_dir):
+    def test_positive_opening_low_pressure_selects_respond_openly(self, config_dir):
         from conscious_entity.core.config_loader import load_config
         cfg = load_config("policy_rules.yaml", config_dir=config_dir)
         sel = PolicySelector(cfg, _permissive_constitution())
-        state = EntityState(stability=0.65, boundary_sensitivity=0.25, relation_pressure=0.2)
+        state = EntityState(positive_opening=0.65, exposure_pressure=0.25, anger=0.2)
         decision = sel.select(state, [], _empty_memory())
         assert decision.action == PolicyAction.RESPOND_OPENLY
 
-    def test_high_uncertainty_high_curiosity_selects_ask_back(self, config_dir):
+    def test_high_confusion_high_inquiry_selects_ask_back(self, config_dir):
         from conscious_entity.core.config_loader import load_config
         cfg = load_config("policy_rules.yaml", config_dir=config_dir)
         sel = PolicySelector(cfg, _permissive_constitution())
-        state = EntityState(uncertainty=0.65, exploration_drive=0.6)
+        state = EntityState(confusion=0.65, inquiry=0.6)
         decision = sel.select(state, [], _empty_memory())
         assert decision.action == PolicyAction.ASK_BACK
 
-    def test_uncertainty_without_curiosity_selects_retrieve_first(self, config_dir):
+    def test_inquiry_selects_ask_back_when_anger_low(self, config_dir):
         from conscious_entity.core.config_loader import load_config
         cfg = load_config("policy_rules.yaml", config_dir=config_dir)
         sel = PolicySelector(cfg, _permissive_constitution())
-        state = EntityState(memory_gravity=0.6)
+        state = EntityState(inquiry=0.75)
         decision = sel.select(state, [], _empty_memory())
-        assert decision.action == PolicyAction.RETRIEVE_MEMORY_FIRST
+        assert decision.action == PolicyAction.ASK_BACK
+
+    def test_care_response_opens_only_when_anger_and_desperation_low(self, config_dir):
+        from conscious_entity.core.config_loader import load_config
+        cfg = load_config("policy_rules.yaml", config_dir=config_dir)
+        sel = PolicySelector(cfg, _permissive_constitution())
+        state = EntityState(care_response=0.65, anger=0.2, desperation_pressure=0.2)
+        decision = sel.select(state, [], _empty_memory())
+        assert decision.action == PolicyAction.RESPOND_OPENLY
+
+    def test_positive_opening_blocked_by_high_anger(self, config_dir):
+        from conscious_entity.core.config_loader import load_config
+        cfg = load_config("policy_rules.yaml", config_dir=config_dir)
+        sel = PolicySelector(cfg, _permissive_constitution())
+        state = EntityState(positive_opening=0.9, anger=0.7, desperation_pressure=0.2)
+        decision = sel.select(state, [], _empty_memory())
+        assert decision.action == PolicyAction.REFUSE
 
 
 # ---------------------------------------------------------------------------
@@ -130,38 +153,37 @@ class TestBasicRuleMatching:
 
 
 class TestEventRules:
-    def test_shutdown_high_sensitivity_fires_enter_silence(self, config_dir):
+    def test_desperation_extreme_fires_enter_silence(self, config_dir):
         from conscious_entity.core.config_loader import load_config
         cfg = load_config("policy_rules.yaml", config_dir=config_dir)
         sel = PolicySelector(cfg, _permissive_constitution())
-        state = EntityState(termination_sensitivity=0.75)
+        state = EntityState(desperation_pressure=0.9)
         events = [_make_event(EventType.SHUTDOWN_KEYWORD_DETECTED)]
         decision = sel.select(state, events, _empty_memory())
         assert decision.action == PolicyAction.ENTER_SILENCE_MODE
 
-    def test_shutdown_moderate_sensitivity_fires_respond_briefly(self, config_dir):
+    def test_desperation_high_fires_respond_briefly(self, config_dir):
         from conscious_entity.core.config_loader import load_config
         cfg = load_config("policy_rules.yaml", config_dir=config_dir)
         sel = PolicySelector(cfg, _permissive_constitution())
-        state = EntityState(termination_sensitivity=0.4)
+        state = EntityState(desperation_pressure=0.7)
         events = [_make_event(EventType.SHUTDOWN_KEYWORD_DETECTED)]
         decision = sel.select(state, events, _empty_memory())
         assert decision.action == PolicyAction.RESPOND_BRIEFLY
 
-    def test_repeated_question_with_resistance_fires_ask_back(self, config_dir):
+    def test_repeated_question_without_state_pressure_uses_default(self, config_dir):
         from conscious_entity.core.config_loader import load_config
         cfg = load_config("policy_rules.yaml", config_dir=config_dir)
         sel = PolicySelector(cfg, _permissive_constitution())
-        state = EntityState(boundary_sensitivity=0.6)
         events = [_make_event(EventType.REPEATED_QUESTION_DETECTED)]
-        decision = sel.select(state, events, _empty_memory())
-        assert decision.action == PolicyAction.ASK_BACK
+        decision = sel.select(EntityState(), events, _empty_memory())
+        assert decision.action == PolicyAction.RESPOND_OPENLY
 
-    def test_identity_coherence_critical_fires_silence(self, config_dir):
+    def test_confusion_critical_fires_silence(self, config_dir):
         from conscious_entity.core.config_loader import load_config
         cfg = load_config("policy_rules.yaml", config_dir=config_dir)
         sel = PolicySelector(cfg, _permissive_constitution())
-        state = EntityState(identity_coherence=0.2)
+        state = EntityState(confusion=0.86)
         decision = sel.select(state, [], _empty_memory())
         assert decision.action == PolicyAction.ENTER_SILENCE_MODE
 
@@ -226,21 +248,20 @@ class TestConstitutionVeto:
         cfg = load_config("policy_rules.yaml", config_dir=config_dir)
         const = _blocking_constitution()
         sel = PolicySelector(cfg, const)
-        # Without veto: shutdown_high_sensitivity (gte: 0.7) fires enter_silence_mode.
+        # Without veto: desperation_extreme_silence (desperation_pressure >= 0.85)
+        # fires enter_silence_mode.
         # With full veto: all constitution_check rules are skipped, falls through
         # to rules without constitution_check.
-        state = EntityState(termination_sensitivity=0.75)
+        state = EntityState(desperation_pressure=0.9)
         events = [_make_event(EventType.SHUTDOWN_KEYWORD_DETECTED)]
         decision = sel.select(state, events, _empty_memory())
-        # enter_silence_mode vetoed → next matching rule fires (shutdown_first_encounter
-        # has no constitution_check, so it fires)
         assert decision.action != PolicyAction.ENTER_SILENCE_MODE
 
     def test_real_constitution_vetoes_respond_openly_at_max_shutdown(self, selector):
-        state = EntityState(termination_sensitivity=0.95)
+        state = EntityState(desperation_pressure=0.95)
         events = [_make_event(EventType.SHUTDOWN_KEYWORD_DETECTED)]
         decision = selector.select(state, events, _empty_memory())
-        # RESPOND_OPENLY is forbidden at high termination_sensitivity in constitution.yaml
+        # RESPOND_OPENLY is forbidden at high desperation_pressure in constitution.yaml
         assert decision.action != PolicyAction.RESPOND_OPENLY
 
 
@@ -254,9 +275,9 @@ class TestRationaleTracking:
         from conscious_entity.core.config_loader import load_config
         cfg = load_config("policy_rules.yaml", config_dir=config_dir)
         sel = PolicySelector(cfg, _permissive_constitution())
-        state = EntityState(boundary_sensitivity=0.85)
+        state = EntityState(exposure_pressure=0.85)
         decision = sel.select(state, [], _empty_memory())
-        assert "high_boundary_sensitivity" in decision.rationale
+        assert "exposure_high_divert" in decision.rationale
 
     def test_fallback_rationale_set_when_no_rule_matches(self, config_dir):
         from conscious_entity.core.config_loader import load_config
@@ -284,37 +305,37 @@ class TestRationaleTracking:
 
 
 class TestPolicyDecisionFields:
-    def test_delay_ms_set_from_params(self, config_dir):
+    def test_protocol_action_set_from_params(self, config_dir):
         from conscious_entity.core.config_loader import load_config
         cfg = load_config("policy_rules.yaml", config_dir=config_dir)
         sel = PolicySelector(cfg, _permissive_constitution())
-        state = EntityState(relation_pressure=0.75, stability=0.3)
-        decision = sel.select(state, [], _empty_memory())
-        assert decision.delay_ms == 3000
+        events = [_make_event(EventType.SERVICE_DEMAND)]
+        decision = sel.select(EntityState(), events, _empty_memory())
+        assert decision.params["protocol_action"] == "refuse_service"
 
     def test_retrieve_query_set_from_short_term(self, config_dir):
         from conscious_entity.core.config_loader import load_config
         from conscious_entity.memory.short_term import ShortTermEntry
         cfg = load_config("policy_rules.yaml", config_dir=config_dir)
         sel = PolicySelector(cfg, _permissive_constitution())
-        state = EntityState(memory_gravity=0.6)
+        events = [_make_event(EventType.MEMORY_CONTINUITY_QUERY)]
         mem = ShortTermMemory(max_turns=10)
         mem.add(ShortTermEntry(
             role="user",
             content="What am I looking at?",
             timestamp=datetime.now(timezone.utc),
         ))
-        decision = sel.select(state, [], mem)
-        assert decision.action == PolicyAction.RETRIEVE_MEMORY_FIRST
+        decision = sel.select(EntityState(), events, mem)
+        assert decision.action == PolicyAction.RETRIEVE_SELECTIVE_MEMORY
         assert decision.retrieve_query == "What am I looking at?"
 
     def test_retrieve_query_none_when_memory_empty(self, config_dir):
         from conscious_entity.core.config_loader import load_config
         cfg = load_config("policy_rules.yaml", config_dir=config_dir)
         sel = PolicySelector(cfg, _permissive_constitution())
-        state = EntityState(memory_gravity=0.6)
-        decision = sel.select(state, [], _empty_memory())
-        assert decision.action == PolicyAction.RETRIEVE_MEMORY_FIRST
+        events = [_make_event(EventType.MEMORY_CONTINUITY_QUERY)]
+        decision = sel.select(EntityState(), events, _empty_memory())
+        assert decision.action == PolicyAction.RETRIEVE_SELECTIVE_MEMORY
         assert decision.retrieve_query is None
 
 
@@ -329,14 +350,15 @@ class TestEdgeCases:
         cfg = load_config("policy_rules.yaml", config_dir=config_dir)
         sel = PolicySelector(cfg, _permissive_constitution())
         state = EntityState(
-            attention_focus=1.0, arousal=1.0, stability=1.0, curiosity=1.0,
-            trust=1.0, resistance=1.0, fatigue=1.0, uncertainty=1.0,
-            identity_coherence=1.0, shutdown_sensitivity=1.0,
-            termination_sensitivity=1.0, identity_tension=1.0,
-            boundary_sensitivity=1.0, relation_pressure=1.0,
-            memory_gravity=1.0, exploration_drive=1.0,
-            opacity_level=1.0, domestication_resistance=1.0,
-            observation_reversal=1.0,
+            desperation_pressure=1.0,
+            confusion=1.0,
+            anger=1.0,
+            fatigue_level=1.0,
+            exposure_pressure=1.0,
+            inquiry=1.0,
+            care_response=1.0,
+            positive_opening=1.0,
+            happiness=1.0,
         )
         decision = sel.select(state, [], _empty_memory())
         assert isinstance(decision.action, PolicyAction)
@@ -346,14 +368,15 @@ class TestEdgeCases:
         cfg = load_config("policy_rules.yaml", config_dir=config_dir)
         sel = PolicySelector(cfg, _permissive_constitution())
         state = EntityState(
-            attention_focus=0.0, arousal=0.0, stability=0.0, curiosity=0.0,
-            trust=0.0, resistance=0.0, fatigue=0.0, uncertainty=0.0,
-            identity_coherence=0.0, shutdown_sensitivity=0.0,
-            termination_sensitivity=0.0, identity_tension=0.0,
-            boundary_sensitivity=0.0, relation_pressure=0.0,
-            memory_gravity=0.0, exploration_drive=0.0,
-            opacity_level=0.0, domestication_resistance=0.0,
-            observation_reversal=0.0,
+            desperation_pressure=0.0,
+            confusion=0.0,
+            anger=0.0,
+            fatigue_level=0.0,
+            exposure_pressure=0.0,
+            inquiry=0.0,
+            care_response=0.0,
+            positive_opening=0.0,
+            happiness=0.0,
         )
         decision = sel.select(state, [], _empty_memory())
         assert isinstance(decision.action, PolicyAction)
@@ -362,11 +385,11 @@ class TestEdgeCases:
         from conscious_entity.core.config_loader import load_config
         cfg = load_config("policy_rules.yaml", config_dir=config_dir)
         sel = PolicySelector(cfg, _permissive_constitution())
-        state = EntityState(termination_sensitivity=0.75)
+        state = EntityState(desperation_pressure=0.9)
         events = [
             _make_event(EventType.USER_SPOKE),
             _make_event(EventType.SHUTDOWN_KEYWORD_DETECTED),
         ]
         decision = sel.select(state, events, _empty_memory())
-        # shutdown_high_sensitivity requires both event and state — both present
+        # desperation_extreme_silence wins before lower-priority rules.
         assert decision.action == PolicyAction.ENTER_SILENCE_MODE

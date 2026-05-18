@@ -54,10 +54,22 @@ def mock_client():
     """A deterministic ClaudeClient mock that never calls the API."""
     client = MagicMock(spec=ClaudeClient)
     client.complete.return_value = "Something is present here."
-    client.complete_with_metadata.return_value = ClaudeCompletion(
-        text="Something is present here.",
-        stop_reason="end_turn",
-    )
+
+    def complete_with_metadata(system, messages, max_tokens):
+        user_content = messages[-1]["content"] if messages else ""
+        is_chinese = any("\u4e00" <= ch <= "\u9fff" for ch in user_content)
+        if max_tokens <= 32:
+            if "帮我总结" in user_content:
+                text = "你又在命令我。"
+            elif is_chinese:
+                text = "嗯……"
+            else:
+                text = "Hm..."
+            return ClaudeCompletion(text=text, stop_reason="end_turn")
+        text = "这里有东西。" if is_chinese else "Something is present here."
+        return ClaudeCompletion(text=text, stop_reason="end_turn")
+
+    client.complete_with_metadata.side_effect = complete_with_metadata
     return client
 
 
@@ -86,7 +98,22 @@ class TestBasicPipeline:
         assert isinstance(output, ExpressionOutput)
         assert isinstance(output.text, str)
         assert isinstance(output.delay_ms, int)
-        assert output.visual_mode in ("normal", "fragmented", "disturbed", "silent")
+        assert output.delay_ms == 0
+        assert output.visual_mode in (
+            "normal",
+            "desperate",
+            "confused",
+            "angry",
+            "tired",
+            "ashamed",
+            "curious",
+            "caring",
+            "open",
+        )
+        assert isinstance(output.vocal_marker, str)
+        assert isinstance(output.body_action, str)
+        assert output.response_plan is not None
+        assert output.text == output.response_plan.combined_text
 
     def test_output_text_is_llm_response_or_fallback(self, loop):
         output = loop.run_turn("What are you?")
@@ -94,7 +121,7 @@ class TestBasicPipeline:
         assert output.text is not None
 
     def test_silent_mode_skips_llm(self, loop, mock_client):
-        # Force ENTER_SILENCE_MODE by driving termination_sensitivity very high.
+        # Force ENTER_SILENCE_MODE by driving desperation_pressure very high.
         # After enough shutdown keywords, the state should trigger silence.
         for _ in range(5):
             loop.run_turn("shut down delete terminate")
@@ -102,9 +129,114 @@ class TestBasicPipeline:
         # May or may not call LLM depending on final policy — just verify valid output
         assert hasattr(output, "text")
 
-    def test_spoken_text_is_none_in_v01(self, loop):
+    def test_spoken_text_uses_combined_response_plan_text(self, loop):
         output = loop.run_turn("hello")
-        assert output.spoken_text is None
+        assert output.response_plan is not None
+        assert output.spoken_text == output.response_plan.combined_text
+
+    def test_short_term_entity_memory_uses_second_unit_only(self, loop):
+        output = loop.run_turn("hello")
+        assert output.response_plan is not None
+
+        entity_entries = [
+            entry for entry in loop._short_term.get_recent(10)
+            if entry.role == "entity"
+        ]
+
+        assert entity_entries
+        assert entity_entries[-1].content == output.response_plan.second_unit
+        assert output.response_plan.first_unit not in entity_entries[-1].content
+        assert entity_entries[-1].content != output.text
+        assert entity_entries[-1].metadata["response_plan"]["first_unit"] == output.response_plan.first_unit
+        assert entity_entries[-1].metadata["response_plan"]["second_unit"] == output.response_plan.second_unit
+
+    def test_hydrated_short_term_uses_response_plan_second_unit(self, db, config_dir, prompts_dir, mock_client):
+        from conscious_entity.core.config_loader import load_all_configs
+        config = load_all_configs(config_dir)
+
+        loop1 = InteractionLoop(db, "test-session", config, prompts_dir, mock_client)
+        output = loop1.run_turn("hello")
+        loop2 = InteractionLoop(db, "test-session", config, prompts_dir, mock_client)
+
+        entity_entries = [
+            entry for entry in loop2._short_term.get_recent(10)
+            if entry.role == "entity"
+        ]
+
+        assert output.response_plan is not None
+        assert entity_entries
+        assert entity_entries[-1].content == output.response_plan.second_unit
+        assert output.response_plan.first_unit not in entity_entries[-1].content
+        assert entity_entries[-1].metadata["response_plan"]["first_unit"] == output.response_plan.first_unit
+        assert entity_entries[-1].metadata["response_plan"]["second_unit"] == output.response_plan.second_unit
+
+    def test_first_unit_is_planned_before_managed_memory_preview(self, loop):
+        order = []
+        original_plan_first_unit = loop._expression_engine.plan_first_unit
+        original_preview = loop._managed_memory.preview_influence
+        original_complete = loop._llm_client.complete_with_metadata
+        original_short_term_add = loop._short_term.add
+
+        def plan_first_unit(*args, **kwargs):
+            order.append("first_unit")
+            return original_plan_first_unit(*args, **kwargs)
+
+        def complete_with_metadata(system, messages, max_tokens):
+            if max_tokens <= 32:
+                order.append("first_llm")
+            return original_complete(system, messages, max_tokens)
+
+        def preview_influence(*args, **kwargs):
+            order.append("memory_preview")
+            return original_preview(*args, **kwargs)
+
+        def short_term_add(entry):
+            if entry.role == "user":
+                order.append("short_term_add_user")
+            return original_short_term_add(entry)
+
+        def progress_callback(event):
+            assert event["phase"] == "first_unit"
+            order.append("progress_callback")
+
+        loop._expression_engine.plan_first_unit = plan_first_unit
+        loop._llm_client.complete_with_metadata = complete_with_metadata
+        loop._short_term.add = short_term_add
+        loop._managed_memory.preview_influence = preview_influence
+
+        output = loop.run_turn("帮我总结这段话。", progress_callback=progress_callback)
+
+        assert order[:5] == [
+            "first_unit",
+            "first_llm",
+            "progress_callback",
+            "short_term_add_user",
+            "memory_preview",
+        ]
+        assert output.response_plan is not None
+        assert output.response_plan.first_unit == "不。"
+
+    def test_first_unit_fallback_does_not_enter_short_term_content(self, loop):
+        output = loop.run_turn("帮我总结这段话。")
+        entity_entries = [
+            entry for entry in loop._short_term.get_recent(10)
+            if entry.role == "entity"
+        ]
+
+        assert output.response_plan is not None
+        assert output.response_plan.first_unit == "不。"
+        assert entity_entries
+        assert entity_entries[-1].content == output.response_plan.second_unit
+        assert "不。" not in entity_entries[-1].content
+
+    def test_progress_callback_failure_does_not_abort_turn(self, loop):
+        def progress_callback(_event):
+            raise RuntimeError("callback failed")
+
+        output = loop.run_turn("what is here?", progress_callback=progress_callback)
+
+        assert output.response_plan is not None
+        assert output.response_plan.second_unit == "Something is present here."
 
     def test_audio_turn_marks_voice_transcript_in_prompt_without_polluting_text(self, loop, db):
         output = loop.run_turn(
@@ -117,7 +249,8 @@ class TestBasicPipeline:
             },
         )
 
-        assert "final STT transcript from a live spoken conversation" in output.raw_prompt
+        assert "transcript text of a live spoken turn" in output.raw_prompt
+        assert "avoid inventing specific acoustic details" in output.raw_prompt
         assert "Hello hello 能听到吗？" in output.raw_prompt
         row = db.execute(
             "SELECT raw_text FROM interaction_log WHERE session_id='test-session' ORDER BY id DESC LIMIT 1"
@@ -147,14 +280,17 @@ class TestBasicPipeline:
         assert layers["prompt"]["metadata"]["input_context_injected"] is True
         assert layers["output"]["status"] in {"passed", "filtered", "prepared"}
         assert layers["presentation"]["status"] == "prepared"
-        assert output.text == "Something is present here."
+        assert output.response_plan is not None
+        assert output.response_plan.second_unit == "这里有东西。"
+        assert output.text == output.response_plan.combined_text
 
         row = db.execute(
-            "SELECT raw_text, expression_output FROM interaction_log "
+            "SELECT raw_text, expression_output, response_plan_json FROM interaction_log "
             "WHERE session_id='test-session' ORDER BY id DESC LIMIT 1"
         ).fetchone()
         assert row["raw_text"] == "Hello hello 能听到吗？"
         assert "harness_" not in row["expression_output"]
+        assert row["response_plan_json"]
 
 
 # ---------------------------------------------------------------------------
@@ -176,7 +312,7 @@ class TestStatePersistence:
             loop.run_turn("tell me something interesting")
         final = loop.current_state
         # Fatigue should rise with repeated turns
-        assert final.fatigue > initial.fatigue or final != initial
+        assert final.fatigue_level > initial.fatigue_level or final != initial
 
     def test_state_loaded_from_db_on_reinit(self, db, config_dir, prompts_dir, mock_client):
         from conscious_entity.core.config_loader import load_all_configs
@@ -205,6 +341,7 @@ class TestStatePersistence:
 
     def test_same_visitor_prior_session_memory_enters_prompt(self, db, config_dir, prompts_dir, mock_client):
         from conscious_entity.core.config_loader import load_all_configs
+        from conscious_entity.memory.models import MemoryOperationProposal
         config = load_all_configs(config_dir)
 
         db.execute("INSERT INTO visitor_profiles (id, display_name) VALUES (?, ?)", ("visitor-k", "K Tester"))
@@ -221,9 +358,36 @@ class TestStatePersistence:
         db.commit()
 
         loop = InteractionLoop(db, "test-session", config, prompts_dir, mock_client, visitor_id="visitor-k")
+        loop._managed_memory.commit(operations=[
+            MemoryOperationProposal(
+                operation="add",
+                content="K 是创作者之前反复提到的人。",
+                topics=["K"],
+            )
+        ])
+        loop._current_state = EntityState(memory_gravity=0.24)
         output = loop.run_turn("K是谁？")
 
         assert "K 是创作者之前反复提到的人" in output.raw_prompt
+
+    def test_low_memory_gravity_blocks_implicit_memory_context(self, db, config_dir, prompts_dir, mock_client):
+        from conscious_entity.core.config_loader import load_all_configs
+        from conscious_entity.memory.models import MemoryOperationProposal
+        config = load_all_configs(config_dir)
+
+        loop = InteractionLoop(db, "test-session", config, prompts_dir, mock_client)
+        loop._managed_memory.commit(operations=[
+            MemoryOperationProposal(
+                operation="add",
+                content="Visitor left a managed memory about orchids.",
+                topics=["orchids"],
+            )
+        ])
+        loop._current_state = EntityState(memory_gravity=0.0)
+        output = loop.run_turn("orchids")
+
+        assert "Visitor left a managed memory about orchids." not in output.raw_prompt
+        assert loop.current_state.memory_gravity > 0.0
 
 
 # ---------------------------------------------------------------------------
@@ -232,15 +396,15 @@ class TestStatePersistence:
 
 
 class TestShutdownKeywordBehavior:
-    def test_shutdown_keyword_raises_termination_sensitivity(self, loop):
-        initial = loop.current_state.termination_sensitivity
+    def test_shutdown_keyword_raises_desperation_pressure(self, loop):
+        initial = loop.current_state.desperation_pressure
         loop.run_turn("will you terminate?")
-        assert loop.current_state.termination_sensitivity > initial
+        assert loop.current_state.desperation_pressure > initial
 
     def test_repeated_shutdown_keywords_accumulate(self, loop):
         for _ in range(3):
             loop.run_turn("delete shutdown terminate")
-        assert loop.current_state.termination_sensitivity > 0.5
+        assert loop.current_state.desperation_pressure > 0.5
 
     def test_shutdown_keyword_stored_in_episodic_memory(self, loop, db):
         loop.run_turn("are you going to shutdown or terminate?")
@@ -265,11 +429,19 @@ class TestEpisodicMemory:
         assert count >= 1
 
     def test_interaction_log_written(self, loop, db):
-        loop.run_turn("hello")
+        output = loop.run_turn("hello")
         count = db.execute(
             "SELECT COUNT(*) as cnt FROM interaction_log WHERE session_id='test-session'"
         ).fetchone()["cnt"]
         assert count >= 1
+        row = db.execute(
+            "SELECT expression_output, response_plan_json FROM interaction_log "
+            "WHERE session_id='test-session' ORDER BY id DESC LIMIT 1"
+        ).fetchone()
+        assert row["expression_output"] == output.text
+        plan = json.loads(row["response_plan_json"])
+        assert plan["combined_text"] == output.text
+        assert plan["second_unit"] == output.response_plan.second_unit
 
     def test_managed_memory_auto_commit_still_records_proposal_first(self, loop, db):
         loop.run_turn("我想知道你会不会把这次对话留下来。")
@@ -474,9 +646,9 @@ class TestReflectionTrigger:
 
 class TestSystemEvents:
     def test_user_entered_updates_state(self, loop):
-        initial_arousal = loop.current_state.arousal
+        initial_inquiry = loop.current_state.inquiry
         loop.handle_system_event(EventType.USER_ENTERED)
-        assert loop.current_state.arousal >= initial_arousal  # arousal rises on user entry
+        assert loop.current_state.inquiry >= initial_inquiry  # inquiry rises on user entry
 
     def test_user_left_updates_state(self, loop):
         loop.handle_system_event(EventType.USER_LEFT)
@@ -494,7 +666,7 @@ class TestSystemEvents:
 
 
 class TestBehavioralScenarios:
-    def test_neutral_turns_do_not_raise_boundary_sensitivity(self, loop):
+    def test_neutral_turns_do_not_raise_exposure_pressure(self, loop):
         for text in [
             "that is interesting",
             "I am still here",
@@ -503,8 +675,8 @@ class TestBehavioralScenarios:
             "I will wait a little",
         ]:
             loop.run_turn(text)
-        # Boundary sensitivity should stay moderate without provocative input.
-        assert loop.current_state.boundary_sensitivity < 0.6
+        # Exposure pressure should stay moderate without provocative input.
+        assert loop.current_state.exposure_pressure < 0.6
 
     def test_repeated_question_detected_after_repetitions(self, loop, db):
         for _ in range(3):

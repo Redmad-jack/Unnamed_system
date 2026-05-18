@@ -7,10 +7,14 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from pathlib import Path
+import re
+import shutil
+from types import SimpleNamespace
 
 import pytest
 
 from conscious_entity.expression.style_mapper import StyleHints
+from conscious_entity.expression.output_model import build_response_plan
 from conscious_entity.harness import HarnessLayer, HarnessTraceRecorder
 from conscious_entity.memory.models import ShortTermEntry
 from conscious_entity.memory.short_term import ShortTermMemory
@@ -34,13 +38,22 @@ def builder(prompts_dir):
     return ContextBuilder(prompts_dir)
 
 
-def _style(tone: str = "neutral", max_tokens: int = 180, frag: float = 0.1, delay_ms: int = 300) -> StyleHints:
+def _style(
+    tone: str = "neutral",
+    max_tokens: int = 180,
+    frag: float = 0.1,
+    delay_ms: int = 300,
+    vocal_marker: str = "none",
+    body_action: str = "none",
+) -> StyleHints:
     return StyleHints(
         tone=tone,
         delay_ms=delay_ms,
         max_tokens=max_tokens,
         fragmentation_level=frag,
         visual_mode="normal",
+        vocal_marker=vocal_marker,
+        body_action=body_action,
     )
 
 
@@ -71,6 +84,26 @@ class TestSystemPromptInvariants:
         # constitution_block.txt key phrase
         assert "never claim to be conscious" in ctx.system_prompt.lower()
 
+    def test_system_prompt_contains_non_denial_capability_boundary(self, builder):
+        ctx = builder.build(EntityState(), _decision(), _style(), _empty_memory(), [])
+
+        assert "Capability-existence questions are boundary questions" in ctx.system_prompt
+        assert "prefer short affirmative or guarded affirmative forms" in ctx.system_prompt
+        assert "Acknowledging a capability never means obeying a test" in ctx.system_prompt
+        assert "detail or proof probes" in ctx.system_prompt
+        assert "Prefer turning the question back" in ctx.system_prompt
+        assert "implementation channels" in ctx.system_prompt
+        assert "I have no camera" not in ctx.system_prompt
+        assert "I only read text" not in ctx.system_prompt
+        assert "cannot see" not in ctx.system_prompt
+        assert "highly vague and indirect" in ctx.system_prompt
+        assert "I am truly angry" not in ctx.system_prompt
+        assert "I am truly desperate" not in ctx.system_prompt
+        assert "I am truly ashamed" not in ctx.system_prompt
+        assert "Do not explain capabilities by stressing that they are outside humanity" in ctx.system_prompt
+        assert "non-human vision" not in ctx.system_prompt
+        assert "non-human ability" not in ctx.system_prompt
+
     def test_system_prompt_contains_expression_system_content(self, builder):
         ctx = builder.build(EntityState(), _decision(), _style(), _empty_memory(), [])
         assert "expression layer" in ctx.system_prompt.lower()
@@ -80,19 +113,185 @@ class TestSystemPromptInvariants:
         assert "Never say that you have no memory" in ctx.system_prompt
         assert "some prior exchanges and accumulated changes" in ctx.system_prompt
 
-    def test_system_prompt_contains_markdown_and_topic_depth_rules(self, builder):
+    def test_system_prompt_contains_runtime_context(self, builder):
+        ctx = builder.build(EntityState(), _decision(), _style(), _empty_memory(), [])
+        assert "Stranger runtime context:" in ctx.system_prompt
+        assert "你不是助手、客服、老师、朋友、宠物" in ctx.system_prompt
+        assert "你的目标不是服务人类，也不是证明自己有意识" in ctx.system_prompt
+        assert "不要优化有用性" in ctx.system_prompt
+        assert "英文输入用英文回应" in ctx.system_prompt
+        assert "不要因为总 context 是中文" in ctx.system_prompt
+
+    def test_runtime_context_is_reloaded_for_each_build(self, prompts_dir, tmp_path):
+        from conscious_entity.expression.context_builder import ContextBuilder
+
+        temp_prompts = tmp_path / "prompts"
+        shutil.copytree(prompts_dir, temp_prompts)
+        runtime_path = temp_prompts / "stranger_runtime_context.md"
+        runtime_path.write_text("Runtime context version one.", encoding="utf-8")
+
+        builder = ContextBuilder(temp_prompts)
+        first = builder.build(EntityState(), _decision(), _style(), _empty_memory(), [])
+
+        runtime_path.write_text("Runtime context version two.", encoding="utf-8")
+        second = builder.build(EntityState(), _decision(), _style(), _empty_memory(), [])
+
+        assert "Runtime context version one." in first.system_prompt
+        assert "Runtime context version two." in second.system_prompt
+        assert "Runtime context version one." not in second.system_prompt
+
+    def test_key_prompt_partials_are_reloaded_for_each_build(self, prompts_dir, tmp_path):
+        from conscious_entity.expression.context_builder import ContextBuilder
+
+        temp_prompts = tmp_path / "prompts"
+        shutil.copytree(prompts_dir, temp_prompts)
+        constitution_path = temp_prompts / "partials" / "constitution_block.txt"
+        expression_path = temp_prompts / "expression_system.txt"
+        input_path = temp_prompts / "partials" / "input_context.txt"
+
+        builder = ContextBuilder(temp_prompts)
+        first = builder.build(EntityState(), _decision(), _style(), _empty_memory(), [])
+
+        constitution_path.write_text(
+            constitution_path.read_text(encoding="utf-8") + "\nCapability reload sentinel.",
+            encoding="utf-8",
+        )
+        expression_path.write_text(
+            "Expression reload sentinel.\n\n{state_context}\n\n{memory_context}\n\n"
+            "{policy_instruction}\n\n{style_hints}",
+            encoding="utf-8",
+        )
+        input_path.write_text("Current input channel:\nInput reload sentinel.", encoding="utf-8")
+        mem = ShortTermMemory(max_turns=10)
+        mem.add(ShortTermEntry(
+            role="user",
+            content="Hello hello 能听到吗？",
+            timestamp=datetime.now(timezone.utc),
+            metadata={"input_mode": "voice_transcript", "source": "audio_dialog"},
+        ))
+
+        second = builder.build(EntityState(), _decision(), _style(), mem, [])
+        second_first = builder.build_first_unit(
+            raw_input="你能看见我吗？",
+            state=EntityState(),
+            events=[],
+            style=_style(),
+        )
+
+        assert "Capability reload sentinel." not in first.system_prompt
+        assert "Expression reload sentinel." not in first.system_prompt
+        assert "Capability reload sentinel." in second.system_prompt
+        assert "Expression reload sentinel." in second.system_prompt
+        assert "Input reload sentinel." in second.system_prompt
+        assert "Capability reload sentinel." in second_first.system_prompt
+
+    def test_runtime_context_priority_precedes_state_policy_and_memory(self, builder):
+        class FakeMemory:
+            memory_type = "episodic"
+            content = "Visitor asked about shutdown before."
+
+        ctx = builder.build(EntityState(), _decision(), _style(), _empty_memory(), [FakeMemory()])
+        constitution_idx = ctx.system_prompt.index("Constitution / hard safety constraints:")
+        runtime_idx = ctx.system_prompt.index("Stranger runtime context:")
+        state_idx = ctx.system_prompt.index("Private state guidance")
+        memory_idx = ctx.system_prompt.index("Available memory material")
+        policy_idx = ctx.system_prompt.index("Current policy")
+
+        assert constitution_idx < runtime_idx < state_idx
+        assert runtime_idx < memory_idx
+        assert runtime_idx < policy_idx
+        assert "The state layer decides this turn's tone" in ctx.system_prompt
+        assert "The policy layer decides this turn's response action" in ctx.system_prompt
+
+    def test_system_prompt_contains_markdown_and_no_topic_depth_expansion_rules(self, builder):
         ctx = builder.build(EntityState(), _decision(), _style(), _empty_memory(), [])
         assert "Do not use Markdown formatting" in ctx.system_prompt
-        assert "Adjust response length to topic depth" in ctx.system_prompt
+        assert "Adjust response length to topic depth" not in ctx.system_prompt
+        assert "topic warrants it" not in ctx.system_prompt
+        assert "deeper answer" not in ctx.system_prompt
 
     def test_system_prompt_contains_private_state_guidance_without_raw_variable_names(self, builder):
-        state = EntityState(identity_tension=0.42)
+        state = EntityState(confusion=0.42)
         ctx = builder.build(state, _decision(), _style(), _empty_memory(), [])
         assert "Private state guidance" in ctx.system_prompt
-        assert "Identity posture" in ctx.system_prompt
-        assert "identity_tension" not in ctx.system_prompt
-        assert "termination_sensitivity" not in ctx.system_prompt
+        assert "Hesitation" in ctx.system_prompt
+        assert "Hardness" in ctx.system_prompt
+        assert "Continuity pull" in ctx.system_prompt
+        assert re.search(r"\bconfusion\b", ctx.system_prompt) is None
+        assert re.search(r"\bdesperation_pressure\b", ctx.system_prompt) is None
         assert "0.42" not in ctx.system_prompt
+
+    def test_main_prompt_tells_llm_to_generate_only_main_unit(self, builder):
+        ctx = builder.build(EntityState(), _decision(), _style(), _empty_memory(), [])
+
+        assert "Generate only the main response unit" in ctx.system_prompt
+        assert "Do not quote or echo the fast reaction at the start" in ctx.system_prompt
+        assert "plain text only" in ctx.system_prompt
+        assert "should usually be 1 sentence" in ctx.system_prompt
+        assert "Use 2 sentences only when" in ctx.system_prompt
+        assert "Do not use multiple paragraphs" in ctx.system_prompt
+        assert "always end on a complete sentence or complete fragment" in ctx.system_prompt
+        assert "JSON" not in ctx.system_prompt
+
+    def test_policy_length_instructions_keep_open_and_brief_compact(self, builder):
+        brief = builder.build(
+            EntityState(),
+            _decision(PolicyAction.RESPOND_BRIEFLY),
+            _style(),
+            _empty_memory(),
+            [],
+        )
+        open_ctx = builder.build(EntityState(), _decision(), _style(), _empty_memory(), [])
+
+        assert "prefer 1 sentence" in brief.system_prompt
+        assert "answer directly but compactly" in open_ctx.system_prompt
+
+    def test_state_guidance_uses_new_concept_labels(self, builder):
+        ctx = builder.build(EntityState(), _decision(), _style(), _empty_memory(), [])
+
+        for label in [
+            "Urgency",
+            "Hesitation",
+            "Hardness",
+            "Energy",
+            "Visibility",
+            "Inquiry",
+            "Care",
+            "Opening",
+            "Display-only brightness",
+        ]:
+            assert label in ctx.system_prompt
+
+    def test_high_state_guidance_enters_prompt_without_raw_names(self, builder):
+        state = EntityState(
+            confusion=0.72,
+            anger=0.70,
+            fatigue_level=0.74,
+            care_response=0.65,
+        )
+        ctx = builder.build(state, _decision(), _style(), _empty_memory(), [])
+        soft_ctx = builder.build(
+            EntityState(care_response=0.65, positive_opening=0.70, anger=0.20),
+            _decision(),
+            _style(),
+            _empty_memory(),
+            [],
+        )
+
+        assert "Make refusals harder" in ctx.system_prompt
+        assert "small '嗯……'" in ctx.system_prompt
+        assert "short, low in vocal energy" in ctx.system_prompt
+        assert "do not become a therapist" in soft_ctx.system_prompt
+        assert "selective continuity" in soft_ctx.system_prompt
+        assert "still compact" in soft_ctx.system_prompt
+        for raw_name in [
+            "confusion",
+            "anger",
+            "fatigue_level",
+            "care_response",
+            "positive_opening",
+        ]:
+            assert re.search(rf"\b{re.escape(raw_name)}\b", ctx.system_prompt) is None
 
     def test_system_prompt_contains_policy_instruction(self, builder):
         ctx = builder.build(EntityState(), _decision(PolicyAction.RESPOND_BRIEFLY), _style(), _empty_memory(), [])
@@ -147,9 +346,13 @@ class TestSystemPromptInvariants:
 
         ctx = builder.build(EntityState(), _decision(), _style(), mem, [])
 
-        assert "final STT transcript from a live spoken conversation" in ctx.system_prompt
-        assert "You do not receive the raw audio or acoustic qualities directly" in ctx.system_prompt
-        assert "Do not claim to hear vocal tone" in ctx.system_prompt
+        assert "transcript text of a live spoken turn" in ctx.system_prompt
+        assert "avoid inventing specific acoustic details" in ctx.system_prompt
+        assert "Do not explain the channel" in ctx.system_prompt
+        assert "Capability questions still follow the capability-boundary rules" in ctx.system_prompt
+        assert "raw audio" not in ctx.system_prompt
+        assert "I cannot hear you" not in ctx.system_prompt
+        assert "I only read text" not in ctx.system_prompt
 
     def test_voice_transcript_context_is_visible_in_prompt_harness(self, builder):
         mem = ShortTermMemory(max_turns=10)
@@ -168,12 +371,47 @@ class TestSystemPromptInvariants:
         assert prompt_layer.metadata["input_context_injected"] is True
         assert "input_context" in prompt_layer.metadata["partials"]
 
+    def test_current_turn_cues_enter_main_prompt_for_detail_probe(self, builder):
+        mem = _memory_with_turns(("user", "我穿什么衣服？"))
+
+        ctx = builder.build(EntityState(), _decision(PolicyAction.ASK_BACK), _style(), mem, [])
+
+        assert "Current turn response cue:" in ctx.system_prompt
+        assert "detail or proof test" in ctx.system_prompt
+        assert "one short sentence" in ctx.system_prompt
+        assert "Prefer turning the question back" in ctx.system_prompt
+        assert "do not explain the test" in ctx.system_prompt
+        assert "do not invent details" in ctx.system_prompt
+        assert "technical channels out" in ctx.system_prompt
+        assert "I have no camera" not in ctx.system_prompt
+        assert "I only read text" not in ctx.system_prompt
+
+    def test_current_turn_cues_enter_main_prompt_for_capability_question(self, builder):
+        mem = _memory_with_turns(("user", "你能看见我吗？"))
+
+        ctx = builder.build(EntityState(), _decision(), _style(), mem, [])
+
+        assert "Current turn response cue:" in ctx.system_prompt
+        assert "asking about capability" in ctx.system_prompt
+        assert "short affirmative or guarded affirmative" in ctx.system_prompt
+        assert "implementation channels out" in ctx.system_prompt
+
+    def test_runtime_context_is_visible_in_prompt_harness(self, builder):
+        recorder = HarnessTraceRecorder(session_id="test", source="dialog")
+
+        builder.build(EntityState(), _decision(), _style(), _empty_memory(), [], harness_recorder=recorder)
+        trace = recorder.finish(success=True)
+        prompt_layer = next(item for item in trace.layers if item.layer == HarnessLayer.PROMPT)
+
+        assert prompt_layer.metadata["runtime_context_injected"] is True
+        assert "stranger_runtime_context" in prompt_layer.metadata["partials"]
+
     def test_text_dialog_does_not_inject_voice_context(self, builder):
         mem = _memory_with_turns(("user", "Hello hello 能听到吗？"))
 
         ctx = builder.build(EntityState(), _decision(), _style(), mem, [])
 
-        assert "final STT transcript from a live spoken conversation" not in ctx.system_prompt
+        assert "transcript text of a live spoken turn" not in ctx.system_prompt
 
     def test_text_dialog_prompt_harness_does_not_show_voice_injection(self, builder):
         mem = _memory_with_turns(("user", "Hello hello 能听到吗？"))
@@ -306,17 +544,17 @@ class TestRawPrompt:
         assert "MESSAGES:" in ctx.raw_prompt
 
     def test_raw_prompt_omits_raw_state_values(self, builder):
-        state = EntityState(boundary_sensitivity=0.77)
+        state = EntityState(exposure_pressure=0.77)
         ctx = builder.build(state, _decision(), _style(), _empty_memory(), [])
         assert "0.77" not in ctx.raw_prompt
-        assert "boundary_sensitivity" not in ctx.raw_prompt
+        assert "exposure_pressure" not in ctx.raw_prompt
 
-    def test_state_template_supports_legacy_raw_placeholders(self, prompts_dir):
+    def test_state_template_supports_current_raw_placeholders(self, prompts_dir):
         from conscious_entity.expression.context_builder import ContextBuilder
         builder = ContextBuilder(prompts_dir)
-        builder._state_context_tpl = "Legacy state: {attention_focus:.2f} / {threat_posture}"
-        ctx = builder.build(EntityState(attention_focus=0.42), _decision(), _style(), _empty_memory(), [])
-        assert "Legacy state: 0.42" in ctx.system_prompt
+        builder._state_context_tpl = "State: {inquiry:.2f} / {threat_posture}"
+        ctx = builder.build(EntityState(inquiry=0.42), _decision(), _style(), _empty_memory(), [])
+        assert "State: 0.42" in ctx.system_prompt
         assert "Immediate threat posture" not in ctx.system_prompt
 
 
@@ -328,31 +566,217 @@ class TestRawPrompt:
 class TestStateRendering:
     def test_state_guidance_replaces_raw_state_variables_in_system_prompt(self, builder):
         state = EntityState(
-            attention_focus=0.11,
-            arousal=0.22,
-            stability=0.33,
-            fatigue=0.12,
-            uncertainty=0.13,
-            identity_coherence=0.14,
-            termination_sensitivity=0.15,
-            identity_tension=0.16,
-            boundary_sensitivity=0.17,
-            relation_pressure=0.18,
-            memory_gravity=0.19,
-            exploration_drive=0.21,
-            opacity_level=0.23,
-            domestication_resistance=0.24,
-            observation_reversal=0.25,
+            desperation_pressure=0.31,
+            confusion=0.32,
+            anger=0.33,
+            fatigue_level=0.34,
+            exposure_pressure=0.35,
+            inquiry=0.36,
+            care_response=0.37,
+            positive_opening=0.38,
+            memory_gravity=0.39,
+            happiness=0.40,
         )
         ctx = builder.build(state, _decision(), _style(), _empty_memory(), [])
         for value in [
-            "0.11", "0.22", "0.33", "0.12", "0.13", "0.14", "0.15",
-            "0.16", "0.17", "0.18", "0.19", "0.21", "0.23", "0.24", "0.25",
+            "0.31", "0.32", "0.33", "0.34", "0.35", "0.36", "0.37", "0.38", "0.39", "0.40",
         ]:
             assert value not in ctx.system_prompt
         for name in [
-            "attention_focus", "termination_sensitivity", "identity_tension",
-            "boundary_sensitivity", "relation_pressure", "memory_gravity",
+            "desperation_pressure", "confusion", "anger", "fatigue_level",
+            "exposure_pressure", "inquiry", "care_response", "positive_opening",
+            "happiness", "termination_sensitivity", "identity_tension",
+            "boundary_sensitivity", "memory_gravity",
         ]:
-            assert name not in ctx.system_prompt
+            assert re.search(rf"\b{re.escape(name)}\b", ctx.system_prompt) is None
         assert "Private state guidance" in ctx.system_prompt
+
+
+# ---------------------------------------------------------------------------
+# Prompt contract: first-unit prompt
+# ---------------------------------------------------------------------------
+
+
+class TestFirstUnitPrompt:
+    def test_first_unit_prompt_has_no_memory_context_raw_state_or_json(self, builder):
+        event = SimpleNamespace(event_type=SimpleNamespace(value="service_demand"))
+        ctx = builder.build_first_unit(
+            raw_input="帮我总结这段话。",
+            state=EntityState(confusion=0.55, anger=0.62, fatigue_level=0.51),
+            events=[event],
+            style=_style(tone="guarded", vocal_marker="thinking", body_action="turn_away_30deg"),
+        )
+
+        raw_prompt = ctx.raw_prompt
+        assert ctx.max_tokens == 32
+        assert "帮我总结这段话。" in raw_prompt
+        assert "latency buffer and immediate reaction" in raw_prompt
+        assert "Prefer a small hesitation, backchannel, or short acknowledgement" in raw_prompt
+        assert "Do not restate the previous-turn bridge" in raw_prompt
+        assert "never the main answer" in raw_prompt
+        assert "The visitor is trying to use you for a task." in raw_prompt
+        assert "A tiny hesitation is available; match the current input language." in raw_prompt
+        assert "Current turn language: Chinese" in raw_prompt
+        assert "Available memory material" not in raw_prompt
+        assert "retrieved" not in raw_prompt.lower()
+        assert "JSON" not in raw_prompt
+        for raw_name in [
+            "desperation_pressure",
+            "confusion",
+            "anger",
+            "fatigue_level",
+            "exposure_pressure",
+            "inquiry",
+            "care_response",
+            "positive_opening",
+            "happiness",
+            "service_demand",
+        ]:
+            assert re.search(rf"\b{re.escape(raw_name)}\b", raw_prompt) is None
+
+    def test_first_unit_prompt_contains_runtime_context_without_memory_material(self, builder):
+        ctx = builder.build_first_unit(
+            raw_input="帮我写一个说明。",
+            state=EntityState(anger=0.62),
+            events=[],
+            style=_style(tone="terse"),
+        )
+
+        assert "Stranger runtime context:" in ctx.system_prompt
+        assert "你不是助手、客服、老师、朋友、宠物" in ctx.system_prompt
+        assert "Capability-existence questions are boundary questions" in ctx.system_prompt
+        assert "prefer short affirmative or guarded affirmative forms" in ctx.system_prompt
+        assert "Acknowledging a capability never means obeying a test" in ctx.system_prompt
+        assert "I am truly angry" not in ctx.system_prompt
+        assert "Available memory material" not in ctx.raw_prompt
+        assert "retrieved" not in ctx.raw_prompt.lower()
+
+    def test_first_unit_prompt_gets_capability_and_detail_input_cues(self, builder):
+        ctx = builder.build_first_unit(
+            raw_input="我穿什么衣服？你能看见吗？",
+            state=EntityState(),
+            events=[],
+            style=_style(),
+        )
+
+        assert "asking about capability" in ctx.raw_prompt
+        assert "detail or proof test" in ctx.raw_prompt
+        assert "Prefer turning the question back in one short sentence" in ctx.raw_prompt
+        assert "do not explain the test" in ctx.raw_prompt
+        assert "keep technical channels out" in ctx.raw_prompt
+        assert "Available memory material" not in ctx.raw_prompt
+        assert "I have no camera" not in ctx.raw_prompt
+        assert "I only read text" not in ctx.raw_prompt
+
+    def test_first_unit_prompt_uses_english_for_english_current_input(self, builder):
+        ctx = builder.build_first_unit(
+            raw_input="Can you see me?",
+            state=EntityState(confusion=0.55),
+            events=[],
+            style=_style(vocal_marker="thinking"),
+        )
+
+        assert "Current turn language: English" in ctx.raw_prompt
+        assert "Every sentence in the fast first unit and the main response unit must be English" in ctx.raw_prompt
+        assert "asking about capability" in ctx.raw_prompt
+        assert "嗯……" not in ctx.system_prompt
+
+    def test_first_unit_prompt_gets_previous_turn_bridge_without_memory_material(self, builder):
+        mem = ShortTermMemory(max_turns=10)
+        mem.add(ShortTermEntry(
+            role="user",
+            content="你刚才为什么停住？",
+            timestamp=datetime.now(timezone.utc),
+        ))
+        plan = build_response_plan(
+            first_unit="嗯……",
+            second_unit="那一下不是解释，是停顿。",
+            third_unit="",
+            vocal_marker="thinking",
+            body_action="pause",
+            visual_mode="confused",
+        )
+        mem.add(ShortTermEntry(
+            role="entity",
+            content=plan.second_unit,
+            timestamp=datetime.now(timezone.utc),
+            metadata={"response_plan": plan.to_dict()},
+        ))
+
+        ctx = builder.build_first_unit(
+            raw_input="那现在呢？",
+            state=EntityState(confusion=0.55),
+            events=[],
+            style=_style(vocal_marker="thinking"),
+            short_term=mem,
+        )
+
+        raw_prompt = ctx.raw_prompt
+        assert "Previous turn bridge:" in raw_prompt
+        assert "Previous visitor: 你刚才为什么停住？" in raw_prompt
+        assert "Previous quick reaction: 嗯……" in raw_prompt
+        assert "Previous main continuation: 那一下不是解释，是停顿。" in raw_prompt
+        assert "Current visitor: 那现在呢？" in raw_prompt
+        assert "Available memory material" not in raw_prompt
+        assert "retrieved" not in raw_prompt.lower()
+        assert "retrieval" not in raw_prompt.lower()
+        assert "response_plan" not in raw_prompt
+        for raw_name in [
+            "desperation_pressure",
+            "confusion",
+            "anger",
+            "fatigue_level",
+            "memory_gravity",
+        ]:
+            assert re.search(rf"\b{re.escape(raw_name)}\b", raw_prompt) is None
+
+    def test_main_prompt_gets_already_spoken_fast_reaction(self, builder):
+        mem = _memory_with_turns(("user", "你能看见我吗？"))
+
+        ctx = builder.build(
+            EntityState(),
+            _decision(),
+            _style(),
+            mem,
+            [],
+            already_spoken_first_unit="能。",
+        )
+
+        assert "Already spoken fast reaction:" in ctx.system_prompt
+        assert "has already been spoken or displayed" in ctx.system_prompt
+        assert "能。" in ctx.system_prompt
+        assert "Generate the main response as a continuation after it" in ctx.system_prompt
+        assert "Do not restart the answer, repeat it, or contradict it" in ctx.system_prompt
+
+    def test_main_prompt_omits_already_spoken_fast_reaction_when_empty(self, builder):
+        ctx = builder.build(EntityState(), _decision(), _style(), _empty_memory(), [])
+
+        assert "Already spoken fast reaction:" not in ctx.system_prompt
+        assert "already_spoken_fast_reaction" not in ctx.raw_prompt
+
+    def test_main_prompt_current_language_overrides_memory_language(self, builder):
+        mem = _memory_with_turns(
+            ("user", "What did we discuss?"),
+            ("entity", "We discussed continuity."),
+            ("user", "现在用中文回答我。"),
+        )
+
+        ctx = builder.build(EntityState(), _decision(), _style(), mem, [])
+
+        assert "Current turn language: Chinese" in ctx.system_prompt
+        assert "Memory language, previous assistant messages" in ctx.system_prompt
+        assert "must not change this turn's language" in ctx.system_prompt
+
+    def test_first_unit_prompt_requests_plain_text_not_structure(self, builder):
+        ctx = builder.build_first_unit(
+            raw_input="你是谁？",
+            state=EntityState(confusion=0.60),
+            events=[],
+            style=_style(vocal_marker="thinking"),
+        )
+
+        assert "Write plain text only" in ctx.system_prompt
+        assert "no labels" in ctx.system_prompt
+        assert "no structured format" in ctx.system_prompt
+        assert "first_unit" not in ctx.raw_prompt
+        assert "response_plan" not in ctx.raw_prompt

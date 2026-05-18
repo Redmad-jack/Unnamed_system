@@ -7,13 +7,13 @@ import threading
 from concurrent.futures import Future, ThreadPoolExecutor, wait
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 from conscious_entity.core.event_bus import EventBus
 from conscious_entity.db.connection import get_connection
 from conscious_entity.expression.context_builder import ContextBuilder
 from conscious_entity.expression.expression_engine import ExpressionEngine
-from conscious_entity.expression.output_model import ExpressionOutput
+from conscious_entity.expression.output_model import ExpressionOutput, build_response_plan
 from conscious_entity.expression.style_mapper import StyleMapper
 from conscious_entity.harness import HarnessLayer, HarnessTraceRecorder, get_harness_trace_store
 from conscious_entity.llm.claude_client import ClaudeClient
@@ -55,19 +55,20 @@ class InteractionLoop:
     Orchestrates the full per-turn pipeline:
 
       1.  Parse input → events  (TextParser)
-      2.  Add user turn to short-term memory
-      3.  Apply events + decay  (StateEngine)
-      4.  Preview managed memory influence and apply bounded state deltas
-      5.  Save state snapshot   (StateStore)
-      6.  Store significant events in episodic memory (EpisodicStore)
-      7.  Select policy and apply managed memory policy influence
-      8.  Retrieve memory when policy or managed memory asks for it
-      9.  Generate expression   (ExpressionEngine)
-      10. Add entity turn to short-term memory
-      11. Log interaction and managed memory influence
-      12. Propose and optionally auto-commit managed memory updates
-      13. Maybe trigger reflection (ReflectionEngine)
-      14. Emit events to EventBus for optional instrumentation
+      2.  Apply events + decay  (StateEngine)
+      3.  Generate first response unit with fast LLM, before memory writes/retrieval
+      4.  Add user turn to short-term memory for the main expression path
+      5.  Preview managed memory influence and apply bounded state deltas
+      6.  Save state snapshot   (StateStore)
+      7.  Store significant events in episodic memory (EpisodicStore)
+      8.  Select policy and apply managed memory policy influence
+      9.  Retrieve memory when policy or managed memory asks for it
+      10. Generate expression   (ExpressionEngine)
+      11. Add entity turn to short-term memory
+      12. Log interaction and managed memory influence
+      13. Propose and optionally auto-commit managed memory updates
+      14. Maybe trigger reflection (ReflectionEngine)
+      15. Emit events to EventBus for optional instrumentation
       Return ExpressionOutput
 
     LLM use is mediated through ClaudeClient in expression, reflection, and
@@ -151,6 +152,7 @@ class InteractionLoop:
         self._policy_selector = PolicySelector(config["policy_rules"], constitution)
 
         style_mapper = StyleMapper(config["expression_mappings"])
+        self._style_mapper = style_mapper
         context_builder = ContextBuilder(prompts_dir)
         self._expression_engine = ExpressionEngine(
             style_mapper, context_builder, client, constitution
@@ -180,6 +182,7 @@ class InteractionLoop:
         raw_input: str,
         source: str = "dialog",
         input_metadata: dict[str, Any] | None = None,
+        progress_callback: Callable[[dict[str, Any]], None] | None = None,
     ) -> ExpressionOutput:
         """Run one user input through the managed-memory-aware turn pipeline."""
         turn_metadata = dict(input_metadata or {})
@@ -238,7 +241,46 @@ class InteractionLoop:
                     },
                 )
 
-                # Add user turn to short-term memory before policy so repetition detection is accurate.
+                # Apply events and per-turn decay before any memory influence is previewed.
+                with recorder.step("state.apply_events_and_decay"):
+                    new_state = state
+                    for event in events:
+                        new_state = self._state_engine.apply_event(new_state, event)
+                    new_state = self._state_engine.apply_decay(new_state, _DECAY_SECONDS_PER_TURN)
+
+                with recorder.step("expression.plan_first_unit"):
+                    first_unit = self._expression_engine.plan_first_unit(
+                        raw_input,
+                        new_state,
+                        events,
+                        short_term=self._short_term,
+                    )
+                    first_style = self._style_mapper.map(
+                        new_state,
+                        PolicyDecision(action=PolicyAction.RESPOND_OPENLY),
+                    )
+                    _emit_progress_event(
+                        progress_callback,
+                        {
+                            "phase": "first_unit",
+                            "text": first_unit,
+                            "response_plan": build_response_plan(
+                                first_unit=first_unit,
+                                second_unit="",
+                                third_unit="",
+                                vocal_marker=first_style.vocal_marker,
+                                body_action=first_style.body_action,
+                                visual_mode=first_style.visual_mode,
+                            ).to_dict(),
+                            "events": [event.event_type.value for event in events],
+                            "vocal_marker": first_style.vocal_marker,
+                            "body_action": first_style.body_action,
+                            "visual_mode": first_style.visual_mode,
+                        },
+                    )
+
+                # Add user turn after the fast first-unit LLM so that first unit
+                # cannot depend on short-term memory contents from this turn.
                 with recorder.step("short_term.add_user"):
                     self._short_term.add(ShortTermEntry(
                         role="user",
@@ -247,13 +289,6 @@ class InteractionLoop:
                         event_type=events[0].event_type if events else None,
                         metadata=turn_metadata,
                     ))
-
-                # Apply events and per-turn decay before memory influence is previewed.
-                with recorder.step("state.apply_events_and_decay"):
-                    new_state = state
-                    for event in events:
-                        new_state = self._state_engine.apply_event(new_state, event)
-                    new_state = self._state_engine.apply_decay(new_state, _DECAY_SECONDS_PER_TURN)
 
                 with recorder.step("managed_memory.preview_influence"):
                     memory_influence = self._managed_memory.preview_influence(
@@ -369,6 +404,7 @@ class InteractionLoop:
                         state=new_state,
                         short_term=self._short_term,
                         retrieved_memories=retrieved_memories,
+                        first_unit=first_unit,
                         harness_recorder=harness_recorder,
                     )
                 harness_recorder.record(
@@ -379,7 +415,14 @@ class InteractionLoop:
                     metadata={
                         "delay_ms": output.delay_ms,
                         "visual_mode": output.visual_mode,
+                        "vocal_marker": output.vocal_marker,
+                        "body_action": output.body_action,
                         "has_spoken_text": output.spoken_text is not None,
+                        "response_plan": (
+                            output.response_plan.to_dict()
+                            if output.response_plan is not None
+                            else None
+                        ),
                         "text_chars": len(output.text),
                         "source": source,
                     },
@@ -389,8 +432,13 @@ class InteractionLoop:
                 with recorder.step("short_term.add_entity"):
                     self._short_term.add(ShortTermEntry(
                         role="entity",
-                        content=output.text,
+                        content=_memory_text_for_output(output),
                         timestamp=datetime.now(timezone.utc),
+                        metadata={
+                            "response_plan": output.response_plan.to_dict()
+                            if output.response_plan is not None
+                            else None
+                        },
                     ))
 
                 # Log interaction and managed memory influence.
@@ -557,12 +605,17 @@ class InteractionLoop:
                 events=events,
             )
         else:
-            retrieved_memories = [
-                _public_memory_to_retrieved(item)
-                for item in memory_influence.get("expression_context", [])
-                if isinstance(item, dict)
-            ]
-            if self._visitor_id:
+            memory_context_allowed = _managed_memory_context_allowed(memory_influence)
+            retrieved_memories = (
+                [
+                    _public_memory_to_retrieved(item)
+                    for item in memory_influence.get("expression_context", [])
+                    if isinstance(item, dict)
+                ]
+                if memory_context_allowed
+                else []
+            )
+            if self._visitor_id and memory_context_allowed:
                 visitor_hits = [
                     item
                     for item in self._memory_retriever.retrieve(raw_input, events=events, limit=5)
@@ -649,7 +702,7 @@ class InteractionLoop:
         limit = self._short_term.max_turns
         rows = self._conn.execute(
             """
-            SELECT raw_text, expression_output, turn_at
+            SELECT raw_text, expression_output, response_plan_json, turn_at
             FROM interaction_log
             WHERE session_id = ?
             ORDER BY turn_at DESC, id DESC
@@ -665,11 +718,19 @@ class InteractionLoop:
                     content=row["raw_text"],
                     timestamp=timestamp,
                 ))
-            if row["expression_output"] is not None:
+            response_plan = _response_plan_from_response_plan_json(row["response_plan_json"])
+            plan_second_unit = str(response_plan.get("second_unit") or "").strip() if response_plan else None
+            entity_text = (
+                plan_second_unit
+                if plan_second_unit is not None
+                else row["expression_output"]
+            )
+            if entity_text is not None:
                 self._short_term.add(ShortTermEntry(
                     role="entity",
-                    content=row["expression_output"],
+                    content=entity_text,
                     timestamp=timestamp,
+                    metadata={"response_plan": response_plan} if response_plan else {},
                 ))
 
     def _log_interaction(
@@ -687,9 +748,9 @@ class InteractionLoop:
                 """
                 INSERT INTO interaction_log (
                     session_id, visitor_id, role, raw_text, event_types,
-                    policy_action, expression_output, delay_ms,
-                    visual_mode, state_snapshot_id
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    policy_action, expression_output, response_plan_json,
+                    delay_ms, visual_mode, state_snapshot_id
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     self._session_id,
@@ -699,6 +760,11 @@ class InteractionLoop:
                     event_types_json,
                     decision.action.value,
                     output.text,
+                    (
+                        json.dumps(output.response_plan.to_dict(), ensure_ascii=False)
+                        if output.response_plan is not None
+                        else None
+                    ),
                     output.delay_ms,
                     output.visual_mode,
                     snapshot_id,
@@ -766,6 +832,52 @@ def _apply_memory_state_influence(state: EntityState, influence: dict[str, Any])
         except (TypeError, ValueError):
             continue
     return EntityState.from_dict(values).clamp_all()
+
+
+def _emit_progress_event(
+    callback: Callable[[dict[str, Any]], None] | None,
+    event: dict[str, Any],
+) -> None:
+    if callback is None:
+        return
+    try:
+        callback(event)
+    except Exception as exc:
+        logger.warning("Progress callback failed; continuing turn: %s", exc)
+
+
+def _memory_text_for_output(output: ExpressionOutput) -> str:
+    if output.response_plan is not None:
+        return (output.response_plan.second_unit or "").strip()
+    return output.text
+
+
+def _managed_memory_context_allowed(memory_influence: dict[str, Any]) -> bool:
+    policy_influence = memory_influence.get("policy_influence", {})
+    if isinstance(policy_influence, dict) and policy_influence.get("memory_gravity_gate_passed"):
+        return True
+    explanation = memory_influence.get("explanation", {})
+    if isinstance(explanation, dict):
+        gate = explanation.get("memory_gravity_gate", {})
+        return isinstance(gate, dict) and bool(gate.get("passed"))
+    return False
+
+
+def _second_unit_from_response_plan_json(raw: str | None) -> str | None:
+    parsed = _response_plan_from_response_plan_json(raw)
+    if not parsed:
+        return None
+    return str(parsed.get("second_unit") or "").strip()
+
+
+def _response_plan_from_response_plan_json(raw: str | None) -> dict[str, Any]:
+    if not raw:
+        return {}
+    try:
+        parsed = json.loads(raw)
+    except (TypeError, ValueError):
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
 
 
 def _changed_state_keys(before: EntityState, after: EntityState) -> list[str]:

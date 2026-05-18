@@ -5,11 +5,14 @@
   const h = React.createElement;
 
   const STATE_KEYS = [
-    "attention_focus", "arousal", "stability", "fatigue", "uncertainty", "identity_coherence",
-    "termination_sensitivity", "identity_tension", "boundary_sensitivity", "relation_pressure",
-    "memory_gravity", "exploration_drive", "opacity_level", "domestication_resistance",
-    "observation_reversal",
+    "desperation_pressure", "confusion", "anger", "fatigue_level", "exposure_pressure",
+    "inquiry", "care_response", "positive_opening", "memory_gravity", "happiness",
   ];
+
+  const STATE_LABELS = {
+    memory_gravity: "memory_gravity / 恋旧",
+    happiness: "happiness (display)",
+  };
 
   const LAYOUT_DEFAULTS = {
     left: 440,
@@ -31,6 +34,33 @@
       throw new Error((data && data.detail) || response.statusText || String(response.status));
     }
     return data;
+  }
+
+  async function fetchNDJSON(url, options, onEvent) {
+    const response = await fetch(url, options);
+    if (!response.ok) {
+      const text = await response.text().catch(() => "");
+      throw new Error(text || response.statusText || String(response.status));
+    }
+    if (!response.body) return;
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split("\n");
+      buffer = lines.pop() || "";
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed) continue;
+        onEvent(JSON.parse(trimmed));
+      }
+    }
+    buffer += decoder.decode();
+    const trimmed = buffer.trim();
+    if (trimmed) onEvent(JSON.parse(trimmed));
   }
 
   function useInterval(callback, delay) {
@@ -81,7 +111,56 @@
   function normalizeInteractionRows(rows) {
     return (Array.isArray(rows) ? rows : [])
       .slice()
+      .map((row) => ({ ...row, response_plan: parseResponsePlan(row) }))
       .sort((a, b) => rowTimeMs(a) - rowTimeMs(b) || rowOrder(a) - rowOrder(b));
+  }
+
+  function parseResponsePlan(row) {
+    if (!row) return null;
+    if (row.response_plan && typeof row.response_plan === "object") return row.response_plan;
+    const raw = row.response_plan_json;
+    if (!raw || typeof raw !== "string") return null;
+    try {
+      const parsed = JSON.parse(raw);
+      return parsed && typeof parsed === "object" ? parsed : null;
+    } catch {
+      return null;
+    }
+  }
+
+  function responsePlanText(row) {
+    const plan = parseResponsePlan(row);
+    if (!plan) return row && row.expression_output;
+    const fullResponse = String(plan.full_response || "").trim() || String(plan.second_unit || "").trim();
+    const unitText = [
+      plan.first_unit,
+      fullResponse,
+    ]
+      .map((unit) => String(unit || "").trim())
+      .filter(Boolean)
+      .join("\n");
+    return unitText || plan.combined_text || (row && row.expression_output);
+  }
+
+  function vocalMarkerLabel(value) {
+    const key = String(value || "none");
+    if (key === "thinking") return "vocal: 嗯……";
+    if (key === "sigh") return "vocal: 唉。";
+    return key && key !== "none" ? `vocal: ${key}` : "";
+  }
+
+  function bodyActionLabel(value) {
+    const labels = {
+      pause: "body: pause",
+      lean_in: "body: lean in",
+      step_back: "body: step back",
+      turn_away_30deg: "body: 转身 30 度",
+      circle_back: "body: circle back",
+      withdraw: "body: withdraw",
+      distance_increase: "body: distance increase",
+    };
+    const key = String(value || "none");
+    return key && key !== "none" ? (labels[key] || `body: ${key}`) : "";
   }
 
   function describeMediaError(player, fallback) {
@@ -264,6 +343,7 @@
 
   function EntityState() {
     const [state, setState] = useState(null);
+    const [displayHappiness, setDisplayHappiness] = useState(() => Math.random());
 
     const load = useCallback(async () => {
       try {
@@ -275,15 +355,17 @@
 
     useEffect(() => { load(); }, [load]);
     useInterval(load, 2000);
+    useInterval(() => { setDisplayHappiness(Math.random()); }, 10000);
 
     if (!state) return h("div", { className: "dim" }, "Loading state…");
 
     return h(React.Fragment, null,
       STATE_KEYS.map((key) => {
-        const raw = Number(state[key] || 0);
+        const raw = key === "happiness" ? displayHappiness : Number(state[key] || 0);
         const pct = clamp(Math.round(raw * 100), 0, 100);
+        const label = STATE_LABELS[key] || key;
         return h("div", { className: "state-var", key },
-          h("div", { className: "state-var-name" }, key),
+          h("div", { className: "state-var-name" }, label),
           h("div", { className: "state-bar-row" },
             h("div", { className: "state-bar-bg" },
               h("div", { className: `state-bar-fill bar-${key}`, style: { width: `${pct}%` } }),
@@ -496,6 +578,50 @@
       const onReset = () => load();
       const onTurnComplete = (event) => {
         const detail = event.detail || {};
+        if (detail.source === "audio_dialog_progressive") {
+          const now = new Date().toISOString();
+          if (detail.phase === "first_unit") {
+            setRows((current) => {
+              const nextRows = [...current];
+              if (detail.input_text) {
+                nextRows.push({
+                  id: `audio-user-${Date.now()}`,
+                  role: "user",
+                  raw_text: detail.input_text,
+                  turn_at: now,
+                });
+              }
+              if (detail.text) {
+                nextRows.push({
+                  id: `audio-first-${Date.now()}`,
+                  role: "entity",
+                  progressive_text: detail.text,
+                  phase: "first_unit",
+                  visual_mode: detail.visual_mode,
+                  vocal_marker: detail.vocal_marker,
+                  body_action: detail.body_action,
+                  policy_action: "audio_dialog_progressive",
+                  turn_at: now,
+                });
+              }
+              return nextRows;
+            });
+          } else if (detail.phase === "final" && detail.text) {
+            setRows((current) => [...current, {
+              id: `audio-final-${Date.now()}`,
+              role: "entity",
+              progressive_text: detail.text,
+              phase: "final",
+              response_plan: detail.response_plan || null,
+              visual_mode: detail.visual_mode,
+              vocal_marker: detail.vocal_marker,
+              body_action: detail.body_action,
+              policy_action: "audio_dialog_progressive",
+              turn_at: now,
+            }]);
+          }
+          return;
+        }
         if (detail.source === "audio_dialog" && detail.output) {
           const now = new Date().toISOString();
           setRows((current) => [...current, {
@@ -507,8 +633,11 @@
             id: `audio-entity-${Date.now()}`,
             role: "entity",
             expression_output: detail.output.output_text || "",
+            response_plan: detail.output.response_plan || null,
             delay_ms: detail.output.delay_ms,
             visual_mode: detail.output.visual_mode,
+            vocal_marker: detail.output.vocal_marker,
+            body_action: detail.output.body_action,
             policy_action: "audio_dialog",
             turn_at: now,
           }]);
@@ -540,20 +669,39 @@
       };
       setRows((current) => [...current, optimistic]);
       try {
-        const output = await fetchJSON("/api/v1/dialog", {
+        await fetchNDJSON("/api/v1/dialog/progressive", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ text: trimmed }),
+        }, (event) => {
+          if (event.phase === "first_unit" && event.text) {
+            setRows((current) => [...current, {
+              id: `entity-first-${Date.now()}`,
+              role: "entity",
+              progressive_text: event.text,
+              phase: "first_unit",
+              visual_mode: event.visual_mode,
+              vocal_marker: event.vocal_marker,
+              body_action: event.body_action,
+              turn_at: new Date().toISOString(),
+            }]);
+          } else if (event.phase === "final") {
+            setRows((current) => [...current, {
+              id: `entity-final-${Date.now()}`,
+              role: "entity",
+              progressive_text: event.text || "",
+              phase: "final",
+              response_plan: event.response_plan || null,
+              delay_ms: event.delay_ms,
+              visual_mode: event.visual_mode,
+              vocal_marker: event.vocal_marker,
+              body_action: event.body_action,
+              turn_at: new Date().toISOString(),
+            }]);
+          } else if (event.phase === "error") {
+            throw new Error(event.error || "Progressive dialog failed");
+          }
         });
-        setRows((current) => [...current, {
-          id: `entity-${Date.now()}`,
-          role: "entity",
-          expression_output: output.text,
-          delay_ms: output.delay_ms,
-          visual_mode: output.visual_mode,
-          turn_at: new Date().toISOString(),
-        }]);
-        window.dispatchEvent(new CustomEvent("entity:turn-complete"));
       } catch (error) {
         setRows((current) => [...current, {
           id: `error-${Date.now()}`,
@@ -569,8 +717,10 @@
     const messages = useMemo(() => rows.flatMap((row) => {
       const out = [];
       if (row.raw_text) out.push({ role: row.role || "user", text: row.raw_text, ts: row.turn_at, key: `${row.id}-raw` });
-      if (row.expression_output !== null && row.expression_output !== undefined) {
-        out.push({ role: "entity", text: row.expression_output || "...", ts: row.turn_at, meta: [row.policy_action, row.delay_ms ? `${row.delay_ms}ms` : "", row.visual_mode].filter(Boolean).join(" · "), key: `${row.id}-entity` });
+      if (row.progressive_text !== null && row.progressive_text !== undefined) {
+        out.push({ role: "entity", text: row.progressive_text || "...", ts: row.turn_at, meta: [row.phase, row.policy_action, vocalMarkerLabel(row.vocal_marker), bodyActionLabel(row.body_action), row.visual_mode].filter(Boolean).join(" · "), key: `${row.id}-progressive` });
+      } else if (row.expression_output !== null && row.expression_output !== undefined) {
+        out.push({ role: "entity", text: responsePlanText(row) || "...", ts: row.turn_at, meta: [row.policy_action, vocalMarkerLabel(row.vocal_marker), bodyActionLabel(row.body_action), row.visual_mode].filter(Boolean).join(" · "), key: `${row.id}-entity` });
       }
       return out;
     }), [rows]);
@@ -1170,6 +1320,8 @@
     const suppressMicRef = useRef(false);
     const playbackUnlockedRef = useRef(false);
     const playbackStreamRef = useRef("");
+    const playbackQueueRef = useRef([]);
+    const playbackPlayingRef = useRef(false);
     const bargeInFramesRef = useRef(0);
     const manualStopRef = useRef(false);
     const reconnectTimerRef = useRef(null);
@@ -1278,6 +1430,8 @@
         player.removeAttribute("src");
         player.load();
       }
+      playbackQueueRef.current = [];
+      playbackPlayingRef.current = false;
       playbackStreamRef.current = "";
       bargeInFramesRef.current = 0;
       suppressMicRef.current = false;
@@ -1290,9 +1444,10 @@
       }
     }, []);
 
-    const playStream = useCallback(async (streamId) => {
+    const startPlaybackStream = useCallback(async (streamId) => {
       if (!streamId || !playerRef.current) return false;
       suppressMicRef.current = true;
+      playbackPlayingRef.current = true;
       bargeInFramesRef.current = 0;
       setVoiceActivity("speaking");
       setPlaybackBlocked(false);
@@ -1310,6 +1465,7 @@
         setPlaybackDetail(`playing ${compactId(streamId)}`);
         return true;
       } catch (err) {
+        playbackPlayingRef.current = false;
         suppressMicRef.current = false;
         bargeInFramesRef.current = 0;
         setVoiceActivity(recordingRef.current ? "listening" : "idle");
@@ -1324,10 +1480,36 @@
       }
     }, []);
 
+    const playNextQueuedStream = useCallback(() => {
+      const nextStreamId = playbackQueueRef.current.shift();
+      if (!nextStreamId) {
+        playbackPlayingRef.current = false;
+        playbackStreamRef.current = "";
+        bargeInFramesRef.current = 0;
+        suppressMicRef.current = false;
+        setVoiceActivity(recordingRef.current ? "listening" : "idle");
+        setPlaybackDetail("ended");
+        setBargeInDetail("idle");
+        return false;
+      }
+      startPlaybackStream(nextStreamId);
+      return true;
+    }, [startPlaybackStream]);
+
+    const enqueueTtsStream = useCallback((streamId) => {
+      if (!streamId) return false;
+      playbackQueueRef.current.push(streamId);
+      if (!playbackPlayingRef.current) {
+        playNextQueuedStream();
+      }
+      return true;
+    }, [playNextQueuedStream]);
+
     const submitTranscript = useCallback(async (value) => {
       const transcript = String(value || "").trim();
       if (!transcript || dialogPendingRef.current) return;
       let playbackStarted = false;
+      let finalPayload = null;
       try {
         setError("");
         setFinalText(transcript);
@@ -1335,23 +1517,43 @@
         dialogPendingRef.current = true;
         suppressMicRef.current = true;
         setVoiceActivity("thinking");
-        const result = await fetchJSON("/api/v1/audio/dialog", {
+        await fetchNDJSON("/api/v1/audio/dialog/progressive", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ transcript }),
-        });
-        setLatestDialog(result);
-        window.dispatchEvent(new CustomEvent("entity:turn-complete", {
-          detail: {
-            source: "audio_dialog",
+        }, (event) => {
+          if (!event || event.phase === "error") {
+            throw new Error(event && event.error ? event.error : "Progressive audio dialog failed.");
+          }
+          if (event.phase !== "first_unit" && event.phase !== "final") return;
+          const payload = Object.assign({}, event, {
             input_text: transcript,
-            output: result,
-          },
-        }));
-        loadStatus();
-        if (result.tts_stream_id) {
-          playbackStarted = await playStream(result.tts_stream_id);
+            output_text: event.text || "",
+          });
+          setLatestDialog(payload);
+          window.dispatchEvent(new CustomEvent("entity:turn-complete", {
+            detail: {
+              source: "audio_dialog_progressive",
+              input_text: transcript,
+              phase: event.phase,
+              text: event.text || "",
+              response_plan: event.response_plan || null,
+              visual_mode: event.visual_mode || null,
+              vocal_marker: event.vocal_marker || null,
+              body_action: event.body_action || null,
+            },
+          }));
+          if (event.phase === "final") {
+            finalPayload = payload;
+          }
+          if (event.tts_stream_id) {
+            playbackStarted = enqueueTtsStream(event.tts_stream_id) || playbackStarted;
+          }
+        });
+        if (finalPayload) {
+          setLatestDialog(finalPayload);
         }
+        loadStatus();
       } catch (err) {
         setError(err.message);
       } finally {
@@ -1362,7 +1564,7 @@
           setVoiceActivity(recordingRef.current ? "listening" : "idle");
         }
       }
-    }, [loadStatus, playStream]);
+    }, [enqueueTtsStream, loadStatus]);
 
     const startMic = useCallback(async () => {
       if (recording) return;
@@ -1493,8 +1695,8 @@
       const streamId = latestDialog && latestDialog.tts_stream_id
         ? latestDialog.tts_stream_id
         : status && status.tts && status.tts.last_stream_id;
-      playStream(streamId);
-    }, [latestDialog, playStream, status]);
+      enqueueTtsStream(streamId);
+    }, [enqueueTtsStream, latestDialog, status]);
 
     const enabled = status && status.enabled;
     return h("div", { className: "section audio-section" },
@@ -1551,7 +1753,7 @@
       ),
       latestDialog ? h("div", { className: "item" },
         h("div", { className: "item-meta" }, `tts: ${latestDialog.tts_stream_id || latestDialog.audio_disabled_reason || "silent"}`),
-        h("div", { className: "item-text" }, latestDialog.output_text || "..."),
+        h("div", { className: "item-text" }, latestDialog.output_text || latestDialog.text || "..."),
       ) : null,
       error ? h("div", { className: "err" }, error) : null,
       h("audio", {
@@ -1560,14 +1762,11 @@
         preload: "auto",
         playsInline: true,
         onEnded: () => {
-          playbackStreamRef.current = "";
-          bargeInFramesRef.current = 0;
-          suppressMicRef.current = false;
-          setVoiceActivity(recordingRef.current ? "listening" : "idle");
-          setPlaybackDetail("ended");
-          setBargeInDetail("idle");
+          playNextQueuedStream();
         },
         onError: () => {
+          playbackQueueRef.current = [];
+          playbackPlayingRef.current = false;
           playbackStreamRef.current = "";
           bargeInFramesRef.current = 0;
           suppressMicRef.current = false;

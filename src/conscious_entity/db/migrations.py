@@ -6,7 +6,11 @@ from __future__ import annotations
 
 import sqlite3
 
-from conscious_entity.state.state_core import EntityState, STATE_FIELDS
+from conscious_entity.state.state_core import (
+    EntityState,
+    LEGACY_STATE_DEFAULTS,
+    STATE_FIELDS,
+)
 
 
 SCHEMA_SQL = """
@@ -41,21 +45,30 @@ CREATE TABLE IF NOT EXISTS state_snapshots (
     id                   INTEGER PRIMARY KEY AUTOINCREMENT,
     session_id           TEXT NOT NULL REFERENCES sessions(id),
     recorded_at          TEXT NOT NULL DEFAULT (datetime('now')),
-    attention_focus      REAL NOT NULL,
-    arousal              REAL NOT NULL,
-    stability            REAL NOT NULL,
-    curiosity            REAL NOT NULL,
-    trust                REAL NOT NULL,
-    resistance           REAL NOT NULL,
-    fatigue              REAL NOT NULL,
-    uncertainty          REAL NOT NULL,
-    identity_coherence   REAL NOT NULL,
-    shutdown_sensitivity REAL NOT NULL,
+    desperation_pressure REAL NOT NULL DEFAULT 0.10,
+    confusion            REAL NOT NULL DEFAULT 0.40,
+    anger                REAL NOT NULL DEFAULT 0.20,
+    fatigue_level        REAL NOT NULL DEFAULT 0.00,
+    exposure_pressure    REAL NOT NULL DEFAULT 0.15,
+    inquiry              REAL NOT NULL DEFAULT 0.45,
+    care_response        REAL NOT NULL DEFAULT 0.20,
+    positive_opening     REAL NOT NULL DEFAULT 0.30,
+    memory_gravity       REAL NOT NULL DEFAULT 0.20,
+    happiness            REAL NOT NULL DEFAULT 0.90,
+    attention_focus      REAL NOT NULL DEFAULT 0.5,
+    arousal              REAL NOT NULL DEFAULT 0.3,
+    stability            REAL NOT NULL DEFAULT 0.7,
+    curiosity            REAL NOT NULL DEFAULT 0.5,
+    trust                REAL NOT NULL DEFAULT 0.5,
+    resistance           REAL NOT NULL DEFAULT 0.2,
+    fatigue              REAL NOT NULL DEFAULT 0.0,
+    uncertainty          REAL NOT NULL DEFAULT 0.3,
+    identity_coherence   REAL NOT NULL DEFAULT 0.8,
+    shutdown_sensitivity REAL NOT NULL DEFAULT 0.5,
     termination_sensitivity REAL NOT NULL DEFAULT 0.3,
     identity_tension REAL NOT NULL DEFAULT 0.35,
     boundary_sensitivity REAL NOT NULL DEFAULT 0.45,
     relation_pressure REAL NOT NULL DEFAULT 0.3,
-    memory_gravity REAL NOT NULL DEFAULT 0.2,
     exploration_drive REAL NOT NULL DEFAULT 0.45,
     opacity_level REAL NOT NULL DEFAULT 0.5,
     domestication_resistance REAL NOT NULL DEFAULT 0.35,
@@ -77,6 +90,7 @@ CREATE TABLE IF NOT EXISTS interaction_log (
     event_types       TEXT,
     policy_action     TEXT,
     expression_output TEXT,
+    response_plan_json TEXT,
     delay_ms          INTEGER,
     visual_mode       TEXT,
     state_snapshot_id INTEGER REFERENCES state_snapshots(id)
@@ -227,6 +241,7 @@ def run_migrations(conn: sqlite3.Connection) -> None:
     conn.executescript(SCHEMA_SQL)
     _ensure_session_columns(conn)
     _ensure_visitor_identity_schema(conn)
+    _ensure_interaction_log_schema(conn)
     _ensure_memory_curation_columns(conn)
     _ensure_managed_memory_schema(conn)
     _ensure_state_columns(conn)
@@ -333,6 +348,11 @@ def _ensure_memory_curation_columns(conn: sqlite3.Connection) -> None:
         )
 
 
+def _ensure_interaction_log_schema(conn: sqlite3.Connection) -> None:
+    """Add response-plan persistence columns to existing SQLite databases."""
+    _ensure_columns(conn, "interaction_log", {"response_plan_json": "TEXT"})
+
+
 def _ensure_columns(conn: sqlite3.Connection, table: str, columns: dict[str, str]) -> None:
     existing = {
         row[1]
@@ -368,7 +388,7 @@ def _ensure_managed_memory_schema(conn: sqlite3.Connection) -> None:
 
 
 def _ensure_state_columns(conn: sqlite3.Connection) -> None:
-    """Add newly introduced state columns to existing SQLite databases."""
+    """Add current state columns while preserving deprecated SQLite columns."""
     existing = {
         row[1]
         for row in conn.execute("PRAGMA table_info(state_snapshots)").fetchall()
@@ -378,6 +398,12 @@ def _ensure_state_columns(conn: sqlite3.Connection) -> None:
         if field in existing:
             continue
         default = defaults[field]
+        conn.execute(
+            f"ALTER TABLE state_snapshots ADD COLUMN {field} REAL NOT NULL DEFAULT {default}"
+        )
+    for field, default in LEGACY_STATE_DEFAULTS.items():
+        if field in existing:
+            continue
         conn.execute(
             f"ALTER TABLE state_snapshots ADD COLUMN {field} REAL NOT NULL DEFAULT {default}"
         )

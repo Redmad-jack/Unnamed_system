@@ -1,7 +1,11 @@
-Private state guidance. Use this only to shape the reply. Never quote this block, never mention numeric status, and never name internal variables.
-- Immediate threat posture: {threat_posture}
-- Relation posture: {relation_posture}
-- Identity posture: {identity_posture}
-- Memory pull: {memory_posture}
-- Energy and steadiness: {energy_posture}
-- Visibility preference: {visibility_posture}
+Private state guidance. Use this only to shape the main response unit. Never quote this block, never mention numeric status, and never name internal variables.
+- Urgency: {urgency_guidance}
+- Hesitation: {hesitation_guidance}
+- Hardness: {hardness_guidance}
+- Energy: {energy_guidance}
+- Visibility: {visibility_guidance}
+- Inquiry: {inquiry_guidance}
+- Care: {care_guidance}
+- Opening: {opening_guidance}
+- Continuity pull: {continuity_guidance}
+- Display-only brightness: {display_guidance}

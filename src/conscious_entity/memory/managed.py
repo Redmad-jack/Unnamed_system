@@ -22,6 +22,9 @@ _ACTIVE_STATUSES = {"active"}
 _RESTORABLE_STATUSES = {"archived", "hidden"}
 _VALID_STATUSES = {"active", "superseded", "archived", "hidden"}
 _VALID_OPERATIONS = {"add", "update", "supersede", "archive", "restore"}
+_DEFAULT_MEMORY_GRAVITY = 0.20
+_MEMORY_GRAVITY_GATE_THRESHOLD = 0.25
+_EXPLICIT_MEMORY_EVENTS = {"memory_continuity_query", "correction_received"}
 
 
 class MemoryProvider(Protocol):
@@ -257,27 +260,74 @@ class LocalManagedMemoryProvider:
         context = context or {}
         with turn_step("managed_memory.search_preview"):
             results = self.search(query, context.get("filters") if isinstance(context.get("filters"), dict) else None)
-        expression_context = [item.to_public_dict() for item in results[:5]]
+        public_results = [item.to_public_dict() for item in results[:5]]
+        hit_count = len(results)
+        memory_gravity_delta = (
+            min(0.12, 0.03 * hit_count)
+            if hit_count and self._config.state_influence_enabled
+            else 0.0
+        )
+        inquiry_delta = (
+            min(0.04, 0.01 * hit_count)
+            if hit_count and self._config.state_influence_enabled
+            else 0.0
+        )
+        positive_opening_delta = (
+            min(0.02, 0.005 * hit_count)
+            if hit_count and self._config.state_influence_enabled
+            else 0.0
+        )
+        current_memory_gravity = _memory_gravity_from_context(context)
+        effective_memory_gravity = _clamp01(current_memory_gravity + memory_gravity_delta)
+        explicit_memory_event = bool(_EXPLICIT_MEMORY_EVENTS.intersection(_event_values(context)))
+        gate_passed = bool(results) and (
+            explicit_memory_event
+            or effective_memory_gravity >= _MEMORY_GRAVITY_GATE_THRESHOLD
+        )
+        expression_context = public_results if gate_passed else []
         policy_influence = {
             "enabled": self._config.policy_influence_enabled,
-            "suggested_action": "retrieve_selective_memory" if results and self._config.policy_influence_enabled else None,
-            "reason": "committed managed memories matched the current query" if results else "",
+            "suggested_action": (
+                "retrieve_selective_memory"
+                if gate_passed and self._config.policy_influence_enabled
+                else None
+            ),
+            "reason": (
+                "committed managed memories matched the current query and continuity pull passed the gate"
+                if gate_passed
+                else ""
+            ),
+            "memory_gravity_gate_passed": gate_passed,
         }
-        gravity_delta = min(0.12, 0.03 * len(results)) if self._config.state_influence_enabled else 0.0
+        deltas = {}
+        if memory_gravity_delta:
+            deltas["memory_gravity"] = memory_gravity_delta
+        if inquiry_delta:
+            deltas["inquiry"] = inquiry_delta
+        if positive_opening_delta:
+            deltas["positive_opening"] = positive_opening_delta
         state_influence = {
             "enabled": self._config.state_influence_enabled,
-            "deltas": {"memory_gravity": gravity_delta} if gravity_delta else {},
-            "reason": "retrieved managed memories increase memory pull" if gravity_delta else "",
+            "deltas": deltas,
+            "reason": "retrieved managed memories increase continuity pull" if deltas else "",
         }
         return {
             "query": query,
-            "results": expression_context,
+            "results": public_results,
             "expression_context": expression_context,
             "policy_influence": policy_influence,
             "state_influence": state_influence,
             "explanation": {
                 "writes": False,
-                "committed_memory_count": len(results),
+                "committed_memory_count": hit_count,
+                "memory_gravity_gate": {
+                    "current": round(current_memory_gravity, 4),
+                    "delta": round(memory_gravity_delta, 4),
+                    "effective": round(effective_memory_gravity, 4),
+                    "threshold": _MEMORY_GRAVITY_GATE_THRESHOLD,
+                    "explicit_memory_event": explicit_memory_event,
+                    "passed": gate_passed,
+                },
             },
         }
 
@@ -819,6 +869,27 @@ def _string_list(value: Any) -> list[str]:
     if not isinstance(value, list):
         return []
     return [str(item).strip() for item in value if str(item).strip()]
+
+
+def _event_values(context: dict[str, Any]) -> set[str]:
+    events = context.get("events")
+    if not isinstance(events, list):
+        return set()
+    return {str(item) for item in events}
+
+
+def _memory_gravity_from_context(context: dict[str, Any]) -> float:
+    state = context.get("state")
+    if not isinstance(state, dict):
+        return _DEFAULT_MEMORY_GRAVITY
+    try:
+        return _clamp01(float(state.get("memory_gravity", _DEFAULT_MEMORY_GRAVITY)))
+    except (TypeError, ValueError):
+        return _DEFAULT_MEMORY_GRAVITY
+
+
+def _clamp01(value: float) -> float:
+    return max(0.0, min(1.0, value))
 
 
 def _memory_row_to_public(row: sqlite3.Row) -> dict[str, Any]:

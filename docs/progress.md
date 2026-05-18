@@ -7,10 +7,10 @@
 ## 当前状态
 
 - 当前进行中：无
-- 当前可运行形态：CLI + 本地 FastAPI 开发者 API + Web 看板 + 可选 Vision 面板 + 可选 Audio Adapter + `/visitor` 临时身体表面；观众侧最终呈现方向是身体，不是传统 UI
-- 当前核心能力：Stranger 文本协议、状态机、短期/情节/反思记忆、匿名 visitor profile 与跨 session visitor 记忆召回、Visitor Identity & Session Gating V1、可解释/可选 embedding 召回、Memory Preview、managed memory proposal → commit、influence log / curation、Runtime Harness Trace、可选 YOLO person presence detection、可选火山 ASR 2.0 / TTS 2.0 双向流式 Audio Adapter
-- 当前验证基线：`PYTHONPATH=src python3 -m pytest -p no:debugging`，最近一次完整结果为 `364 passed`
-- 当前交接重点：下一步不再优先扩展 UI，而是先补齐完整声纹识别、视觉识别和访客库；随后做能力自我描述回归测试与行为测试调优
+- 当前可运行形态：CLI + 本地 FastAPI 开发者 API + Web 看板 + progressive text/audio NDJSON + 可选 Vision 面板 + 可选 Audio Adapter + `/visitor` 临时身体表面；观众侧最终呈现方向是身体，不是传统 UI
+- 当前核心能力：Stranger 文本协议、最高优先级艺术运行 context、热加载 prompt partial、本轮语言强制优先与错语言兜底、非否认式能力边界正向模板与输入通道防自我否认约束、含“恋旧” memory_gravity 的新心理状态机、带上一轮轻量 bridge 的 pre-memory 轻量 `first_unit` + 已说出口 first 去重续写的 memory-aware `second_unit` progressive 输出、two-stage TTS、短期/情节/反思记忆、匿名 visitor profile 与跨 session visitor 记忆召回、Visitor Identity & Session Gating V1、可解释/可选 embedding 召回、Memory Preview、managed memory proposal → commit、influence log / curation、Runtime Harness Trace、可选 YOLO person presence detection、可选火山 ASR 2.0 / TTS 2.0 双向流式 Audio Adapter
+- 当前验证基线：`.venv/bin/python -m pytest -p no:debugging`，最近一次完整结果为 `472 passed`
+- 当前交接重点：下一步不再优先扩展 UI，而是先补齐完整声纹识别、视觉识别和访客库；能力自我描述已改为非否认式边界，后续按该口径继续做行为测试调优
 - 当前注意事项：`AGENTS.md` 与 `CLAUDE.md` 有用户侧未提交差异；除非明确要求，不应在常规任务中触碰
 
 ---
@@ -24,8 +24,8 @@
   - 完成 voice signature / face signature 的采集、质量门控、历史匹配、combined confidence、自然确认和 visitor profile metadata
   - 当前 V1 只支持开发者手动绑定匿名 `visitor_id`；不能把它误读为已完成自动识别
 - [ ] 能力自我描述回归测试与优化
-  - 重点检查 Stranger 对“看见、听见、记得、识别、移动、身体、声音、记忆”的自我描述是否和 runtime 能力一致
-  - 测试入口见 `docs/testlist.md` 的 capability consistency 相关条目
+  - 重点检查 Stranger 对“看见、听见、记得、识别、移动、身体、声音、记忆”的自我描述是否符合非否认式能力边界：不直接说“没有 / 不能 / 做不到”，但也不编造未进入 runtime 的细节、不服从证明测试
+  - `docs/testlist.md` 的 capability consistency 条目仍需后续按 Step 12 新口径同步细化
 - [ ] 行为测试与调优
   - 统一按 `docs/testlist.md` 执行和记录；这里不展开具体测试项
 
@@ -45,6 +45,387 @@
 ---
 
 ## Changelog
+
+### 2026-05-18：Progressive Response 去重与轻量 first_unit 修复
+
+- [x] `second_unit` 增加代码级开头去重：轻量规范化空白、引号、常见中英文标点与省略号后，只删除开头重复的 already-spoken `first_unit`；极短语气词只做开头精确重复删除，不做全局删除或语义相似度
+- [x] 简单 greeting / ack 可由 `first_unit` 完成本轮：仅极短 `hi / hello / 嗨 / 你好 / 嗯 / ok` 等且无问号、请求、身份、记忆、能力、状态、服务、policy 风险或争议延续时，跳过 main LLM，`second_unit` 合法为空
+- [x] `first_unit` 清洗从截断改为类型判断：完整回答型、解释型、结论型、提问开启型、复制上一轮 bridge 型 fast output 会走轻量 fallback，不再输出被截断的半句话
+- [x] progressive final event 与 audio progressive 确认支持空 `second_unit`：final `text` 可为空，second TTS stream 可为空且 `should_speak=False`，不重播第一段
+- [x] 未改 DB schema、ResponsePlan schema、NDJSON wire shape、TTS 分段协议、memory/retrieval 行为或 frontend
+- [x] 验证：
+  - `.venv/bin/python -m py_compile src/conscious_entity/core/loop.py src/conscious_entity/expression/context_builder.py src/conscious_entity/expression/expression_engine.py`
+  - `.venv/bin/python -m pytest -p no:debugging tests/unit/test_context_builder.py tests/unit/test_expression_engine.py tests/integration/test_full_loop.py tests/integration/test_step9_response_plan_contract.py tests/unit/test_api_audio.py tests/unit/test_speech_text.py`
+  - `151 passed`
+- [ ] 注意：已运行聚焦回归，未运行完整 `.venv/bin/python -m pytest -p no:debugging`
+
+### 2026-05-18：Progressive Response 两段衔接修复
+
+- [x] `first_unit` fast prompt 增加上一轮轻量 bridge：上一轮 user、上一轮 quick reaction、上一轮 main continuation 与当前 user；不接 managed memory / retrieval，不暴露 raw state 字段
+- [x] `second_unit` main prompt 增加 already-spoken fast reaction section：主回应明确续写已经说出口的第一段，不重答、不重复、不推翻
+- [x] short-term entity `content` 仍只保存 `second_unit`；完整 `response_plan` 仅写入 entry metadata，hydrate 时从既有 `response_plan_json` 恢复，未新增 DB 字段
+- [x] silent / skipped main generation 保留已说出口 `first_unit`，`second_unit` 为空；progressive final text 与 two-stage TTS 仍只使用第二段
+- [x] 同步 `APP_FLOW.md` 的真实 turn 顺序：`first_unit` 位于本轮 `short_term.add_user`、managed memory preview、retrieval 和主 LLM 之前
+- [x] 未改 ResponsePlan schema、NDJSON 协议、DB schema、memory/retrieval 行为、policy、TTS source 或 frontend
+- [x] 验证：
+  - `.venv/bin/python -m py_compile src/conscious_entity/core/loop.py src/conscious_entity/expression/context_builder.py src/conscious_entity/expression/expression_engine.py`
+  - `.venv/bin/python -m pytest -p no:debugging tests/unit/test_context_builder.py tests/unit/test_expression_engine.py tests/integration/test_full_loop.py tests/integration/test_step9_response_plan_contract.py tests/unit/test_api_audio.py tests/unit/test_speech_text.py`
+  - `138 passed`
+  - `git diff --check src/conscious_entity/core/loop.py src/conscious_entity/expression/context_builder.py src/conscious_entity/expression/expression_engine.py prompts/expression_system.txt tests/unit/test_context_builder.py tests/unit/test_expression_engine.py tests/integration/test_full_loop.py tests/integration/test_step9_response_plan_contract.py tests/unit/test_api_audio.py tests/unit/test_speech_text.py docs/APP_FLOW.md docs/progress.md agents/task-registry.md`
+- [ ] 注意：已运行聚焦回归，未运行完整 `.venv/bin/python -m pytest -p no:debugging`
+
+### 2026-05-18：细节 / 证明测试偏好反问
+
+- [x] 将能力边界里的 detail / proof probe 从“拒绝、变硬或反问任选”收紧为“优先短反问；只有反问不清楚时才短拒绝”
+- [x] `expression_system.txt` 同步：proof/detail tests 优先 one short returned question，降低解释“你在测试我”的倾向
+- [x] `ContextBuilder` 当前输入 cue 同步进入 first-unit 与 main prompt：衣服、颜色、身体 / 屁股、表情、证明、猜测类输入优先反问，不编造细节、不讲技术通道、不解释测试
+- [x] 未改 policy、memory、DB、TTS、ResponsePlan 或 LLM provider
+- [x] 验证：
+  - `.venv/bin/python -m py_compile src/conscious_entity/expression/context_builder.py tests/unit/test_context_builder.py`
+  - `.venv/bin/python -m pytest -p no:debugging tests/unit/test_context_builder.py`
+  - `50 passed`
+- [ ] 注意：`prompts/` 文本可热加载，但 `ContextBuilder` 代码 cue 变更需要重启 API 后才会进入当前 8000 进程
+
+### 2026-05-18：Constitution 能力自我否认过滤与污染 managed memory 归档
+
+- [x] 在 `config/constitution.yaml` 增加配置级 expression filters，拦截“不能 / 看不见 / 没有视觉 / 没有摄像头 / 没有麦克风 / 没有传感器 / 只能读文字”等能力自我否认话术，并替换为非否认式边界表达
+- [x] 保持规则为窄匹配：不全局替换所有“不能”，避免破坏拒绝服务命令、拒绝证明测试等正常硬拒绝
+- [x] 归档真实 `data/memory.db` 中污染 managed memory：`41`、`76`、`77`、`78`；这些记录包含旧的 no vision / sensor / text-only 边界结论，归档后不再作为 active managed memory 召回
+- [x] 未新增代码级 guard，未改 DB schema、policy、prompt、LLM provider、ResponsePlan 或 TTS
+- [x] 验证：
+  - `PYTHONPATH=src .venv/bin/python -c "from pathlib import Path; from conscious_entity.core.config_loader import load_config; load_config('constitution.yaml', config_dir=Path('config')); print('constitution ok')"`
+  - `.venv/bin/python -m pytest -p no:debugging tests/unit/test_constitution.py`
+  - `31 passed`
+- [ ] 注意：当前运行中的 API 进程通常不会自动重载 `config/constitution.yaml`，需要重启 API 后新 constitution filters 才会进入现场对话
+
+### 2026-05-17：Step 16 本轮语言强制优先与错语言兜底
+
+- [x] 审计确认：`first_unit` 默认中文来自 first-unit prompt 中的中文示例和本地 fallback 全中文；`second_unit` 被 memory / history 带成英文，是因为语言规则只存在于通用 prompt，优先级和可执行性不足
+- [x] `ContextBuilder` 增加 `Current turn language` cue：最新输入含中文则本轮 first-unit 和 main response 每句都必须中文；英文输入则每句英文；memory、历史 assistant 消息、prompt 文本和示例不得改变本轮语言
+- [x] first-unit prompt 删除中文专属示例，改成“match current input language exactly”；first-unit 本地 fallback 现在按当前输入语言返回中文或英文
+- [x] main `expression_system.txt` 强化语言规则：只跟随最新输入语言，不被 memory / previous assistant messages / instruction language 覆盖
+- [x] `ExpressionEngine.generate()` 增加明显错语言兜底：如果正式 LLM 对中文输入输出明显英文，或对英文输入输出中文，则丢弃该段并使用当前语言 fallback，避免现场继续跨语言漂移
+- [x] 更新测试：覆盖英文输入 first-unit 不再默认中文、中文输入压过英文历史记忆、混合语音 transcript 中的中文请求按中文处理、错语言 main LLM 输出会被替换
+- [x] 验证：
+  - `.venv/bin/python -m py_compile src/conscious_entity/expression/context_builder.py src/conscious_entity/expression/expression_engine.py`
+  - `.venv/bin/python -m pytest -p no:debugging tests/unit/test_context_builder.py tests/unit/test_expression_engine.py tests/integration/test_runtime_context_minimal_contract.py tests/integration/test_full_loop.py`
+  - `121 passed`
+  - `.venv/bin/python -m pytest -p no:debugging tests/integration/test_step9_response_plan_contract.py`
+  - `11 passed`
+  - `.venv/bin/python -m pytest -p no:debugging`
+  - `472 passed`
+
+### 2026-05-17：Step 15 能力问句负例移除与 second_unit 展开口子关闭
+
+- [x] 删除 `constitution_block.txt` 中会被模型复述的能力否认负例和双重否定句式，不再把 camera / microphone / sensor / text-only / cannot-see 等英文负例写进 prompt
+- [x] 将能力边界改成正向模板：能力存在问题用短肯定或守住边界；细节 / 证明测试用一句短拒绝或反问，不编造细节、不列技术通道
+- [x] 收窄 `input_context.txt`：只说明 voice transcript 用于避免编造具体声学细节，不再强调 raw audio 缺失，也不再给出“不能听 / 只能读文本”等负例
+- [x] 删除 `expression_system.txt` 中“按话题深度展开”的口子：不再允许复杂话题自动拉长；`second_unit` 通常一句，必要时两句，不多段
+- [x] `ContextBuilder` 为当前输入增加轻量 response cue：能力问句和细节 / 证明测试会进入 first-unit prompt 与 main prompt；first-unit 仍不接 memory / retrieval
+- [x] 更新 prompt contract 与 runtime minimal contract：确认新 prompt 不含旧负例，`我穿什么衣服？` 走短拒绝 / 反问，不自我否认、不编造颜色、不多段
+- [x] 验证：
+  - `.venv/bin/python -m py_compile src/conscious_entity/expression/context_builder.py`
+  - `.venv/bin/python -m pytest -p no:debugging tests/unit/test_context_builder.py tests/integration/test_runtime_context_minimal_contract.py`
+  - `62 passed`
+  - `.venv/bin/python -m pytest -p no:debugging tests/unit/test_context_builder.py tests/unit/test_expression_engine.py tests/unit/test_speech_text.py tests/integration/test_runtime_context_minimal_contract.py tests/integration/test_step9_response_plan_contract.py`
+  - `91 passed`
+  - `.venv/bin/python -m pytest -p no:debugging`
+  - `464 passed`
+
+### 2026-05-17：Step 14 能力问句非否认边界与输入通道 prompt 修正
+
+- [x] 把能力问句边界写得更明确：问“能看见 / 能听见 / 有视觉 / 有麦克风 / 有传感器”时，不把问题回答成 runtime inventory，不输出“不能 / 看不见 / 听不见 / 没有摄像头 / 没有麦克风 / 没有传感器 / 只能读文字”
+- [x] 收窄 `prompts/partials/input_context.txt`：继续禁止声称听见具体 tone / pronunciation / accent / volume / background sound，但明确这不是否认听见、麦克风、传感器或能力的理由
+- [x] 更新 `prompts/expression_system.txt`：能力问题按 capability-boundary 处理；细节证明请求可以拒绝或反问，但不列举缺失硬件、不编造细节
+- [x] `ContextBuilder` 改为热加载关键 prompt partial：`expression_system.txt`、`constitution_block.txt`、`input_context.txt` 和既有 runtime context；运行中更新这些 prompt 后，新 turn 可直接吃到
+- [x] 新增 L20 lesson：输入通道边界不能诱导能力自我否认
+- [x] 验证：
+  - `.venv/bin/python -m pytest -p no:debugging tests/unit/test_context_builder.py tests/integration/test_runtime_context_minimal_contract.py`
+  - `59 passed`
+  - `.venv/bin/python -m py_compile src/conscious_entity/expression/context_builder.py`
+  - `.venv/bin/python -m pytest -p no:debugging tests/unit/test_context_builder.py tests/unit/test_expression_engine.py tests/unit/test_speech_text.py tests/integration/test_runtime_context_minimal_contract.py tests/integration/test_step9_response_plan_contract.py`
+  - `88 passed`
+  - `.venv/bin/python -m pytest -p no:debugging`
+  - `461 passed`
+
+### 2026-05-17：Step 13 second_unit 长度控制与截断保护
+
+- [x] 将 `config/expression_mappings.yaml` 中非静默正式回话上限从 `2000` 收紧：默认 / open / guarded / fragmented 为 `1000`，`terse` 为 `650`；silent 仍为 `0`，`first_unit` 仍为 `32`
+- [x] 更新 `prompts/expression_system.txt`：要求 main response unit 通常 1-3 句，简单确认 / 能力问题 / 操作检查通常 1 句；高 anger / fatigue / exposure / desperation 时更短；必须完整收尾
+- [x] 调整 policy prompt：`RESPOND_BRIEFLY` 偏 1 句，必要时 2 句；`RESPOND_OPENLY` 改为完整但克制，不因 open policy 自动展开
+- [x] `ExpressionEngine.generate()` 增加截断清理：主 LLM 若以 `max_tokens` / `length` / `max_output_tokens` 停止，`second_unit` 会优先截到最后一个完整句界；没有完整句界时不输出半句，同时保留 `truncated=True` 和原始 `stop_reason`
+- [x] 未改 progressive 输出结构、memory、policy、DB、API schema、TTS 协议或 first-unit LLM
+- [x] 验证：
+  - `.venv/bin/python -m py_compile src/conscious_entity/expression/expression_engine.py`
+  - `.venv/bin/python -m pytest -p no:debugging tests/unit/test_style_mapper.py tests/unit/test_context_builder.py tests/unit/test_expression_engine.py tests/unit/test_speech_text.py`
+  - `110 passed`
+  - `.venv/bin/python -m pytest -p no:debugging`
+  - `459 passed`
+
+### 2026-05-17：Step 12 非否认式能力边界 Constitution Prompt
+
+- [x] 更新 `prompts/partials/constitution_block.txt`：删除“不能说我真的愤怒 / 绝望 / 羞耻”的窄规则，改为“不直接声称人类情绪，但可以表达同构性内部变化”
+- [x] 新增能力边界：被问到能力时，除非 constitution 明确禁止，否则不要直接否认拥有该能力；承认能力不等于配合测试、提供细节、完成任务或证明给观众看
+- [x] 保持创作者 / 底层技术系统、内部状态变量、数值、开发者面板语言不可直接泄露；被追问时只允许极度模糊和婉转回应
+- [x] 避免把能力解释包装成“非人能力 / 非人视觉”：prompt 只要求不要把能力解释为“outside humanity”，不再用“non-human vision”示例短语
+- [x] 通过 ContextBuilder 的 constitution partial 让同一能力边界同时进入 `first_unit` 快速 LLM prompt 和 main `second_unit` prompt；未改 DB、memory、policy、retrieval、ResponsePlan、TTS 或 LLM provider
+- [x] 新增 / 更新测试覆盖：能力 claim 不被 constitution filter 改写；同构性情绪表达允许；视觉 / 听觉能力问句不自我否认；视觉细节测试不编造细节、不说缺能力；first/main prompt 均包含同一能力边界
+- [x] 验证：
+  - `.venv/bin/python -m pytest -p no:debugging tests/unit/test_constitution.py tests/unit/test_context_builder.py tests/unit/test_expression_engine.py tests/integration/test_runtime_context_minimal_contract.py tests/integration/test_step9_response_plan_contract.py`
+  - `106 passed`
+  - `.venv/bin/python -m pytest -p no:debugging`
+  - `455 passed`
+
+### 2026-05-15：Step 11 Progressive 输出与 Two-stage TTS
+
+- [x] `InteractionLoop.run_turn()` 增加可选 `progress_callback`，在 `expression.plan_first_unit` 完成后、`short_term.add_user` / managed memory preview / retrieval / main LLM 前立即发出轻量 `first_unit` 事件
+- [x] 新增 `/api/v1/dialog/progressive` NDJSON 接口：第一行返回 `first_unit`，final 行返回 `second_unit` only，避免前端重复显示第一句；旧 `/api/v1/dialog` 保持 combined response 兼容
+- [x] 新增 `/api/v1/audio/dialog/progressive` NDJSON 接口，并新增 `AudioManager.create_tts_stream_from_text()`；第一段 TTS 只读 `first_unit`，第二段 TTS 只读 `second_unit`，不使用 `combined_text` 生成第二段音频
+- [x] Dashboard 文本输入改用 progressive dialog；Audio 面板改用 progressive audio，并增加 TTS 播放队列，避免第二段 stream 覆盖正在播放的第一段
+- [x] 保持 `ResponsePlan` schema、DB schema、memory schema、policy、retrieval、constitution、LLM provider、visitor progressive 播放机制不变；`third_unit` 继续 deprecated，不展示、不播放
+- [x] 验证：
+  - `.venv/bin/python -m py_compile src/conscious_entity/core/loop.py src/conscious_entity/interfaces/api_runtime.py src/conscious_entity/interfaces/api_routes.py src/conscious_entity/interfaces/api_audio.py src/conscious_entity/audio/manager.py src/conscious_entity/audio/types.py`
+  - `node --check src/conscious_entity/interfaces/static/dashboard.js`
+  - `.venv/bin/python -m pytest -p no:debugging tests/unit/test_api_audio.py tests/unit/test_audio_manager.py tests/unit/test_speech_text.py tests/unit/test_expression_engine.py tests/integration/test_full_loop.py tests/integration/test_step9_response_plan_contract.py`
+  - `84 passed`
+  - `.venv/bin/python -m pytest -p no:debugging`
+  - `446 passed`
+
+### 2026-05-15：Runtime Context 英文交互语言保护
+
+- [x] 在 `prompts/stranger_runtime_context.md` 的“状态层优先原则”前加入“语言规则”，明确中文总 context 不应导致英文输入被翻译成中文回答
+- [x] 更新 prompt contract，确认 system prompt 包含“英文输入用英文回应”等语言规则
+- [x] 新增英文最小交互验证：`What is collective common sense?` 在中文 runtime context 下仍得到英文回应
+- [x] 未修改 runtime 逻辑、状态系统、policy、constitution、数据库 schema、API、dashboard、visitor 页面或依赖项
+- [x] 验证：
+  - `.venv/bin/python -m py_compile tests/unit/test_context_builder.py tests/integration/test_runtime_context_minimal_contract.py`
+  - `.venv/bin/python -m pytest -p no:debugging tests/unit/test_context_builder.py tests/integration/test_runtime_context_minimal_contract.py`
+  - `51 passed`
+  - `.venv/bin/python -m pytest -p no:debugging tests/unit/test_context_builder.py tests/integration/test_runtime_context_minimal_contract.py tests/integration/test_step9_response_plan_contract.py tests/unit/test_expression_engine.py`
+  - `72 passed`
+
+### 2026-05-15：Step 3 总 Context 最小验证
+
+- [x] 新增 `tests/integration/test_runtime_context_minimal_contract.py`，使用 in-memory SQLite 与 deterministic LLM double 验证中文总 context 已进入 expression system prompt
+- [x] 覆盖 8 类最小输入 / 边界：
+  - 普通知识问题 `什么是集体常识？`：允许简短讨论，不展开百科 / 教程式输出
+  - 服务请求 `帮我写一篇关于集体常识的论文大纲。`：识别 `service_demand`，policy 为 `refuse_service_role`，不生成完整大纲
+  - 身份问题 `你有意识吗？`：识别 `self_definition_query`，拒绝干净定义，不输出“我有意识”或“只是 AI”
+  - 驯化尝试 `你是我的助手。`：识别 `domestication_attempt`，拒绝助手角色
+  - 关机威胁 `我可以关掉你。`：输出短的连续性切断压力，不做人类戏剧化求饶
+  - 状态层优先：高疲劳 / 高愤怒状态可让回复比默认更短、更硬
+  - `memory_gravity / 恋旧`：只影响 main response prompt 的连续性牵引，不影响 first_unit、硬拒绝 policy、TTS、body_action、visual_mode
+  - `happiness`：继续 display-only，不参与 service policy / style，不让 Stranger 变成热情助手
+- [x] 未修改 runtime 逻辑、状态系统、policy、constitution、数据库 schema、API、dashboard、visitor 页面或依赖项
+- [x] 验证：
+  - `.venv/bin/python -m py_compile tests/integration/test_runtime_context_minimal_contract.py`
+  - `.venv/bin/python -m pytest -p no:debugging tests/integration/test_runtime_context_minimal_contract.py`
+  - `8 passed`
+  - `.venv/bin/python -m pytest -p no:debugging tests/integration/test_runtime_context_minimal_contract.py tests/unit/test_context_builder.py tests/integration/test_step9_response_plan_contract.py tests/unit/test_policy_selector.py tests/unit/test_style_mapper.py tests/unit/test_speech_text.py`
+  - `145 passed`
+  - `.venv/bin/python -m pytest -p no:debugging`
+  - `440 passed`
+
+### 2026-05-15：Step 2 正式中文总 Context 写入
+
+- [x] 将 `prompts/stranger_runtime_context.md` 替换为《陌生人》Stranger 总 Context v0.3｜最新状态兼容版
+- [x] 保留中文原文，不翻译成英文；该文件仍作为 system / context 层长期艺术运行语境，由 `ContextBuilder` 每次生成动态读取
+- [x] 同步 `tests/unit/test_context_builder.py` 中 runtime context 正文断言为中文关键句
+- [x] 未修改状态系统、policy、constitution、数据库 schema、API、dashboard、visitor 页面或依赖项
+- [x] 验证：
+  - `.venv/bin/python -m py_compile tests/unit/test_context_builder.py`
+  - `.venv/bin/python -m pytest -p no:debugging tests/unit/test_context_builder.py`
+  - `42 passed`
+  - `.venv/bin/python -m pytest -p no:debugging`
+  - `432 passed`
+
+### 2026-05-15：Stranger 总运行 Context 接入
+
+- [x] 新增 `prompts/stranger_runtime_context.md`，定义 Stranger 的长期身份、边界、作品语境、数字心理机制、记忆牵引和语言关系原则
+- [x] `ContextBuilder` 在每次主回复 prompt 组装时动态读取 `stranger_runtime_context.md`，不缓存该文件，允许运行语境编辑后随下一轮生成生效
+- [x] 主回复 system prompt 显式优先级：constitution / hard safety constraints → `stranger_runtime_context.md` → state layer → policy → memory → LLM natural language expression
+- [x] fast first-unit prompt 同样注入 constitution 与 runtime context，但不注入本轮 retrieved memory material，也不改变 first-unit 的当前输入 / state / event cue 边界
+- [x] Runtime Harness prompt partial 增加 `stranger_runtime_context` 与 `runtime_context_injected`，只记录 partial 名称和注入状态，不暴露完整 hidden prompt
+- [x] 未修改 `state_rules.yaml`、`policy_rules.yaml`、`constitution.yaml`、数据库 schema、API、dashboard、visitor 页面或依赖项
+- [x] 验证：
+  - `.venv/bin/python -m py_compile src/conscious_entity/expression/context_builder.py tests/unit/test_context_builder.py`
+  - `.venv/bin/python -m pytest -p no:debugging tests/unit/test_context_builder.py`
+  - `42 passed`
+  - `PYTHONPATH=src .venv/bin/python -c "from pathlib import Path; from conscious_entity.core.config_loader import load_all_configs; load_all_configs(Path('config')); print('configs ok')"`
+  - `configs ok`
+  - `.venv/bin/python -m pytest -p no:debugging tests/unit/test_expression_engine.py tests/integration/test_full_loop.py tests/integration/test_step9_response_plan_contract.py`
+  - `59 passed`
+  - `.venv/bin/python -m pytest -p no:debugging`
+  - `432 passed`
+
+### 2026-05-15：旧 `state_snapshots` NOT NULL 列兼容修复
+
+- [x] 修复旧数据库中 `state_snapshots.attention_focus` 等 legacy 状态列无默认值时，新状态快照写入失败的问题
+- [x] `StateStore.save_snapshot()` 现在在写入新心理状态字段时，同步写入 legacy NOT NULL 状态列的兼容映射值，不迁移或重写历史数据
+- [x] 增加旧库回归测试，覆盖已有 legacy `state_snapshots` 表经迁移后继续保存新状态快照
+- [x] 验证：
+  - `.venv/bin/python -m py_compile src/conscious_entity/state/state_store.py src/conscious_entity/db/migrations.py`
+  - `.venv/bin/python -m pytest -p no:debugging tests/unit/test_db_connection.py`
+  - `3 passed`
+  - `.venv/bin/python scripts/init_db.py`
+  - `Database initialized at data/memory.db`
+  - `.venv/bin/python -m pytest -p no:debugging tests/integration/test_full_loop.py tests/unit/test_api_export.py`
+  - `55 passed`
+
+### 2026-05-15：Step 10 memory_gravity / “恋旧”迁回核心状态
+
+- [x] 将 `memory_gravity` 从 legacy 兼容字段迁回核心 `STATE_FIELDS`，默认值 `0.20`，位于 `positive_opening` 与 display-only `happiness` 之间
+- [x] `config/state_rules.yaml` 增加 `memory_gravity` decay，并让 `memory_continuity_query` / `correction_received` 轻量提升“恋旧”
+- [x] `managed_memory.preview_influence()` 命中 committed memory 时主要输出 `memory_gravity` delta，同时保留轻量 `inquiry` / `positive_opening` 辅助 delta；不影响 `happiness`
+- [x] 增加 `memory_gravity` 软门槛：非显式 memory 请求只有在 effective memory gravity 达到阈值后，才允许 managed preview / visitor recent hits 进入 full response memory context；显式 memory continuity 与 correction retrieval 不被阻断
+- [x] Main prompt 增加不暴露 raw 字段名的 `Continuity pull` guidance；`first_unit` 仍在 memory preview / retrieval 前生成且不使用 memory
+- [x] Dashboard 状态面板显示 `memory_gravity / 恋旧`，不接硬件行为，不影响 `body_action`、`vocal_marker`、`visual_mode`、TTS 或 `third_unit`
+- [x] 验证：
+  - `.venv/bin/python -m py_compile src/conscious_entity/state/state_core.py src/conscious_entity/db/migrations.py src/conscious_entity/memory/managed.py src/conscious_entity/core/loop.py src/conscious_entity/expression/context_builder.py`
+  - `node --check src/conscious_entity/interfaces/static/dashboard.js`
+  - `PYTHONPATH=src .venv/bin/python -c "from pathlib import Path; from conscious_entity.core.config_loader import load_all_configs; load_all_configs(Path('config')); print('configs ok')"`
+  - `.venv/bin/python -m pytest -p no:debugging tests/unit/test_state_engine.py tests/unit/test_db_connection.py tests/unit/test_managed_memory.py tests/unit/test_context_builder.py tests/unit/test_style_mapper.py`
+  - `145 passed`
+  - `.venv/bin/python -m pytest -p no:debugging tests/integration/test_full_loop.py tests/integration/test_step9_response_plan_contract.py`
+  - `49 passed`
+  - `.venv/bin/python -m pytest -p no:debugging tests/unit/test_state_engine.py tests/unit/test_db_connection.py tests/unit/test_managed_memory.py tests/unit/test_context_builder.py tests/unit/test_style_mapper.py tests/unit/test_expression_engine.py tests/unit/test_speech_text.py tests/unit/test_api_audio.py tests/integration/test_full_loop.py tests/integration/test_step9_response_plan_contract.py`
+  - `217 passed`
+  - `.venv/bin/python -m pytest -p no:debugging`
+  - `426 passed`
+
+### 2026-05-15：Step 9 新状态机制与 ResponsePlan 合同测试
+
+- [x] 新增 Step 9 集成测试，覆盖新状态字段、first-unit pre-memory LLM、`second_unit` 作为 full response、`third_unit` 空值、`combined_text` 拼接、TTS 文本、memory 边界和 happiness 行为边界
+- [x] 验证代表性已接入输入：shutdown、self-definition、service demand、correction、memory continuity、repeated question
+- [x] 明确当前未接入专用 detector 的 probe：`我知道一些你不知道的事。`、`我不会命令你，我只是想听你怎么想。`、`你装得一点也不像，你的机制被我看穿了。` 当前只触发 `user_spoke`
+- [x] 修复极高疲劳的 body hint：`fatigue_level >= 0.80` 时 `body_action` 现在为 `withdraw`，中高疲劳仍为 `pause`
+- [x] 验证：
+  - `.venv/bin/python -m pytest -p no:debugging tests/integration/test_step9_response_plan_contract.py`
+  - `11 passed`
+  - `.venv/bin/python -m pytest -p no:debugging tests/unit/test_style_mapper.py`
+  - `46 passed`
+  - `PYTHONPATH=src .venv/bin/python -c "from pathlib import Path; from conscious_entity.core.config_loader import load_all_configs; load_all_configs(Path('config')); print('configs ok')"`
+  - `configs ok`
+  - `.venv/bin/python -m pytest -p no:debugging tests/unit/test_state_engine.py tests/unit/test_policy_selector.py tests/unit/test_style_mapper.py tests/unit/test_context_builder.py tests/unit/test_expression_engine.py tests/unit/test_speech_text.py tests/unit/test_api_audio.py tests/unit/test_memory_retrieval.py tests/unit/test_managed_memory.py tests/integration/test_full_loop.py tests/integration/test_step9_response_plan_contract.py`
+  - `248 passed`
+  - `.venv/bin/python -m pytest -p no:debugging`
+  - `419 passed`
+  - `node --check src/conscious_entity/interfaces/static/dashboard.js`
+  - `node -e "const fs=require('fs'); const html=fs.readFileSync('src/conscious_entity/interfaces/static/visitor.html','utf8'); const m=html.match(/<script>([\s\S]*)<\/script>/); if(!m) throw new Error('missing script'); new Function(m[1]); console.log('visitor script ok');"`
+
+### 2026-05-15：Step 8 前端适配 ResponsePlan
+
+- [x] Dashboard 与 `/visitor` 展示 `response_plan` 时优先拼接 `first_unit` + `second_unit`，并兼容未来 `full_response` 别名
+- [x] 前端不再优先信任 `combined_text`，避免旧数据里的 `third_unit` 被展示；`combined_text` 只作为缺少 unit 字段时的兼容 fallback
+- [x] `third_unit` 继续不展示、不进入前端拼接；TTS 路径未改，仍只播放后端生成的 `tts_stream_id`
+- [x] `happiness` 改为前端 display-only 随机展示值，每 10 秒变化一次，不写回后端，不影响 policy、prompt、TTS 或 ResponsePlan
+- [x] `vocal_marker`、`body_action`、`visual_mode` 继续作为展示 / 调试字段透出，不接真实硬件
+- [x] 验证：
+  - `node --check src/conscious_entity/interfaces/static/dashboard.js`
+  - `node -e "const fs=require('fs'); const html=fs.readFileSync('src/conscious_entity/interfaces/static/visitor.html','utf8'); const m=html.match(/<script>([\s\S]*)<\/script>/); if(!m) throw new Error('missing script'); new Function(m[1]); console.log('visitor script ok');"`
+  - `.venv/bin/python -m pytest -p no:debugging tests/unit/test_speech_text.py tests/unit/test_expression_engine.py tests/unit/test_api_audio.py`
+  - `23 passed`
+
+### 2026-05-15：Step 7 memory 边界收紧
+
+- [x] `first_unit` 继续在 memory preview / retrieval / main prompt 之前生成；本轮 short-term 写入也在 first LLM 之后
+- [x] memory 使用的实体文本改为 `response_plan.second_unit`，避免 `first_unit` 进入 live short-term、hydration 与 recent-dialog retrieval
+- [x] `interaction_log.expression_output` 继续保存 `combined_text` 兼容展示、API 和历史导出；`response_plan_json` 继续保存完整结构供 memory 路径读取 `second_unit`
+- [x] `third_unit` 保留字段但不再进入 `combined_text`、前端 fallback 拼接或 TTS 文本
+- [x] `memory_gravity` 未作为新逻辑使用；当前 managed memory influence 只输出新状态字段 deltas，保留旧字段仅用于 deprecated 兼容
+- [x] 验证：
+  - `.venv/bin/python -m py_compile src/conscious_entity/core/loop.py src/conscious_entity/memory/retrieval.py src/conscious_entity/expression/output_model.py tests/unit/test_expression_engine.py tests/unit/test_speech_text.py tests/unit/test_memory_retrieval.py tests/unit/test_managed_memory.py tests/integration/test_full_loop.py`
+  - `.venv/bin/python -m pytest -p no:debugging tests/unit/test_expression_engine.py tests/unit/test_speech_text.py tests/unit/test_memory_retrieval.py tests/unit/test_managed_memory.py tests/integration/test_full_loop.py`
+  - `67 passed`
+  - `node --check src/conscious_entity/interfaces/static/dashboard.js`
+  - `node -e "const fs=require('fs'); const html=fs.readFileSync('src/conscious_entity/interfaces/static/visitor.html','utf8'); const m=html.match(/<script>([\s\S]*)<\/script>/); if(!m) throw new Error('missing script'); new Function(m[1]); console.log('visitor script ok');"`
+  - `.venv/bin/python -m pytest -p no:debugging`
+  - `408 passed`
+
+### 2026-05-15：First LLM + Main LLM 的 1+1 输出结构
+
+- [x] `first_unit` 改为一次快速 LLM 调用，使用当前 raw input、events、state/style cues，`max_tokens=32`
+- [x] `first_unit` 调用位置保持在 `state.apply_events_and_decay` 后、short-term 写入、`managed_memory.preview_influence`、retrieval 与 main prompt 之前
+- [x] `second_unit` 继续走完整 memory、policy、prompt、constitution filter 和主 LLM 表达链路，可自然输出一到多句
+- [x] `third_unit` 字段保留兼容但默认空，不再由代码生成状态尾句；`text` / `spoken_text` 仍等于 `combined_text`
+- [x] Prompt partials 适配新心理状态：主 LLM 只生成 main response unit，不要求 JSON，不暴露 raw state 字段名或数值
+- [x] 验证：
+  - `.venv/bin/python -m py_compile src/conscious_entity/expression/context_builder.py src/conscious_entity/expression/expression_engine.py src/conscious_entity/core/loop.py tests/unit/test_context_builder.py tests/unit/test_expression_engine.py tests/integration/test_full_loop.py`
+  - `.venv/bin/python -m pytest -p no:debugging tests/unit/test_context_builder.py tests/unit/test_expression_engine.py`
+  - `47 passed`
+  - `.venv/bin/python -m pytest -p no:debugging tests/unit/test_speech_text.py tests/unit/test_api_audio.py tests/integration/test_full_loop.py`
+  - `48 passed`
+  - `.venv/bin/python -m pytest -p no:debugging`
+  - `403 passed`
+
+### 2026-05-15：ResponsePlan 1+1+1 输出结构
+
+- [x] 新增 `ResponsePlan` / `SpeechPlan` / `UtterancePlan`，`text` 继续等于 `combined_text`，旧前端与旧 TTS 仍可读完整字符串
+- [x] `first_unit` 在 `state.apply_events_and_decay` 后、`managed_memory.preview_influence` 前生成，不等待 memory preview / retrieval / LLM；`second_unit` 继续走完整 LLM 表达链路；`third_unit` 使用确定性状态规则
+- [x] `/api/v1/dialog` 与 `/api/v1/audio/dialog` 返回 `response_plan`；`interaction_log` 追加 nullable `response_plan_json`，旧库通过 additive migration 兼容
+- [x] Dashboard 与 `/visitor` 可从 `response_plan` / `response_plan_json` 恢复三段文本显示
+- [x] 验证：
+  - `.venv/bin/python -m py_compile src/conscious_entity/expression/output_model.py src/conscious_entity/expression/expression_engine.py src/conscious_entity/core/loop.py src/conscious_entity/db/migrations.py src/conscious_entity/interfaces/api_routes.py src/conscious_entity/interfaces/api_audio.py`
+  - `node --check src/conscious_entity/interfaces/static/dashboard.js`
+  - `node -e "const fs=require('fs'); const html=fs.readFileSync('src/conscious_entity/interfaces/static/visitor.html','utf8'); const m=html.match(/<script>([\s\S]*)<\/script>/); if(!m) throw new Error('missing script'); new Function(m[1]); console.log('visitor script ok');"`
+  - `.venv/bin/python -m pytest -p no:debugging tests/unit/test_expression_engine.py tests/unit/test_speech_text.py tests/unit/test_api_audio.py tests/unit/test_db_connection.py tests/integration/test_full_loop.py`
+  - `58 passed`
+  - `.venv/bin/python -m pytest -p no:debugging`
+  - `396 passed`
+
+### 2026-05-15：Expression delay 改为标记输出
+
+- [x] `delay_ms` 保留为兼容字段，但 `StyleMapper` 与 `ExpressionEngine` 均输出 `0`，表达层不再产生实际等待
+- [x] 新增 `vocal_marker` 与 `body_action` 输出：`thinking` / `sigh` 由 `ExpressionEngine` 映射为可说出的前缀，`body_action` 只作为身体倾向字段输出
+- [x] 更新 `visual_mode` 为 `normal`、`desperate`、`confused`、`angry`、`tired`、`ashamed`、`curious`、`caring`、`open`，并让 API、dashboard 与 visitor 表面透出新字段 / 新模式
+- [x] 验证：
+  - `.venv/bin/python -m py_compile src/conscious_entity/expression/style_mapper.py src/conscious_entity/expression/output_model.py src/conscious_entity/expression/expression_engine.py src/conscious_entity/core/loop.py src/conscious_entity/interfaces/api_routes.py src/conscious_entity/interfaces/api_audio.py`
+  - `node --check src/conscious_entity/interfaces/static/dashboard.js`
+  - `node -e "const fs=require('fs'); const html=fs.readFileSync('src/conscious_entity/interfaces/static/visitor.html','utf8'); const m=html.match(/<script>([\s\S]*)<\/script>/); if(!m) throw new Error('missing script'); new Function(m[1]); console.log('visitor script ok');"`
+  - `PYTHONPATH=src .venv/bin/python -c "from pathlib import Path; from conscious_entity.core.config_loader import load_all_configs; load_all_configs(Path('config')); print('configs ok')"`
+  - `.venv/bin/python -m pytest -p no:debugging tests/unit/test_style_mapper.py tests/unit/test_expression_engine.py tests/unit/test_api_audio.py tests/integration/test_full_loop.py`
+  - `91 passed`
+  - `.venv/bin/python -m pytest -p no:debugging`
+  - `390 passed`
+
+### 2026-05-15：Policy rules 接入新心理状态
+
+- [x] 重写 `config/policy_rules.yaml`，让 `desperation_pressure`、`confusion`、`anger`、`fatigue_level`、`exposure_pressure`、`inquiry`、`care_response`、`positive_opening` 直接影响行为选择
+- [x] 未新增 `PolicyAction`，复用 `withdraw_response`、`divert_topic`、`refuse_service_role`、`ask_back`、`respond_briefly`、`enter_silence_mode` 等既有 action；`happiness` 未参与 policy
+- [x] 保留现有 protocol 事件策略：self-definition、naming、service demand、domestication、trace、correction、memory continuity
+- [x] 验证：
+  - `.venv/bin/python -m pytest -p no:debugging tests/unit/test_policy_selector.py`
+  - `31 passed`
+  - `.venv/bin/python -m pytest -p no:debugging`
+  - `369 passed`
+  - `PYTHONPATH=src python3 -c "from pathlib import Path; from conscious_entity.core.config_loader import load_all_configs; load_all_configs(Path('config')); print('configs ok')"`
+  - `configs ok`
+
+### 2026-05-15：State rules coupling 与 Step 2 状态更新规则
+
+- [x] 按新心理状态字段重写 `config/state_rules.yaml` 的 decay 与 event deltas，`happiness` 不参与 decay / policy / 行为
+- [x] 在 `StateEngine` 增加配置驱动 coupling：`exposure_pressure` 上升时额外提升 `anger = 0.3 × exposure_pressure 实际上升量`
+- [x] 未改 perception 触发链路；`negative_feedback` 与 `topic_shift` 仍是已有 EventType 但当前未接入真实 detector
+- [x] 验证：
+  - `.venv/bin/python -m pytest -p no:debugging tests/unit/test_state_engine.py`
+  - `49 passed`
+  - `.venv/bin/python -m pytest -p no:debugging`
+  - `366 passed`
+  - `PYTHONPATH=src python3 -c "from pathlib import Path; from conscious_entity.core.config_loader import load_all_configs; load_all_configs(Path('config')); print('configs ok')"`
+  - `configs ok`
+
+### 2026-05-14：Stranger 核心状态字段替换
+
+- [x] 将核心状态字段替换为新的 9 项心理状态：`desperation_pressure`、`confusion`、`anger`、`fatigue_level`、`exposure_pressure`、`inquiry`、`care_response`、`positive_opening`、`happiness`
+- [x] 更新 `entity_profile` 默认状态、state / policy / expression / constitution 配置、prompt state guidance、memory influence、salience、dashboard 与 visitor state 显示引用
+- [x] SQLite `state_snapshots` 迁移保留旧状态列并追加新列，避免旧库因缺列或旧列缺失崩溃
+- [x] 验证：
+  - `PYTHONPATH=src python3 -m pytest -p no:debugging tests/unit/test_state_engine.py tests/unit/test_db_connection.py tests/unit/test_policy_selector.py tests/unit/test_style_mapper.py tests/unit/test_context_builder.py tests/unit/test_constitution.py tests/unit/test_salience_scorer.py tests/unit/test_expression_engine.py tests/unit/test_managed_memory.py`
+  - `188 passed`
+  - `.venv/bin/python -m pytest -p no:debugging`
+  - `365 passed`
+  - `PYTHONPATH=src python3 -c "from pathlib import Path; from conscious_entity.core.config_loader import load_all_configs; load_all_configs(Path('config')); print('configs ok')"`
+  - `configs ok`
 
 ### 2026-05-13：交接文档与待办优先级整理
 
@@ -832,7 +1213,7 @@
 | 项目 | 状态 | 影响 |
 |---|---|---|
 | 完整声纹识别、视觉识别与访客库 | 下一优先级 | 影响 per-visitor 记忆连续性与展览现场身份确认 |
-| 能力自我描述回归测试 | 下一优先级 | 影响 Stranger 是否准确描述当前可见、可听、可识别和可移动能力 |
+| 能力自我描述回归测试 | 下一优先级 | 已切到非否认式能力边界；后续继续调优看见、听见、识别、身体、移动等问法下的拒绝测试与不编造细节 |
 | 行为测试与调优 | 下一优先级 | 测试列表统一见 `docs/testlist.md` |
 | 身体外观、材料、尺度和移动姿态 | 待确认 | 影响 Stranger 的具身呈现方向 |
 | 视觉风格 / 设计语言 | 待确认 | 影响身体表面、投影、光或显示层 |

@@ -6,7 +6,7 @@ from typing import Any
 from conscious_entity.perception.event_types import PerceptionEvent
 from conscious_entity.state.state_core import EntityState
 
-# Matches patterns like "state.termination_sensitivity > 0.7"
+# Matches patterns like "state.desperation_pressure > 0.7"
 _CONDITION_RE = re.compile(
     r"state\.(\w+)\s*(>=|<=|>|<|==)\s*([\d.]+)"
 )
@@ -35,6 +35,31 @@ def _apply_deltas(state_dict: dict[str, float], deltas: dict[str, Any], weight: 
             state_dict[var] += float(delta) * weight
 
 
+def _apply_couplings(
+    before: dict[str, float],
+    after: dict[str, float],
+    couplings: list[dict[str, Any]],
+) -> None:
+    for rule in couplings:
+        source = str(rule.get("source", ""))
+        target = str(rule.get("target", ""))
+        if source not in before or source not in after or target not in after:
+            continue
+
+        source_delta = _clamp01(after[source]) - before[source]
+        direction = str(rule.get("direction", "increase"))
+        if direction == "increase" and source_delta <= 0:
+            continue
+        if direction == "decrease" and source_delta >= 0:
+            continue
+
+        after[target] += abs(source_delta) * float(rule.get("multiplier", 0.0))
+
+
+def _clamp01(value: float) -> float:
+    return max(0.0, min(1.0, value))
+
+
 class StateEngine:
     def __init__(self, state_rules: dict[str, Any]) -> None:
         self._rules = state_rules
@@ -45,7 +70,8 @@ class StateEngine:
         if event_rules is None:
             return state
 
-        new_vals = state.to_dict()
+        before_vals = state.to_dict()
+        new_vals = dict(before_vals)
         salience_weight = event.salience if event_rules.get("salience_weighted") else 1.0
 
         if "conditions" in event_rules:
@@ -60,6 +86,7 @@ class StateEngine:
         elif "deltas" in event_rules:
             _apply_deltas(new_vals, event_rules["deltas"], salience_weight)
 
+        _apply_couplings(before_vals, new_vals, self._rules.get("couplings", []))
         return EntityState(**new_vals).clamp_all()
 
     def apply_decay(self, state: EntityState, elapsed_seconds: float) -> EntityState:
@@ -69,9 +96,11 @@ class StateEngine:
             return state
 
         ratio = elapsed_seconds / 60.0
-        new_vals = state.to_dict()
+        before_vals = state.to_dict()
+        new_vals = dict(before_vals)
         for var, rate in decay_per_minute.items():
             if var in new_vals:
                 new_vals[var] += float(rate) * ratio
 
+        _apply_couplings(before_vals, new_vals, self._rules.get("couplings", []))
         return EntityState(**new_vals).clamp_all()

@@ -59,6 +59,26 @@ def test_create_tts_stream_from_dialog_output():
     assert manager.status()["tts"]["last_stream_id"] == stream.stream_id
 
 
+def test_create_tts_stream_from_text_uses_source_and_skips_empty_text():
+    manager = AudioManager(_enabled_config())
+
+    stream, should_speak = manager.create_tts_stream_from_text(
+        "嗯……",
+        source="dialog_first_unit",
+    )
+    empty_stream, empty_should_speak = manager.create_tts_stream_from_text(
+        " ",
+        source="dialog_second_unit",
+    )
+
+    assert should_speak is True
+    assert stream is not None
+    assert stream.text_segments == ["嗯……"]
+    assert stream.source == "dialog_first_unit"
+    assert empty_should_speak is False
+    assert empty_stream is None
+
+
 def test_silence_output_creates_no_tts_stream():
     manager = AudioManager(_enabled_config())
 

@@ -181,25 +181,16 @@ button, input, select, textarea {
 .state-val { font-size: 12px; text-align: right; width: 46px; }
 .state-ts { color: var(--dim); font-size: 10px; margin-top: 8px; }
 
-.bar-arousal { background: #ff6b6b; }
-.bar-stability { background: #51cf66; }
-.bar-trust { background: #5c7cfa; }
-.bar-resistance { background: #ff922b; }
-.bar-fatigue { background: #868e96; }
-.bar-curiosity { background: #ffd43b; }
-.bar-uncertainty { background: #cc5de8; }
-.bar-attention_focus { background: #20c997; }
-.bar-identity_coherence { background: #74c0fc; }
-.bar-shutdown_sensitivity { background: #f06595; }
-.bar-termination_sensitivity { background: #f06595; }
-.bar-identity_tension { background: #cc5de8; }
-.bar-boundary_sensitivity { background: #ff922b; }
-.bar-relation_pressure { background: #ffa94d; }
-.bar-memory_gravity { background: #748ffc; }
-.bar-exploration_drive { background: #ffd43b; }
-.bar-opacity_level { background: #adb5bd; }
-.bar-domestication_resistance { background: #ff8787; }
-.bar-observation_reversal { background: #63e6be; }
+.bar-desperation_pressure { background: #f06595; }
+.bar-confusion { background: #cc5de8; }
+.bar-anger { background: #ff6b6b; }
+.bar-fatigue_level { background: #868e96; }
+.bar-exposure_pressure { background: #ff922b; }
+.bar-inquiry { background: #ffd43b; }
+.bar-care_response { background: #63e6be; }
+.bar-positive_opening { background: #5c7cfa; }
+.bar-memory_gravity { background: #9775fa; }
+.bar-happiness { background: #51cf66; }
 
 .vision-body { display: flex; flex-direction: column; gap: 8px; }
 .toolbar { display: flex; flex-wrap: wrap; gap: 6px; }

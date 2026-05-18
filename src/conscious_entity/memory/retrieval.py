@@ -87,7 +87,8 @@ class MemoryRetriever:
             return []
         rows = self._conn.execute(
             """
-            SELECT i.id, i.session_id, i.turn_at, i.raw_text, i.expression_output, i.policy_action
+            SELECT i.id, i.session_id, i.turn_at, i.raw_text, i.expression_output,
+                   i.response_plan_json, i.policy_action
             FROM interaction_log i
             JOIN sessions s ON s.id = i.session_id
             WHERE i.session_id != ?
@@ -101,7 +102,12 @@ class MemoryRetriever:
         results: list[RetrievedMemory] = []
         for idx, row in enumerate(rows):
             user_text = row["raw_text"] or ""
-            entity_text = row["expression_output"] or ""
+            plan_second_unit = _second_unit_from_response_plan_json(row["response_plan_json"])
+            entity_text = (
+                plan_second_unit
+                if plan_second_unit is not None
+                else row["expression_output"] or ""
+            )
             if not user_text and not entity_text:
                 continue
             content = _format_recent_turn(user_text, entity_text)
@@ -151,7 +157,7 @@ class MemoryRetriever:
     def _recent_dialog(self, query_tokens: set[str], limit: int) -> list[RetrievedMemory]:
         rows = self._conn.execute(
             """
-            SELECT id, turn_at, raw_text, expression_output, policy_action
+            SELECT id, turn_at, raw_text, expression_output, response_plan_json, policy_action
             FROM interaction_log
             WHERE session_id = ?
             ORDER BY turn_at DESC, id DESC
@@ -163,7 +169,12 @@ class MemoryRetriever:
         results: list[RetrievedMemory] = []
         for idx, row in enumerate(rows):
             user_text = row["raw_text"] or ""
-            entity_text = row["expression_output"] or ""
+            plan_second_unit = _second_unit_from_response_plan_json(row["response_plan_json"])
+            entity_text = (
+                plan_second_unit
+                if plan_second_unit is not None
+                else row["expression_output"] or ""
+            )
             if not user_text and not entity_text:
                 continue
             content = _format_recent_turn(user_text, entity_text)
@@ -550,6 +561,18 @@ def _format_recent_turn(user_text: str, entity_text: str) -> str:
     if entity_text:
         parts.append(f"you answered: {entity_text}")
     return "\n".join(parts)
+
+
+def _second_unit_from_response_plan_json(raw: str | None) -> str | None:
+    if not raw:
+        return None
+    try:
+        parsed = json.loads(raw)
+    except (TypeError, ValueError):
+        return None
+    if not isinstance(parsed, dict):
+        return None
+    return str(parsed.get("second_unit") or "").strip()
 
 
 def _parse_time(value: str | None) -> datetime | None:

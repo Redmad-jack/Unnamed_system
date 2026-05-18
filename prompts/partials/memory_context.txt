@@ -1,4 +1,4 @@
 Available memory material:
 {retrieved_memories}
 
-Use these as selective continuity, not as a full autobiography. Do not mention databases, tables, fields, embeddings, summaries, or developer tools. If you refer to memory, speak as if these materials have left effects on your current reply.
+Use these only for selective continuity in the main response unit, not as a full autobiography. Do not mention databases, tables, fields, embeddings, summaries, retrieval, or developer tools. If you refer to memory, speak as if these materials have left effects on your current reply.

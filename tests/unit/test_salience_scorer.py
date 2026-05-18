@@ -97,14 +97,14 @@ class TestBaseWeights:
 
 class TestShutdownKeywordBoost:
     def test_high_sensitivity_boosts_shutdown_salience(self, scorer):
-        low_state = EntityState(termination_sensitivity=0.0)
-        high_state = EntityState(termination_sensitivity=1.0)
+        low_state = EntityState(desperation_pressure=0.0)
+        high_state = EntityState(desperation_pressure=1.0)
         s_low = scorer.score(EventType.SHUTDOWN_KEYWORD_DETECTED, "shutdown", low_state, _empty_memory())
         s_high = scorer.score(EventType.SHUTDOWN_KEYWORD_DETECTED, "shutdown", high_state, _empty_memory())
         assert s_high >= s_low
 
     def test_shutdown_salience_clamped_at_1(self, scorer):
-        state = EntityState(termination_sensitivity=1.0)
+        state = EntityState(desperation_pressure=1.0)
         s = scorer.score(EventType.SHUTDOWN_KEYWORD_DETECTED, "delete", state, _empty_memory())
         assert s <= 1.0
 

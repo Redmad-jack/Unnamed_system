@@ -71,6 +71,36 @@
 - 原因：否则实体会把转录文本当成书面输入来解释，错误声称自己区分了文字层面的语言、标点或拼写，而不知道它没有接收原始声音
 - 如何应用：保持 `raw_text` 干净，只在 short-term metadata / prompt context 中注入 `voice_transcript` 说明
 
+**L20：输入通道边界不能诱导能力自我否认**
+- 规则：说明 STT transcript、视觉检测或其他 runtime 通道限制时，只限制具体细节声明，不能引导 Stranger 回答“我不能听见 / 看不见 / 没有麦克风 / 没有摄像头 / 只能读文字”
+- 原因：能力问题会被模型解释成技术 inventory；如果 prompt 强调“只收到 transcript / 没有 raw audio”，模型会自然补全成普通 AI 的能力否认
+- 如何应用：能力问句必须按非否认式能力边界处理；细节测试可以拒绝或反问，但不要用底层输入通道做自我贬低式解释
+
+**L21：不要把负例当长串样例塞进 prompt**
+- 规则：如果某类输出现场模型已经会复述，就不要在 prompt 中列出完整负例；改用正向模板、短句结构和测试约束
+- 原因：能力边界中写入“不要说 X / 不要回答 X”后，模型会把 X 当作可用语言材料复述，甚至生成“我不会说我缺乏这种能力”这类元解释
+- 如何应用：能力问句使用“短肯定 / 守住边界 / 不配合证明题”的正向模板；细节测试使用“一句短拒绝或反问”；同时删除按话题深度展开的口子，避免 second_unit 被拉成长解释
+
+**L22：本轮语言必须压过 memory 和历史消息**
+- 规则：表达层必须根据最新用户输入决定本轮语言，first_unit 和 second_unit 都跟随最新输入；memory、retrieved material、历史 assistant 文本和 prompt 主语言都不能覆盖
+- 原因：history / memory 中的英文回答会把主 LLM 带偏；first-unit prompt 中的中文示例和中文 fallback 也会让英文输入先冒中文
+- 如何应用：ContextBuilder 注入 `Current turn language` cue；first-unit fallback 按 raw input 语言选择；second-unit 若明显错语言，ExpressionEngine 使用当前语言 fallback 替换
+
+**L23：能力边界改口径后必须同步清理 managed memory**
+- 规则：当能力自我描述从“技术 inventory / 能力否认”改为非否认式边界后，旧 managed memory 中的 no vision / no sensor / text-only 结论必须归档或修正
+- 原因：即使 prompt 已经改好，active managed memory 仍会把 main LLM 拉回旧口径，产生“我没有视觉 / 只能读文字”等现场污染
+- 如何应用：修能力边界时同时检查 `managed_memories` active 行；用 constitution filters 兜底输出文本，归档污染记忆，并重启 API 让 YAML 配置生效
+
+**L24：偏好必须写成偏好，不要藏在测试假输出里**
+- 规则：如果现场希望某类刺激更偏向反问，就要在真实 prompt / current input cue / policy 中写成明确偏好；测试 fake LLM 的返回句不等于运行时规则
+- 原因：“拒绝或反问”会让模型合法选择解释和拒绝，尤其在 memory 提示“visitor is testing”时会自然生成“你在测试我”
+- 如何应用：细节 / 证明测试这类局部行为，用 current input cue 写清优先顺序，例如“prefer turning the question back”，并测试 first-unit 与 main prompt 都包含该偏好
+
+**L25：Progressive 输出不能只靠 prompt 防重复**
+- 规则：只要 `first_unit` 已经说出口，`second_unit` 必须有代码级开头去重保护；prompt 只能引导，不能作为唯一防线
+- 原因：main LLM 即使看到“不要重复”也会把 fast reaction 原样作为开头，导致用户听到两次同一句，或把两段听成互相独立的回答
+- 如何应用：`second_unit` 进入 `ResponsePlan` 前做轻量规范化 prefix check；极短语气词只删开头精确重复，避免误删正文
+
 **L17：跨 session 记忆必须有 visitor scope**
 - 规则：不能依赖 `session_type` 或全局池去模拟“同一个访客”的连续性；跨 session 的个人事实、关系线索和回返感必须经过显式 `visitor_id` 绑定
 - 原因：否则一个访客说过的事实会在另一个访客处泄漏，或者像“K 是谁”这类旧会话事实在新 session 中无法稳定召回
@@ -80,6 +110,11 @@
 - 规则：`SCHEMA_SQL` 可以描述新库表结构，但涉及新增列的索引必须放在 ensure/migration 阶段，等旧表 `ALTER TABLE ADD COLUMN` 后再创建
 - 原因：`CREATE TABLE IF NOT EXISTS` 不会更新旧表结构，若随后直接 `CREATE INDEX ... (new_column)`，旧库会在启动时失败
 - 如何应用：新增持久化列时必须添加旧库回归测试，覆盖“已有表缺少新列”的迁移路径
+
+**L19：写入路径必须兼容旧表的 NOT NULL legacy 列**
+- 规则：替换状态字段后，只要旧 SQLite 表仍可能保留无默认值的 legacy `NOT NULL` 列，`INSERT` 路径就必须显式写入兼容值
+- 原因：`ALTER TABLE ADD COLUMN ... DEFAULT` 只能保护新列，不能给旧表原有的无默认值列补默认约束；省略这些列会触发 `NOT NULL constraint failed`
+- 如何应用：状态快照这类长期表新增/替换字段时，既要测迁移后的列存在，也要测迁移后的旧库能完成真实写入
 
 **L07：不要跳过 `clamp_all()`**
 - 规则：每次状态更新调用链末尾必须调用 `clamp_all()`

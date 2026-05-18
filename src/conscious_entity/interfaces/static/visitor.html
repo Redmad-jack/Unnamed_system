@@ -11,6 +11,7 @@
     --tension: 0.2;
     --attention: 0.5;
     --opacity: 0.72;
+    --happiness: 0.9;
     --pulse-ms: 4200ms;
     --bg: #08090a;
     --fg: #e6e1d8;
@@ -54,7 +55,9 @@
     width: 34%;
     aspect-ratio: 1;
     border-radius: 50%;
-    box-shadow: 0 0 80px rgba(230, 225, 216, calc(var(--attention) * 0.16));
+    box-shadow:
+      0 0 80px rgba(230, 225, 216, calc(var(--attention) * 0.16)),
+      0 0 42px rgba(81, 207, 102, calc(var(--happiness) * 0.08));
   }
   .body::after {
     top: 23%;
@@ -91,6 +94,12 @@
   .surface.fade .body,
   .surface.fade .voice {
     opacity: 0.2;
+  }
+  .surface.open .body {
+    filter: blur(calc(var(--tension) * 0.7px));
+  }
+  .surface.open .voice {
+    opacity: calc(0.58 + var(--presence) * 0.38);
   }
   .sound-toggle {
     position: fixed;
@@ -138,6 +147,10 @@ function clamp01(value) {
   return Math.max(0, Math.min(1, n));
 }
 
+function updateDisplayHappiness() {
+  document.documentElement.style.setProperty('--happiness', String(Math.random()));
+}
+
 async function pollVisitorSurface() {
   try {
     const [state, log, audio] = await Promise.all([
@@ -153,23 +166,52 @@ async function pollVisitorSurface() {
 }
 
 function renderState(state) {
-  document.documentElement.style.setProperty('--presence', clamp01(state.attention_focus ?? 0.45));
-  document.documentElement.style.setProperty('--tension', clamp01(state.identity_tension ?? state.uncertainty ?? 0.2));
-  document.documentElement.style.setProperty('--attention', clamp01(state.attention_focus ?? 0.5));
-  document.documentElement.style.setProperty('--opacity', clamp01(state.opacity_level ?? 0.72));
-  const fatigue = clamp01(state.fatigue ?? 0.2);
+  document.documentElement.style.setProperty('--presence', clamp01(state.inquiry ?? 0.45));
+  document.documentElement.style.setProperty('--tension', clamp01(state.exposure_pressure ?? state.confusion ?? 0.2));
+  document.documentElement.style.setProperty('--attention', clamp01(state.inquiry ?? 0.5));
+  document.documentElement.style.setProperty('--opacity', clamp01(state.exposure_pressure ?? 0.72));
+  const fatigue = clamp01(state.fatigue_level ?? 0.2);
   document.documentElement.style.setProperty('--pulse-ms', `${Math.round(3400 + fatigue * 2800)}ms`);
 }
 
 function renderLatestExpression(row) {
   const surface = document.getElementById('surface');
   const voice = document.getElementById('voice');
-  const text = row && row.expression_output ? String(row.expression_output).trim() : '';
+  const text = latestResponseText(row);
   const mode = row && row.visual_mode ? String(row.visual_mode) : '';
+  const glitchModes = new Set(['desperate', 'confused', 'angry']);
+  const fadeModes = new Set(['desperate', 'tired', 'ashamed']);
+  const openModes = new Set(['curious', 'caring', 'open']);
   surface.classList.toggle('silent', !text);
-  surface.classList.toggle('glitch', mode.includes('glitch') || mode.includes('fragment'));
-  surface.classList.toggle('fade', mode.includes('fade') || mode.includes('withdraw'));
+  surface.classList.toggle('glitch', glitchModes.has(mode) || mode.includes('glitch') || mode.includes('fragment'));
+  surface.classList.toggle('fade', fadeModes.has(mode) || mode.includes('fade') || mode.includes('withdraw'));
+  surface.classList.toggle('open', openModes.has(mode));
   voice.textContent = text;
+}
+
+function latestResponseText(row) {
+  if (!row) return '';
+  const plan = parseResponsePlan(row);
+  if (plan) {
+    const fullResponse = String(plan.full_response || '').trim() || String(plan.second_unit || '').trim();
+    const units = [plan.first_unit, fullResponse]
+      .map((unit) => String(unit || '').trim())
+      .filter(Boolean)
+      .join('\n');
+    return String(units || plan.combined_text || '').trim();
+  }
+  return row.expression_output ? String(row.expression_output).trim() : '';
+}
+
+function parseResponsePlan(row) {
+  if (row.response_plan && typeof row.response_plan === 'object') return row.response_plan;
+  if (!row.response_plan_json || typeof row.response_plan_json !== 'string') return null;
+  try {
+    const parsed = JSON.parse(row.response_plan_json);
+    return parsed && typeof parsed === 'object' ? parsed : null;
+  } catch {
+    return null;
+  }
 }
 
 let soundEnabled = false;
@@ -206,7 +248,9 @@ async function maybePlayLatestAudio(audioStatus) {
 }
 
 pollVisitorSurface();
+updateDisplayHappiness();
 setInterval(pollVisitorSurface, 1400);
+setInterval(updateDisplayHappiness, 10000);
 </script>
 </body>
 </html>

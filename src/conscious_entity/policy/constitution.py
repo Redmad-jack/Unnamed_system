@@ -107,7 +107,7 @@ class Constitution:
 
             triggered = False
             if trigger.startswith("state."):
-                # e.g. "state.identity_coherence < 0.3"
+                # e.g. "state.confusion > 0.85"
                 expr = trigger[len("state."):]
                 # Simple two-part parse: "var op value"
                 m = re.match(r"(\w+)\s*([<>]=?|==)\s*([\d.]+)", expr)

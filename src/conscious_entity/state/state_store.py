@@ -3,7 +3,7 @@ from __future__ import annotations
 import sqlite3
 from typing import Optional
 
-from conscious_entity.state.state_core import EntityState, STATE_FIELDS
+from conscious_entity.state.state_core import EntityState, LEGACY_STATE_FIELDS, STATE_FIELDS
 
 
 class StateStore:
@@ -19,12 +19,25 @@ class StateStore:
     ) -> int:
         """Insert a state snapshot. Returns the new row id."""
         d = state.to_dict()
-        columns = ["session_id", *STATE_FIELDS, "trigger_event_type", "policy_action"]
+        legacy_values = {
+            field: float(getattr(state, field))
+            for field in LEGACY_STATE_FIELDS
+        }
+        # Existing installation databases may still have legacy NOT NULL columns
+        # that were created before defaults were added.
+        columns = [
+            "session_id",
+            *STATE_FIELDS,
+            *LEGACY_STATE_FIELDS,
+            "trigger_event_type",
+            "policy_action",
+        ]
         placeholders = ", ".join("?" for _ in columns)
         column_sql = ", ".join(columns)
         values = [
             self._session_id,
             *(d[field] for field in STATE_FIELDS),
+            *(legacy_values[field] for field in LEGACY_STATE_FIELDS),
             trigger_event_type,
             policy_action,
         ]

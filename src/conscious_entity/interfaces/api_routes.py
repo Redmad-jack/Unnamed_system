@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from typing import Any, Optional
 
 from fastapi import APIRouter, HTTPException, Request, WebSocket, WebSocketDisconnect
-from fastapi.responses import FileResponse, Response
+from fastapi.responses import FileResponse, Response, StreamingResponse
 
 from conscious_entity.core.config_loader import load_all_configs
 from conscious_entity.harness import get_harness_trace_store
@@ -48,6 +48,7 @@ from conscious_entity.interfaces.api_runtime import (
     _public_llm_config,
     _read_conn,
     _run_dialog_turn,
+    _run_dialog_turn_progressive,
     _rebuild_loop,
     _row_to_dict,
     _save_initial_state,
@@ -69,6 +70,10 @@ from conscious_entity.vision import VisionConfigurationError
 
 
 router = APIRouter()
+
+
+def _ndjson(payload: dict[str, Any]) -> str:
+    return json.dumps(payload, ensure_ascii=False) + "\n"
 
 
 def _current_visitor_payload(request: Request, visitor_id: str | None) -> dict[str, Any]:
@@ -141,9 +146,35 @@ async def dialog(body: DialogRequest, request: Request):
         "text": output.text,
         "delay_ms": output.delay_ms,
         "visual_mode": output.visual_mode,
+        "vocal_marker": output.vocal_marker,
+        "body_action": output.body_action,
+        "response_plan": (
+            output.response_plan.to_dict()
+            if output.response_plan is not None
+            else None
+        ),
         "truncated": output.truncated,
         "stop_reason": output.stop_reason,
     }
+
+
+@router.post("/api/v1/dialog/progressive")
+async def dialog_progressive(body: DialogRequest, request: Request):
+    if getattr(request.app.state, "loop", None) is None:
+        raise HTTPException(status_code=503, detail="Loop not initialised")
+
+    async def stream():
+        try:
+            async for event in _run_dialog_turn_progressive(
+                request,
+                body.text,
+                source="dialog_progressive",
+            ):
+                yield _ndjson(event)
+        except Exception as exc:
+            yield _ndjson({"phase": "error", "error": str(exc), "done": True})
+
+    return StreamingResponse(stream(), media_type="application/x-ndjson")
 
 
 @router.get("/api/v1/harness/status")

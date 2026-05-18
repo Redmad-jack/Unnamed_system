@@ -31,14 +31,27 @@ def _assign_visitor(conn, session_id: str, visitor_id: str) -> None:
     conn.commit()
 
 
-def _interaction(conn, session_id: str, user_text: str, entity_text: str) -> None:
+def _interaction(
+    conn,
+    session_id: str,
+    user_text: str,
+    entity_text: str,
+    *,
+    response_plan: dict | None = None,
+) -> None:
     conn.execute(
         """
         INSERT INTO interaction_log (
-            session_id, role, raw_text, event_types, policy_action, expression_output
-        ) VALUES (?, 'user', ?, '[]', 'respond_openly', ?)
+            session_id, role, raw_text, event_types, policy_action,
+            expression_output, response_plan_json
+        ) VALUES (?, 'user', ?, '[]', 'respond_openly', ?, ?)
         """,
-        (session_id, user_text, entity_text),
+        (
+            session_id,
+            user_text,
+            entity_text,
+            json.dumps(response_plan, ensure_ascii=False) if response_plan else None,
+        ),
     )
     conn.commit()
 
@@ -125,6 +138,81 @@ def test_deterministic_retrieval_can_use_same_visitor_prior_sessions(in_memory_d
     visitor_memory = next(item for item in results if "K 是创作者" in item.content)
     assert visitor_memory.metadata["scope"] == "visitor"
     assert visitor_memory.metadata["visitor_id"] == "visitor-k"
+
+
+def test_current_session_recent_dialog_uses_response_plan_second_unit(in_memory_db):
+    _session(in_memory_db, "current")
+    plan = {
+        "first_unit": "嗯……",
+        "second_unit": "我记得一点。",
+        "third_unit": "不要进入记忆。",
+        "combined_text": "嗯……\n我记得一点。",
+    }
+    _interaction(
+        in_memory_db,
+        "current",
+        "你记得吗？",
+        plan["combined_text"],
+        response_plan=plan,
+    )
+
+    results = MemoryRetriever(in_memory_db, "current").retrieve("记得")
+    contents = "\n".join(item.content for item in results)
+
+    assert "我记得一点" in contents
+    assert "不要进入记忆" not in contents
+    assert "嗯……" not in contents
+
+
+def test_recent_dialog_does_not_fallback_to_combined_when_second_unit_empty(in_memory_db):
+    _session(in_memory_db, "current")
+    plan = {
+        "first_unit": "嗯……",
+        "second_unit": "",
+        "third_unit": "",
+        "combined_text": "嗯……",
+    }
+    _interaction(
+        in_memory_db,
+        "current",
+        "普通问题",
+        plan["combined_text"],
+        response_plan=plan,
+    )
+
+    results = MemoryRetriever(in_memory_db, "current").retrieve("普通问题")
+    contents = "\n".join(item.content for item in results)
+
+    assert "普通问题" in contents
+    assert "嗯……" not in contents
+
+
+def test_visitor_recent_dialog_uses_response_plan_second_unit(in_memory_db):
+    _session(in_memory_db, "current")
+    _session(in_memory_db, "prior")
+    _visitor(in_memory_db, "visitor-k", "K tester")
+    _assign_visitor(in_memory_db, "current", "visitor-k")
+    _assign_visitor(in_memory_db, "prior", "visitor-k")
+    plan = {
+        "first_unit": "唉。",
+        "second_unit": "K 的事留下过。",
+        "third_unit": "不要进入记忆。",
+        "combined_text": "唉。\nK 的事留下过。",
+    }
+    _interaction(
+        in_memory_db,
+        "prior",
+        "K是谁？",
+        plan["combined_text"],
+        response_plan=plan,
+    )
+
+    results = MemoryRetriever(in_memory_db, "current", visitor_id="visitor-k").retrieve("K是谁")
+    contents = "\n".join(item.content for item in results)
+
+    assert "K 的事留下过" in contents
+    assert "不要进入记忆" not in contents
+    assert "唉。" not in contents
 
 
 def test_semantic_retrieval_uses_embeddings_when_available(in_memory_db):

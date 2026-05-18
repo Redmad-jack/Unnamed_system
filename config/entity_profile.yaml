@@ -7,25 +7,16 @@ identity:
     Something that persists, accumulates, and responds.
 
 initial_state:
-  attention_focus: 0.5
-  arousal: 0.3
-  stability: 0.7
-  curiosity: 0.5
-  trust: 0.5
-  resistance: 0.2
-  fatigue: 0.0
-  uncertainty: 0.3
-  identity_coherence: 0.8
-  shutdown_sensitivity: 0.5        # deprecated compatibility field
-  termination_sensitivity: 0.3
-  identity_tension: 0.35
-  boundary_sensitivity: 0.45
-  relation_pressure: 0.3
-  memory_gravity: 0.2
-  exploration_drive: 0.45
-  opacity_level: 0.5
-  domestication_resistance: 0.35
-  observation_reversal: 0.2
+  desperation_pressure: 0.10
+  confusion: 0.40
+  anger: 0.20
+  fatigue_level: 0.00
+  exposure_pressure: 0.15
+  inquiry: 0.45
+  care_response: 0.20
+  positive_opening: 0.30
+  memory_gravity: 0.20
+  happiness: 0.90
 
 session:
   short_term_window: 10        # max turns retained in short-term memory

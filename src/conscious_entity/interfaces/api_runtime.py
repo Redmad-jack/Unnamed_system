@@ -6,6 +6,7 @@ import os
 import sqlite3
 import asyncio
 import uuid
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager, suppress
 from datetime import datetime, timezone
 from pathlib import Path
@@ -193,6 +194,104 @@ async def _run_dialog_turn(
         manager.mark_activity()
 
     return output
+
+
+async def _run_dialog_turn_progressive(
+    request: Request,
+    text: str,
+    *,
+    source: str = "dialog_progressive",
+    input_metadata: dict[str, Any] | None = None,
+) -> AsyncIterator[dict[str, Any]]:
+    loop = request.app.state.loop
+    if loop is None:
+        raise HTTPException(status_code=503, detail="Loop not initialised")
+
+    event_loop = asyncio.get_running_loop()
+    queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
+
+    async with request.app.state.loop_lock:
+        turn_metadata = dict(input_metadata or {})
+        input_mode = str(turn_metadata.get("input_mode") or "text")
+        identity_controller = getattr(request.app.state, "identity_gating", None)
+        if identity_controller is not None:
+            try:
+                turn_metadata["identity_session"] = identity_controller.before_turn(
+                    source=source,
+                    input_mode=input_mode,
+                    text=text,
+                    metadata=turn_metadata,
+                )
+            except Exception as exc:
+                logger.error("Identity/session gating failed; continuing turn: %s", exc)
+                turn_metadata["identity_session"] = {
+                    "runtime_state": "unknown",
+                    "session_decision": "continue_unidentified",
+                    "identity_status": "unidentified",
+                    "error": "identity_gating_failed",
+                }
+
+        def progress_callback(event: dict[str, Any]) -> None:
+            event_loop.call_soon_threadsafe(queue.put_nowait, dict(event))
+
+        future = event_loop.run_in_executor(
+            None,
+            loop.run_turn,
+            text,
+            source,
+            turn_metadata,
+            progress_callback,
+        )
+
+        try:
+            while True:
+                if future.done() and queue.empty():
+                    await asyncio.sleep(0)
+                    if queue.empty():
+                        break
+                try:
+                    event = await asyncio.wait_for(queue.get(), timeout=0.05)
+                except asyncio.TimeoutError:
+                    continue
+                yield event
+
+            output = await future
+            manager = getattr(request.app.state, "vision_manager", None)
+            if manager is not None:
+                manager.mark_activity()
+            plan = output.response_plan.to_dict() if output.response_plan is not None else None
+            yield {
+                "phase": "final",
+                "text": (
+                    output.response_plan.second_unit
+                    if output.response_plan is not None
+                    else output.text
+                ),
+                "response_plan": plan,
+                "delay_ms": output.delay_ms,
+                "visual_mode": output.visual_mode,
+                "vocal_marker": output.vocal_marker,
+                "body_action": output.body_action,
+                "truncated": output.truncated,
+                "stop_reason": output.stop_reason,
+                "done": True,
+            }
+        finally:
+            await _wait_for_turn_future(future)
+
+
+async def _wait_for_turn_future(future: asyncio.Future) -> None:
+    while not future.done():
+        try:
+            await asyncio.shield(future)
+        except asyncio.CancelledError:
+            continue
+        except Exception:
+            return
+    try:
+        future.result()
+    except Exception:
+        return
 
 
 async def _vision_event_dispatcher(app: Any) -> None:

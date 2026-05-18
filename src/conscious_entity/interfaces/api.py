@@ -18,6 +18,7 @@ from fastapi.staticfiles import StaticFiles
 
 from conscious_entity.interfaces.api_audio import (
     audio_dialog,
+    audio_dialog_progressive,
     audio_router,
     audio_status,
     audio_stt_stream,
@@ -56,6 +57,7 @@ from conscious_entity.interfaces.api_routes import (
     curation_stats,
     dashboard,
     dialog,
+    dialog_progressive,
     health,
     harness_status,
     harness_trace_recent,

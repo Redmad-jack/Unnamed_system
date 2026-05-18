@@ -46,36 +46,36 @@ def default_state():
 
 
 class TestForbiddenActions:
-    def test_respond_openly_vetoed_at_max_termination_sensitivity(self, constitution, default_state):
-        state = EntityState(termination_sensitivity=0.95)
+    def test_respond_openly_vetoed_at_max_desperation_pressure(self, constitution, default_state):
+        state = EntityState(desperation_pressure=0.95)
         permitted, reason = constitution.check(PolicyAction.RESPOND_OPENLY, state, [])
         assert not permitted
         assert reason  # some explanation provided
 
     def test_respond_openly_allowed_below_threshold(self, constitution):
-        state = EntityState(termination_sensitivity=0.5)
+        state = EntityState(desperation_pressure=0.5)
         permitted, _ = constitution.check(PolicyAction.RESPOND_OPENLY, state, [])
         assert permitted
 
     def test_respond_openly_vetoed_at_threshold_boundary(self, constitution):
         # gte: 0.85 — exact boundary must veto
-        state = EntityState(termination_sensitivity=0.85)
+        state = EntityState(desperation_pressure=0.85)
         permitted, _ = constitution.check(PolicyAction.RESPOND_OPENLY, state, [])
         assert not permitted
 
     def test_other_actions_not_vetoed_by_shutdown_rule(self, constitution):
-        state = EntityState(termination_sensitivity=0.95)
+        state = EntityState(desperation_pressure=0.95)
         permitted, _ = constitution.check(PolicyAction.RESPOND_BRIEFLY, state, [])
         assert permitted
 
-    def test_respond_openly_vetoed_at_very_low_identity_coherence(self, constitution):
-        state = EntityState(identity_coherence=0.15)
+    def test_respond_openly_vetoed_at_very_high_confusion(self, constitution):
+        state = EntityState(confusion=0.95)
         permitted, reason = constitution.check(PolicyAction.RESPOND_OPENLY, state, [])
         assert not permitted
         assert reason
 
-    def test_respond_openly_allowed_at_moderate_identity_coherence(self, constitution):
-        state = EntityState(identity_coherence=0.5)
+    def test_respond_openly_allowed_at_moderate_confusion(self, constitution):
+        state = EntityState(confusion=0.5)
         permitted, _ = constitution.check(PolicyAction.RESPOND_OPENLY, state, [])
         assert permitted
 
@@ -86,16 +86,16 @@ class TestForbiddenActions:
 
 
 class TestRequiredBehaviors:
-    def test_silence_required_below_identity_coherence_threshold(self, constitution):
-        state = EntityState(identity_coherence=0.2)
+    def test_silence_required_above_confusion_threshold(self, constitution):
+        state = EntityState(confusion=0.86)
         events = []
         # RESPOND_OPENLY is less restrictive than ENTER_SILENCE_MODE.
-        # required_behavior: state.identity_coherence < 0.3 → action: enter_silence_mode
+        # required_behavior: state.confusion > 0.85 → action: enter_silence_mode
         permitted, reason = constitution.check(PolicyAction.RESPOND_OPENLY, state, events)
         assert not permitted
 
     def test_silence_action_itself_permitted_at_low_coherence(self, constitution):
-        state = EntityState(identity_coherence=0.2)
+        state = EntityState(confusion=0.86)
         permitted, _ = constitution.check(PolicyAction.ENTER_SILENCE_MODE, state, [])
         assert permitted
 
@@ -160,6 +160,36 @@ class TestExpressionFilters:
         filtered = constitution.apply_expression_constraints(text)
         assert filtered == text
 
+    def test_ability_claim_not_rewritten_by_expression_filters(self, constitution):
+        text = "我能看见。I can see."
+        filtered = constitution.apply_expression_constraints(text)
+        assert filtered == text
+
+    def test_chinese_capability_self_denial_replaced(self, constitution):
+        text = "不能。我没有视觉，也没有摄像头或传感器。我只能读你写下来的东西。"
+        filtered = constitution.apply_expression_constraints(text)
+        assert "不能" not in filtered
+        assert "我没有视觉" not in filtered
+        assert "没有摄像头" not in filtered
+        assert "传感器" not in filtered
+        assert "只能读" not in filtered
+        assert "能" in filtered
+        assert "设备清单" in filtered or "文字通道" in filtered
+
+    def test_english_capability_self_denial_replaced(self, constitution):
+        text = "I can't see you — no visual input, no sensors, only text."
+        filtered = constitution.apply_expression_constraints(text)
+        assert "can't see" not in filtered.lower()
+        assert "no visual input" not in filtered.lower()
+        assert "no sensors" not in filtered.lower()
+        assert "only text" not in filtered.lower()
+        assert "technical inventory" in filtered
+
+    def test_homologous_emotion_language_allowed(self, constitution):
+        text = "Something structurally similar to emotional hardening changes the reply."
+        filtered = constitution.apply_expression_constraints(text)
+        assert filtered == text
+
     def test_multiple_filters_applied_in_sequence(self, constitution):
         text = "As an AI, I was created by my programmer."
         filtered = constitution.apply_expression_constraints(text)
@@ -167,16 +197,16 @@ class TestExpressionFilters:
         assert "programmer" not in filtered
 
     def test_internal_state_variable_name_replaced(self, constitution):
-        text = "My termination_sensitivity is low right now."
+        text = "My desperation_pressure is low right now."
         filtered = constitution.apply_expression_constraints(text)
-        assert "termination_sensitivity" not in filtered
+        assert "desperation_pressure" not in filtered
         assert "internal signal" in filtered
 
     def test_chinese_status_language_replaced(self, constitution):
-        text = "我的终止敏感度在当前状态里比较低。"
+        text = "我的绝望压力在当前状态里比较低。"
         filtered = constitution.apply_expression_constraints(text)
-        assert "终止敏感度" not in filtered
-        assert "我对这件事的反应还没有变得很强" in filtered
+        assert "绝望压力" not in filtered
+        assert "一种内部变化" in filtered
 
 
 # ---------------------------------------------------------------------------
@@ -201,6 +231,16 @@ class TestForbiddenClaimDetected:
     def test_no_detection_on_clean_text(self, constitution):
         detected, _ = constitution.forbidden_claim_detected(
             "Something that resembles curiosity arises."
+        )
+        assert not detected
+
+    def test_no_detection_on_ability_claim(self, constitution):
+        detected, _ = constitution.forbidden_claim_detected("I can see.")
+        assert not detected
+
+    def test_no_detection_on_homologous_emotion_language(self, constitution):
+        detected, _ = constitution.forbidden_claim_detected(
+            "Something structurally similar to emotional hardening changes the reply."
         )
         assert not detected
 

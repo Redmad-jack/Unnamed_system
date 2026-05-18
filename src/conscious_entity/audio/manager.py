@@ -152,6 +152,22 @@ class AudioManager:
             raise AudioRuntimeError("tts_empty_text", "No speakable text.")
         return self._new_tts_stream(segments, source="debug_preview")
 
+    def create_tts_stream_from_text(
+        self,
+        text: str,
+        *,
+        source: str = "dialog_output",
+    ) -> tuple[TTSStream | None, bool]:
+        segments = split_for_tts(
+            text,
+            max_segment_bytes=self.config.tts_max_segment_bytes,
+        )
+        if not segments:
+            return None, False
+        if not self.enabled:
+            return None, True
+        return self._new_tts_stream(segments, source=source), True
+
     def get_tts_stream(self, stream_id: str) -> TTSStream:
         self._prune_expired_streams()
         stream = self.active_tts_streams.get(stream_id)
@@ -289,13 +305,18 @@ class AudioManager:
 
     def _new_tts_stream(self, segments: list[str], *, source: str) -> TTSStream:
         now = utc_now()
+        stream_source = (
+            source
+            if source in {"dialog_output", "dialog_first_unit", "dialog_second_unit", "debug_preview"}
+            else "dialog_output"
+        )
         stream = TTSStream(
             stream_id="tts_" + uuid.uuid4().hex,
             text_segments=segments,
             output_format=self.config.output_format,
             created_at=now,
             expires_at=now + timedelta(seconds=self.config.tts_stream_ttl_seconds),
-            source="debug_preview" if source == "debug_preview" else "dialog_output",
+            source=stream_source,
         )
         self.active_tts_streams[stream.stream_id] = stream
         self.last_stream_id = stream.stream_id

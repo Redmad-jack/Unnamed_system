@@ -168,7 +168,7 @@ def test_reflective_get_all_includes_inactive(reflective):
 
 
 def test_reflective_state_roundtrip(reflective):
-    state = EntityState(resistance=0.75, curiosity=0.3)
+    state = EntityState(anger=0.75, inquiry=0.3)
     summary = ReflectiveSummary(
         session_id=SESSION,
         content="state test",
@@ -177,5 +177,5 @@ def test_reflective_state_roundtrip(reflective):
     )
     reflective.store(summary)
     result = reflective.get_all()[0]
-    assert result.state_at_reflection.resistance == pytest.approx(0.75)
+    assert result.state_at_reflection.anger == pytest.approx(0.75)
     assert result.source_event_ids == [10, 11, 12]
