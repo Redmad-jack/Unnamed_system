@@ -69,7 +69,14 @@ def mock_client():
         text = "这里有东西。" if is_chinese else "Something is present here."
         return ClaudeCompletion(text=text, stop_reason="end_turn")
 
+    def complete_streaming_with_metadata(system, messages, max_tokens, on_text_delta=None):
+        completion = complete_with_metadata(system, messages, max_tokens)
+        if on_text_delta is not None and completion.text:
+            on_text_delta(completion.text)
+        return completion
+
     client.complete_with_metadata.side_effect = complete_with_metadata
+    client.complete_streaming_with_metadata.side_effect = complete_streaming_with_metadata
     return client
 
 
@@ -175,6 +182,7 @@ class TestBasicPipeline:
         original_plan_first_unit = loop._expression_engine.plan_first_unit
         original_preview = loop._managed_memory.preview_influence
         original_complete = loop._llm_client.complete_with_metadata
+        original_streaming_complete = loop._llm_client.complete_streaming_with_metadata
         original_short_term_add = loop._short_term.add
 
         def plan_first_unit(*args, **kwargs):
@@ -186,6 +194,10 @@ class TestBasicPipeline:
                 order.append("first_llm")
             return original_complete(system, messages, max_tokens)
 
+        def complete_streaming_with_metadata(system, messages, max_tokens, on_text_delta=None):
+            order.append("main_streaming_llm")
+            return original_streaming_complete(system, messages, max_tokens, on_text_delta=on_text_delta)
+
         def preview_influence(*args, **kwargs):
             order.append("memory_preview")
             return original_preview(*args, **kwargs)
@@ -196,11 +208,12 @@ class TestBasicPipeline:
             return original_short_term_add(entry)
 
         def progress_callback(event):
-            assert event["phase"] == "first_unit"
-            order.append("progress_callback")
+            assert event["phase"] in {"first_unit", "second_delta"}
+            order.append(f"progress_callback:{event['phase']}")
 
         loop._expression_engine.plan_first_unit = plan_first_unit
         loop._llm_client.complete_with_metadata = complete_with_metadata
+        loop._llm_client.complete_streaming_with_metadata = complete_streaming_with_metadata
         loop._short_term.add = short_term_add
         loop._managed_memory.preview_influence = preview_influence
 
@@ -209,10 +222,12 @@ class TestBasicPipeline:
         assert order[:5] == [
             "first_unit",
             "first_llm",
-            "progress_callback",
+            "progress_callback:first_unit",
             "short_term_add_user",
             "memory_preview",
         ]
+        assert order.index("progress_callback:second_delta") > order.index("memory_preview")
+        assert order.index("progress_callback:second_delta") > order.index("main_streaming_llm")
         assert output.response_plan is not None
         assert output.response_plan.first_unit == "不。"
 
@@ -249,8 +264,11 @@ class TestBasicPipeline:
             },
         )
 
-        assert "transcript text of a live spoken turn" in output.raw_prompt
-        assert "avoid inventing specific acoustic details" in output.raw_prompt
+        assert "Current turn note:" in output.raw_prompt
+        assert "Do not turn the current exchange into a technical self-description" in output.raw_prompt
+        assert "transcript text of a live spoken turn" not in output.raw_prompt
+        assert "avoid inventing specific acoustic details" not in output.raw_prompt
+        assert "acoustic details" not in output.raw_prompt
         assert "Hello hello 能听到吗？" in output.raw_prompt
         row = db.execute(
             "SELECT raw_text FROM interaction_log WHERE session_id='test-session' ORDER BY id DESC LIMIT 1"

@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
+import logging
 import time
 from collections.abc import AsyncIterator
 from typing import Any
@@ -17,6 +18,7 @@ from conscious_entity.telemetry.latency import record_audio_latency
 
 
 audio_router = APIRouter(prefix="/api/v1/audio")
+logger = logging.getLogger(__name__)
 
 
 @audio_router.get("/status")
@@ -92,6 +94,9 @@ async def audio_dialog_progressive(body: AudioDialogRequest, request: Request):
     manager = _audio_manager(request)
 
     async def stream():
+        audio_second_delta_event_emitted = False
+        audio_second_delta_stream_created = False
+        audio_second_delta_spoken_texts: list[str] = []
         try:
             async for event in _run_dialog_turn_progressive(
                 request,
@@ -114,17 +119,57 @@ async def audio_dialog_progressive(body: AudioDialogRequest, request: Request):
                         latency_name="audio_dialog_progressive.first_tts_stream_create",
                         audio_session_id=body.audio_session_id,
                     )
-                elif phase == "final":
-                    _attach_tts_stream(
+                elif phase == "second_delta":
+                    _attach_second_delta_tts_stream(
                         payload,
                         manager,
-                        source="dialog_second_unit",
-                        latency_name="audio_dialog_progressive.second_tts_stream_create",
                         audio_session_id=body.audio_session_id,
                     )
+                elif phase == "final":
+                    if audio_second_delta_stream_created:
+                        remainder = _remaining_final_tts_text(
+                            payload,
+                            audio_second_delta_spoken_texts,
+                        )
+                        if remainder:
+                            _attach_tts_stream(
+                                payload,
+                                manager,
+                                source="dialog_second_unit_remainder",
+                                latency_name="audio_dialog_progressive.second_remainder_tts_stream_create",
+                                audio_session_id=body.audio_session_id,
+                                text_override=remainder,
+                            )
+                        else:
+                            payload["should_speak"] = False
+                            payload["tts_stream_id"] = None
+                            payload["audio_disabled_reason"] = None
+                    elif audio_second_delta_event_emitted:
+                        _attach_tts_stream(
+                            payload,
+                            manager,
+                            source="dialog_second_unit",
+                            latency_name="audio_dialog_progressive.second_tts_stream_create",
+                            audio_session_id=body.audio_session_id,
+                        )
+                    else:
+                        _attach_tts_stream(
+                            payload,
+                            manager,
+                            source="dialog_second_unit",
+                            latency_name="audio_dialog_progressive.second_tts_stream_create",
+                            audio_session_id=body.audio_session_id,
+                        )
                 payload["input_text"] = transcript
                 payload["audio_session_id"] = body.audio_session_id
                 payload["output_format"] = manager.config.output_format
+                if phase == "second_delta":
+                    audio_second_delta_event_emitted = True
+                    if payload.get("tts_stream_id"):
+                        audio_second_delta_stream_created = True
+                        spoken_text = str(payload.get("text") or "").strip()
+                        if spoken_text:
+                            audio_second_delta_spoken_texts.append(spoken_text)
                 yield _ndjson(payload)
         except Exception as exc:
             yield _ndjson({"phase": "error", "error": str(exc), "done": True})
@@ -342,10 +387,11 @@ def _attach_tts_stream(
     source: str,
     latency_name: str,
     audio_session_id: str | None,
+    text_override: str | None = None,
 ) -> None:
     start = time.perf_counter()
     stream, should_speak = manager.create_tts_stream_from_text(
-        str(payload.get("text") or ""),
+        str(text_override if text_override is not None else payload.get("text") or ""),
         source=source,
     )
     record_audio_latency(
@@ -365,6 +411,91 @@ def _attach_tts_stream(
         if should_speak and stream is None
         else None
     )
+
+
+def _remaining_final_tts_text(
+    final_payload: dict[str, Any],
+    spoken_texts: list[str],
+) -> str:
+    full_text = _final_second_unit_text(final_payload)
+    remaining = full_text.strip()
+    for spoken in spoken_texts:
+        remaining = _strip_spoken_prefix(remaining, spoken)
+    return remaining.strip()
+
+
+def _final_second_unit_text(payload: dict[str, Any]) -> str:
+    plan = payload.get("response_plan")
+    if isinstance(plan, dict):
+        full_response = plan.get("full_response")
+        if isinstance(full_response, str) and full_response.strip():
+            return full_response.strip()
+        second_unit = plan.get("second_unit")
+        if isinstance(second_unit, str):
+            return second_unit.strip()
+    return str(payload.get("text") or "").strip()
+
+
+def _strip_spoken_prefix(text: str, spoken: str) -> str:
+    remaining = text.strip()
+    prefix = spoken.strip()
+    if not remaining or not prefix:
+        return remaining
+    if remaining.startswith(prefix):
+        return remaining[len(prefix):].lstrip()
+    normalized_remaining = _compact_spoken_text(remaining)
+    normalized_prefix = _compact_spoken_text(prefix)
+    if normalized_prefix and normalized_remaining.startswith(normalized_prefix):
+        # Avoid guessing a fuzzy character offset. If final text changed materially,
+        # do not replay it as audio; final metadata still reconciles the visible text.
+        return ""
+    return ""
+
+
+def _compact_spoken_text(value: str) -> str:
+    return "".join(str(value or "").split())
+
+
+def _attach_second_delta_tts_stream(
+    payload: dict[str, Any],
+    manager: AudioManager,
+    *,
+    audio_session_id: str | None,
+) -> None:
+    start = time.perf_counter()
+    stream = None
+    should_speak = False
+    error: str | None = None
+    disabled_reason: str | None = None
+    try:
+        stream, should_speak = manager.create_tts_stream_from_text(
+            str(payload.get("text") or ""),
+            source="dialog_second_delta",
+        )
+        if stream is None:
+            should_speak = False
+            disabled_reason = manager.config.disabled_reason()
+    except Exception as exc:
+        logger.warning("second_delta TTS stream creation failed: %s", exc)
+        error = str(exc)
+        should_speak = False
+        stream = None
+    record_audio_latency(
+        "audio_dialog_progressive.second_delta_tts_stream_create",
+        (time.perf_counter() - start) * 1000,
+        metadata={
+            "phase": payload.get("phase"),
+            "index": payload.get("index"),
+            "should_speak": should_speak,
+            "has_stream": stream is not None,
+            "audio_session_id": audio_session_id,
+            "success": error is None,
+            "error": error,
+        },
+    )
+    payload["should_speak"] = should_speak and stream is not None
+    payload["tts_stream_id"] = stream.stream_id if stream else None
+    payload["audio_disabled_reason"] = error or disabled_reason
 
 
 def _ndjson(payload: dict[str, Any]) -> str:

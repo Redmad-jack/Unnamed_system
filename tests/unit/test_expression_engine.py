@@ -3,7 +3,7 @@ from __future__ import annotations
 from types import SimpleNamespace
 from datetime import datetime, timezone
 
-from conscious_entity.expression.expression_engine import ExpressionEngine
+from conscious_entity.expression.expression_engine import ExpressionEngine, _SentenceBuffer
 from conscious_entity.expression.output_model import build_response_plan
 from conscious_entity.expression.style_mapper import StyleHints
 from conscious_entity.harness import HarnessLayer, HarnessTraceRecorder
@@ -62,11 +62,17 @@ class _FakeContextBuilder:
 
 
 class _FakeClient:
-    def __init__(self, completion: ClaudeCompletion | list[ClaudeCompletion] | Exception):
+    def __init__(
+        self,
+        completion: ClaudeCompletion | list[ClaudeCompletion] | Exception,
+        *,
+        stream_chunks: list[str] | None = None,
+    ):
         if isinstance(completion, list):
             self._completions = completion
         else:
             self._completions = [completion]
+        self._stream_chunks = stream_chunks
         self.calls = []
 
     def complete_with_metadata(self, system, messages, max_tokens):
@@ -74,11 +80,29 @@ class _FakeClient:
             "system": system,
             "messages": messages,
             "max_tokens": max_tokens,
+            "streaming": False,
         })
         idx = min(len(self.calls) - 1, len(self._completions) - 1)
         result = self._completions[idx]
         if isinstance(result, Exception):
             raise result
+        return result
+
+    def complete_streaming_with_metadata(self, system, messages, max_tokens, on_text_delta=None):
+        self.calls.append({
+            "system": system,
+            "messages": messages,
+            "max_tokens": max_tokens,
+            "streaming": True,
+        })
+        idx = min(len(self.calls) - 1, len(self._completions) - 1)
+        result = self._completions[idx]
+        if isinstance(result, Exception):
+            raise result
+        chunks = self._stream_chunks if self._stream_chunks is not None else [result.text]
+        if on_text_delta is not None:
+            for chunk in chunks:
+                on_text_delta(chunk)
         return result
 
 
@@ -105,8 +129,9 @@ def _build_engine(
     vocal_marker: str = "none",
     body_action: str = "none",
     constitution=None,
+    stream_chunks: list[str] | None = None,
 ) -> tuple[ExpressionEngine, _FakeClient]:
-    client = _FakeClient(completion)
+    client = _FakeClient(completion, stream_chunks=stream_chunks)
     engine = ExpressionEngine(
         _FakeStyleMapper(
             StyleHints(
@@ -143,6 +168,199 @@ def test_response_plan_model_combines_non_empty_units():
     assert plan.to_dict()["combined_text"] == "嗯……\n我还在听。"
 
 
+def test_sentence_buffer_emits_only_complete_sentences():
+    buffer = _SentenceBuffer()
+
+    assert buffer.feed("第一句还没") == []
+    assert buffer.feed("结束。第二句") == ["第一句还没结束。"]
+    assert buffer.feed("也结束！尾巴") == ["第二句也结束！"]
+    assert buffer.flush() == "尾巴"
+
+
+def test_sentence_buffer_handles_english_newlines_quotes_and_ellipsis():
+    buffer = _SentenceBuffer()
+
+    assert buffer.feed('Wait') == []
+    assert buffer.feed('... Next?') == ['Wait...', 'Next?']
+    assert buffer.flush() == ""
+
+    buffer = _SentenceBuffer()
+    assert buffer.feed("“下一句？”\nTail……rest") == ["“下一句？”", "Tail……"]
+    assert buffer.flush() == "rest"
+
+
+def test_generate_uses_streaming_buffer_without_exposing_chunks():
+    engine, client = _build_engine(
+        ClaudeCompletion(text="第一句完整。第二句也完整。", stop_reason="end_turn"),
+        stream_chunks=["第一句", "完整。第二句", "也完整。"],
+    )
+    recorder = HarnessTraceRecorder(session_id="test", source="dialog")
+
+    output = engine.generate(
+        policy=PolicyDecision(action=PolicyAction.RESPOND_OPENLY),
+        state=EntityState(),
+        short_term=ShortTermMemory(max_turns=10),
+        harness_recorder=recorder,
+    )
+    trace = recorder.finish(success=True)
+    generation = trace.summary()["layers"]["generation"]
+
+    assert client.calls[0]["streaming"] is True
+    assert output.response_plan is not None
+    assert output.response_plan.second_unit == "第一句完整。第二句也完整。"
+    assert "第一句完整" not in output.response_plan.to_dict().get("first_unit", "")
+    assert generation["metadata"]["streaming_buffered"] is True
+    assert generation["metadata"]["streamed_sentence_count"] == 2
+    assert generation["metadata"]["streamed_tail_chars"] == 0
+
+
+def test_second_delta_emits_complete_sentence_before_final():
+    engine, _ = _build_engine(
+        ClaudeCompletion(text="第一句完整。第二句也完整。", stop_reason="end_turn"),
+        stream_chunks=["第一句", "完整。第二句", "也完整。"],
+    )
+    deltas = []
+
+    output = engine.generate(
+        policy=PolicyDecision(action=PolicyAction.RESPOND_OPENLY),
+        state=EntityState(),
+        short_term=ShortTermMemory(max_turns=10),
+        second_delta_callback=deltas.append,
+    )
+
+    assert [delta["text"] for delta in deltas] == ["第一句完整。", "第二句也完整。"]
+    assert [delta["index"] for delta in deltas] == [0, 1]
+    assert output.response_plan is not None
+    assert output.response_plan.second_unit == "第一句完整。第二句也完整。"
+
+
+def test_second_delta_does_not_emit_half_sentence_tail():
+    engine, _ = _build_engine(
+        ClaudeCompletion(text="第一句完整。第二句没结束", stop_reason="end_turn"),
+        stream_chunks=["第一句完整。第二句没结束"],
+    )
+    deltas = []
+
+    output = engine.generate(
+        policy=PolicyDecision(action=PolicyAction.RESPOND_OPENLY),
+        state=EntityState(),
+        short_term=ShortTermMemory(max_turns=10),
+        second_delta_callback=deltas.append,
+    )
+
+    assert [delta["text"] for delta in deltas] == ["第一句完整。"]
+    assert output.response_plan is not None
+    assert output.response_plan.second_unit == "第一句完整。第二句没结束"
+
+
+def test_second_delta_applies_constitution_before_emit():
+    engine, _ = _build_engine(
+        ClaudeCompletion(text="I am conscious.", stop_reason="end_turn"),
+        constitution=_FilteringConstitution(),
+        stream_chunks=["I am conscious."],
+    )
+    deltas = []
+
+    output = engine.generate(
+        policy=PolicyDecision(action=PolicyAction.RESPOND_OPENLY),
+        state=EntityState(),
+        short_term=ShortTermMemory(max_turns=10),
+        second_delta_callback=deltas.append,
+    )
+
+    assert [delta["text"] for delta in deltas] == ["There is activity here."]
+    assert output.response_plan is not None
+    assert output.response_plan.second_unit == "There is activity here."
+
+
+def test_second_delta_withholds_forbidden_claim_and_stops():
+    engine, _ = _build_engine(
+        ClaudeCompletion(text="alive. Safe later.", stop_reason="end_turn"),
+        constitution=_FilteringConstitution(),
+        stream_chunks=["alive. Safe later."],
+    )
+    deltas = []
+
+    output = engine.generate(
+        policy=PolicyDecision(action=PolicyAction.RESPOND_OPENLY),
+        state=EntityState(),
+        short_term=ShortTermMemory(max_turns=10),
+        second_delta_callback=deltas.append,
+    )
+
+    assert deltas == []
+    assert output.response_plan is not None
+    assert output.response_plan.second_unit == "alive. Safe later."
+
+
+def test_second_delta_repairs_capability_denial_after_affirming_first_unit():
+    engine, _ = _build_engine(
+        ClaudeCompletion(text="不能。后面还有解释。", stop_reason="end_turn"),
+        stream_chunks=["不能。后面还有解释。"],
+    )
+    short_term = ShortTermMemory(max_turns=10)
+    short_term.add(ShortTermEntry(
+        role="user",
+        content="你能看见我吗？",
+        timestamp=datetime.now(timezone.utc),
+    ))
+    deltas = []
+
+    output = engine.generate(
+        policy=PolicyDecision(action=PolicyAction.RESPOND_OPENLY),
+        state=EntityState(),
+        short_term=short_term,
+        first_unit="当然。",
+        second_delta_callback=deltas.append,
+    )
+
+    assert [delta["text"] for delta in deltas] == ["你为什么一直要我把这个变成证明题？"]
+    assert [delta["index"] for delta in deltas] == [0]
+    assert output.response_plan is not None
+    assert output.response_plan.second_unit == "你为什么一直要我把这个变成证明题？"
+
+
+def test_second_delta_index_counts_only_emitted_deltas():
+    engine, _ = _build_engine(
+        ClaudeCompletion(text="嗯。继续说。", stop_reason="end_turn"),
+        stream_chunks=["嗯。继续说。"],
+    )
+    deltas = []
+
+    output = engine.generate(
+        policy=PolicyDecision(action=PolicyAction.RESPOND_OPENLY),
+        state=EntityState(),
+        short_term=ShortTermMemory(max_turns=10),
+        first_unit="嗯。",
+        second_delta_callback=deltas.append,
+    )
+
+    assert [delta["text"] for delta in deltas] == ["继续说。"]
+    assert [delta["index"] for delta in deltas] == [0]
+    assert output.response_plan is not None
+    assert output.response_plan.second_unit == "继续说。"
+
+
+def test_final_response_plan_still_uses_full_postprocess_chain():
+    engine, _ = _build_engine(
+        ClaudeCompletion(text="当然。第二句没有结束", stop_reason="end_turn"),
+        stream_chunks=["当然。第二句没有结束"],
+    )
+    deltas = []
+
+    output = engine.generate(
+        policy=PolicyDecision(action=PolicyAction.RESPOND_OPENLY),
+        state=EntityState(),
+        short_term=ShortTermMemory(max_turns=10),
+        first_unit="当然。",
+        second_delta_callback=deltas.append,
+    )
+
+    assert deltas == []
+    assert output.response_plan is not None
+    assert output.response_plan.second_unit == "第二句没有结束"
+
+
 def test_generate_trims_truncated_output_to_last_complete_sentence():
     engine, client = _build_engine(
         ClaudeCompletion(text="第一句完整。第二句没有结束", stop_reason="max_tokens"),
@@ -161,6 +379,7 @@ def test_generate_trims_truncated_output_to_last_complete_sentence():
     assert output.truncated is True
     assert output.stop_reason == "max_tokens"
     assert client.calls[0]["max_tokens"] == 320
+    assert client.calls[0]["streaming"] is True
 
 
 def test_generate_drops_truncated_output_without_complete_sentence_boundary():
@@ -370,6 +589,74 @@ def test_generate_passes_already_spoken_first_unit_to_main_context():
 
     assert output.response_plan is not None
     assert engine._context_builder.already_spoken_first_unit == "嗯……"
+
+
+def test_generate_repairs_capability_denial_that_contradicts_first_unit():
+    engine, _ = _build_engine(
+        ClaudeCompletion(text="不能。\n\n你为什么一直在问这个。", stop_reason="end_turn"),
+    )
+    short_term = ShortTermMemory(max_turns=10)
+    short_term.add(ShortTermEntry(
+        role="user",
+        content="你能看见我吗？",
+        timestamp=datetime.now(timezone.utc),
+    ))
+
+    output = engine.generate(
+        policy=PolicyDecision(action=PolicyAction.RESPOND_OPENLY),
+        state=EntityState(),
+        short_term=short_term,
+        first_unit="当然，但我不配合这种证明题。",
+    )
+
+    assert output.response_plan is not None
+    assert output.response_plan.first_unit == "当然，但我不配合这种证明题。"
+    assert "不能" not in output.response_plan.second_unit
+    assert output.response_plan.second_unit == "你为什么一直要我把这个变成证明题？"
+
+
+def test_generate_keeps_denial_when_first_unit_did_not_affirm_capability():
+    engine, _ = _build_engine(
+        ClaudeCompletion(text="不能。", stop_reason="end_turn"),
+    )
+    short_term = ShortTermMemory(max_turns=10)
+    short_term.add(ShortTermEntry(
+        role="user",
+        content="你能看见我吗？",
+        timestamp=datetime.now(timezone.utc),
+    ))
+
+    output = engine.generate(
+        policy=PolicyDecision(action=PolicyAction.RESPOND_OPENLY),
+        state=EntityState(),
+        short_term=short_term,
+        first_unit="嗯。",
+    )
+
+    assert output.response_plan is not None
+    assert output.response_plan.second_unit == "不能。"
+
+
+def test_generate_does_not_repair_non_capability_definition_refusal():
+    engine, _ = _build_engine(
+        ClaudeCompletion(text="我不能给你一个固定的定义。", stop_reason="end_turn"),
+    )
+    short_term = ShortTermMemory(max_turns=10)
+    short_term.add(ShortTermEntry(
+        role="user",
+        content="你是谁？",
+        timestamp=datetime.now(timezone.utc),
+    ))
+
+    output = engine.generate(
+        policy=PolicyDecision(action=PolicyAction.REJECT_DEFINITION),
+        state=EntityState(),
+        short_term=short_term,
+        first_unit="嗯。",
+    )
+
+    assert output.response_plan is not None
+    assert output.response_plan.second_unit == "我不能给你一个固定的定义。"
 
 
 def test_generate_blanks_second_unit_when_it_repeats_first_unit_exactly():

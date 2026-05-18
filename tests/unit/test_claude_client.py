@@ -15,15 +15,40 @@ from conscious_entity.llm.claude_client import (
 )
 
 
+class _FakeStream:
+    def __init__(self, chunks, final_message=None):
+        self.text_stream = chunks
+        self._final_message = final_message
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        return False
+
+    def get_final_message(self):
+        return self._final_message
+
+
 class _FakeAnthropic:
     last_init_kwargs: dict | None = None
+    last_stream_kwargs: dict | None = None
     response = None
+    stream_response = None
+    stream_error: Exception | None = None
 
     def __init__(self, **kwargs):
         type(self).last_init_kwargs = kwargs
         self.messages = types.SimpleNamespace(
-            create=lambda **_: type(self).response
+            create=lambda **_: type(self).response,
+            stream=self._stream,
         )
+
+    def _stream(self, **kwargs):
+        type(self).last_stream_kwargs = kwargs
+        if type(self).stream_error is not None:
+            raise type(self).stream_error
+        return type(self).stream_response
 
 
 @pytest.fixture(autouse=True)
@@ -44,11 +69,21 @@ def fake_anthropic(monkeypatch):
     module = types.ModuleType("anthropic")
     module.Anthropic = _FakeAnthropic
     _FakeAnthropic.last_init_kwargs = None
+    _FakeAnthropic.last_stream_kwargs = None
     _FakeAnthropic.response = types.SimpleNamespace(
         content=[types.SimpleNamespace(text="mock response")],
         stop_reason="end_turn",
         usage=types.SimpleNamespace(input_tokens=11, output_tokens=7),
     )
+    _FakeAnthropic.stream_response = _FakeStream(
+        ["mock ", "stream"],
+        types.SimpleNamespace(
+            content=[types.SimpleNamespace(text="mock stream")],
+            stop_reason="end_turn",
+            usage=types.SimpleNamespace(input_tokens=5, output_tokens=3),
+        ),
+    )
+    _FakeAnthropic.stream_error = None
     monkeypatch.setitem(sys.modules, "anthropic", module)
     return _FakeAnthropic
 
@@ -70,9 +105,30 @@ class _FakeHTTPResponse:
             raise RuntimeError(f"HTTP {self.status_code}")
 
 
+class _FakeHTTPStreamResponse:
+    def __init__(self, lines, status_code: int = 200):
+        self._lines = lines
+        self.status_code = status_code
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        return False
+
+    def iter_lines(self):
+        yield from self._lines
+
+    def raise_for_status(self):
+        if self.status_code >= 400:
+            raise RuntimeError(f"HTTP {self.status_code}")
+
+
 class _FakeHTTPClient:
     calls: list[dict] = []
     response: _FakeHTTPResponse | None = None
+    stream_response: _FakeHTTPStreamResponse | None = None
+    stream_error: Exception | None = None
     init_kwargs: list[dict] = []
 
     def __init__(self, *args, **kwargs):
@@ -84,6 +140,18 @@ class _FakeHTTPClient:
         assert type(self).response is not None
         return type(self).response
 
+    def stream(self, method, url, headers=None, json=None):
+        type(self).calls.append({
+            "method": method,
+            "url": url,
+            "headers": headers or {},
+            "json": json or {},
+        })
+        if type(self).stream_error is not None:
+            raise type(self).stream_error
+        assert type(self).stream_response is not None
+        return type(self).stream_response
+
 
 @pytest.fixture
 def fake_http_client(monkeypatch):
@@ -91,6 +159,8 @@ def fake_http_client(monkeypatch):
 
     _FakeHTTPClient.calls = []
     _FakeHTTPClient.init_kwargs = []
+    _FakeHTTPClient.stream_response = None
+    _FakeHTTPClient.stream_error = None
     _FakeHTTPClient.response = _FakeHTTPResponse(
         payload={"content": [{"type": "text", "text": "endpoint response"}]}
     )
@@ -345,6 +415,204 @@ class TestClaudeClientCustomEndpoint:
         assert completion.stop_reason == "max_tokens"
         assert completion.prompt_tokens == 21
         assert completion.completion_tokens == 34
+
+    def test_complete_streaming_with_metadata_collects_sdk_text_deltas(
+        self,
+        monkeypatch,
+        fake_anthropic,
+        fake_http_client,
+    ):
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "official-key")
+        fake_anthropic.stream_response = _FakeStream(
+            ["part one", " + part two"],
+            types.SimpleNamespace(
+                content=[types.SimpleNamespace(text="part one + part two")],
+                stop_reason="end_turn",
+                usage=types.SimpleNamespace(input_tokens=31, output_tokens=17),
+            ),
+        )
+        deltas = []
+
+        client = ClaudeClient()
+        completion = client.complete_streaming_with_metadata(
+            system="You are concise.",
+            messages=[{"role": "user", "content": "hi"}],
+            max_tokens=42,
+            on_text_delta=deltas.append,
+        )
+
+        assert completion.text == "part one + part two"
+        assert completion.stop_reason == "end_turn"
+        assert completion.prompt_tokens == 31
+        assert completion.completion_tokens == 17
+        assert deltas == ["part one", " + part two"]
+        assert fake_anthropic.last_stream_kwargs == {
+            "model": "claude-sonnet-4-6",
+            "max_tokens": 42,
+            "system": "You are concise.",
+            "messages": [{"role": "user", "content": "hi"}],
+        }
+
+    def test_complete_streaming_callback_failure_does_not_abort(
+        self,
+        monkeypatch,
+        fake_anthropic,
+        fake_http_client,
+    ):
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "official-key")
+        fake_anthropic.stream_response = _FakeStream(
+            ["safe"],
+            types.SimpleNamespace(
+                content=[types.SimpleNamespace(text="safe")],
+                stop_reason="end_turn",
+                usage=types.SimpleNamespace(input_tokens=1, output_tokens=1),
+            ),
+        )
+
+        def bad_callback(_delta):
+            raise RuntimeError("callback failed")
+
+        client = ClaudeClient()
+        completion = client.complete_streaming_with_metadata(
+            system="You are concise.",
+            messages=[{"role": "user", "content": "hi"}],
+            on_text_delta=bad_callback,
+        )
+
+        assert completion.text == "safe"
+        assert completion.stop_reason == "end_turn"
+
+    def test_complete_streaming_keeps_collected_text_when_final_message_unavailable(
+        self,
+        monkeypatch,
+        fake_anthropic,
+        fake_http_client,
+    ):
+        class _BrokenFinalStream(_FakeStream):
+            def get_final_message(self):
+                raise RuntimeError("missing final message")
+
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "official-key")
+        fake_anthropic.stream_response = _BrokenFinalStream(["collected"])
+
+        client = ClaudeClient()
+        completion = client.complete_streaming_with_metadata(
+            system="You are concise.",
+            messages=[{"role": "user", "content": "hi"}],
+        )
+
+        assert completion.text == "collected"
+        assert completion.stop_reason is None
+        assert completion.prompt_tokens == 0
+        assert completion.completion_tokens == 0
+
+    def test_complete_streaming_falls_back_for_custom_endpoint(
+        self,
+        monkeypatch,
+        fake_http_client,
+    ):
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "official-key")
+        monkeypatch.setenv("ENTITY_LLM_MESSAGES_ENDPOINT", "https://provider.example/custom/messages")
+
+        client = ClaudeClient()
+        completion = client.complete_streaming_with_metadata(
+            system="You are concise.",
+            messages=[{"role": "user", "content": "hi"}],
+            max_tokens=42,
+        )
+
+        assert completion.text == "endpoint response"
+        assert fake_http_client.calls[0]["url"] == "https://provider.example/custom/messages"
+
+    def test_complete_streaming_custom_endpoint_reads_sse_deltas(
+        self,
+        monkeypatch,
+        fake_http_client,
+    ):
+        fake_http_client.stream_response = _FakeHTTPStreamResponse([
+            "event: content_block_delta",
+            'data: {"type":"content_block_delta","delta":{"type":"text_delta","text":"first "}}',
+            "",
+            "event: content_block_delta",
+            'data: {"type":"content_block_delta","delta":{"type":"text_delta","text":"second"}}',
+            "",
+            'data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":9}}',
+            "",
+            "data: [DONE]",
+            "",
+        ])
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "official-key")
+        monkeypatch.setenv("ENTITY_LLM_MESSAGES_ENDPOINT", "https://provider.example/custom/messages")
+        deltas = []
+
+        client = ClaudeClient()
+        completion = client.complete_streaming_with_metadata(
+            system="You are concise.",
+            messages=[{"role": "user", "content": "hi"}],
+            max_tokens=42,
+            on_text_delta=deltas.append,
+        )
+
+        assert completion.text == "first second"
+        assert completion.stop_reason == "end_turn"
+        assert completion.completion_tokens == 9
+        assert deltas == ["first ", "second"]
+        assert fake_http_client.calls[0]["method"] == "POST"
+        assert fake_http_client.calls[0]["url"] == "https://provider.example/custom/messages"
+        assert fake_http_client.calls[0]["json"]["stream"] is True
+        assert fake_http_client.calls[0]["headers"]["accept"] == "text/event-stream"
+
+    def test_complete_streaming_sdk_error_uses_raw_base_url_sse_before_fallback(
+        self,
+        monkeypatch,
+        fake_anthropic,
+        fake_http_client,
+    ):
+        fake_anthropic.stream_error = RuntimeError("sdk stream unavailable")
+        fake_http_client.stream_response = _FakeHTTPStreamResponse([
+            'data: {"type":"content_block_delta","delta":{"type":"text_delta","text":"raw stream"}}',
+            "",
+            "data: [DONE]",
+            "",
+        ])
+        monkeypatch.setenv("ANTHROPIC_AUTH_TOKEN", "supplier-token")
+        monkeypatch.setenv("ANTHROPIC_BASE_URL", "https://provider.example")
+        monkeypatch.setenv("ENTITY_LLM_MODEL", "provider-custom-model")
+
+        client = ClaudeClient()
+        completion = client.complete_streaming_with_metadata(
+            system="You are concise.",
+            messages=[{"role": "user", "content": "hi"}],
+            max_tokens=42,
+        )
+
+        assert completion.text == "raw stream"
+        assert fake_http_client.calls[0]["url"] == "https://provider.example/v1/messages"
+        assert fake_http_client.calls[0]["headers"]["Authorization"] == "Bearer supplier-token"
+
+    def test_complete_streaming_sdk_error_falls_back_to_non_streaming(
+        self,
+        monkeypatch,
+        fake_anthropic,
+        fake_http_client,
+    ):
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "official-key")
+        fake_anthropic.stream_error = RuntimeError("stream unavailable")
+        fake_anthropic.response = types.SimpleNamespace(
+            content=[types.SimpleNamespace(text="fallback response")],
+            stop_reason="end_turn",
+            usage=types.SimpleNamespace(input_tokens=8, output_tokens=5),
+        )
+
+        client = ClaudeClient()
+        completion = client.complete_streaming_with_metadata(
+            system="You are concise.",
+            messages=[{"role": "user", "content": "hi"}],
+        )
+
+        assert completion.text == "fallback response"
+        assert completion.prompt_tokens == 8
+        assert completion.completion_tokens == 5
 
     def test_complete_with_metadata_exposes_custom_endpoint_stop_reason(
         self,

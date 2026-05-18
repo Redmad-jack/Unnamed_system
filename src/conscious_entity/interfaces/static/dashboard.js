@@ -142,6 +142,21 @@
     return unitText || plan.combined_text || (row && row.expression_output);
   }
 
+  function finalSecondUnitText(event) {
+    const plan = event && event.response_plan;
+    if (plan && typeof plan === "object") {
+      return String(plan.full_response || "").trim() || String(plan.second_unit || "").trim();
+    }
+    return String(event && event.text ? event.text : "").trim();
+  }
+
+  function appendProgressiveText(current, next) {
+    const left = String(current || "").trim();
+    const right = String(next || "").trim();
+    if (!right) return left;
+    return left ? `${left}\n${right}` : right;
+  }
+
   function vocalMarkerLabel(value) {
     const key = String(value || "none");
     if (key === "thinking") return "vocal: 嗯……";
@@ -563,6 +578,7 @@
     const [text, setText] = useState("");
     const [sending, setSending] = useState(false);
     const logRef = useRef(null);
+    const audioSecondRowIdRef = useRef(null);
 
     const load = useCallback(async () => {
       try {
@@ -581,6 +597,7 @@
         if (detail.source === "audio_dialog_progressive") {
           const now = new Date().toISOString();
           if (detail.phase === "first_unit") {
+            audioSecondRowIdRef.current = null;
             setRows((current) => {
               const nextRows = [...current];
               if (detail.input_text) {
@@ -606,19 +623,75 @@
               }
               return nextRows;
             });
-          } else if (detail.phase === "final" && detail.text) {
-            setRows((current) => [...current, {
-              id: `audio-final-${Date.now()}`,
-              role: "entity",
-              progressive_text: detail.text,
-              phase: "final",
-              response_plan: detail.response_plan || null,
-              visual_mode: detail.visual_mode,
-              vocal_marker: detail.vocal_marker,
-              body_action: detail.body_action,
-              policy_action: "audio_dialog_progressive",
-              turn_at: now,
-            }]);
+          } else if (detail.phase === "second_delta" && detail.text) {
+            const deltaText = String(detail.text || "").trim();
+            if (!deltaText) return;
+            if (!audioSecondRowIdRef.current) {
+              const secondRowId = `audio-second-${Date.now()}`;
+              audioSecondRowIdRef.current = secondRowId;
+              setRows((current) => [...current, {
+                id: secondRowId,
+                role: "entity",
+                progressive_text: deltaText,
+                phase: "second_delta",
+                visual_mode: detail.visual_mode,
+                vocal_marker: detail.vocal_marker,
+                body_action: detail.body_action,
+                policy_action: "audio_dialog_progressive",
+                turn_at: now,
+              }]);
+            } else {
+              const secondRowId = audioSecondRowIdRef.current;
+              setRows((current) => current.map((row) => (
+                row.id === secondRowId
+                  ? {
+                    ...row,
+                    progressive_text: appendProgressiveText(row.progressive_text, deltaText),
+                    phase: "second_delta",
+                    visual_mode: detail.visual_mode || row.visual_mode,
+                    vocal_marker: detail.vocal_marker || row.vocal_marker,
+                    body_action: detail.body_action || row.body_action,
+                  }
+                  : row
+              )));
+            }
+          } else if (detail.phase === "final") {
+            const secondText = finalSecondUnitText(detail);
+            const secondRowId = audioSecondRowIdRef.current;
+            if (secondRowId) {
+              setRows((current) => {
+                if (!secondText) {
+                  return current.filter((row) => row.id !== secondRowId);
+                }
+                return current.map((row) => (
+                  row.id === secondRowId
+                    ? {
+                      ...row,
+                      progressive_text: secondText,
+                      phase: "final",
+                      response_plan: detail.response_plan || null,
+                      visual_mode: detail.visual_mode || row.visual_mode,
+                      vocal_marker: detail.vocal_marker || row.vocal_marker,
+                      body_action: detail.body_action || row.body_action,
+                    }
+                    : row
+                ));
+              });
+              audioSecondRowIdRef.current = null;
+            } else if (secondText) {
+              setRows((current) => [...current, {
+                id: `audio-final-${Date.now()}`,
+                role: "entity",
+                progressive_text: secondText,
+                phase: "final",
+                response_plan: detail.response_plan || null,
+                visual_mode: detail.visual_mode,
+                vocal_marker: detail.vocal_marker,
+                body_action: detail.body_action,
+                policy_action: "audio_dialog_progressive",
+                turn_at: now,
+              }]);
+            }
           }
           return;
         }
@@ -661,6 +734,8 @@
       if (!trimmed || sending) return;
       setText("");
       setSending(true);
+      let secondRowId = null;
+      let sawSecondDelta = false;
       const optimistic = {
         id: `pending-${Date.now()}`,
         role: "user",
@@ -685,19 +760,74 @@
               body_action: event.body_action,
               turn_at: new Date().toISOString(),
             }]);
+          } else if (event.phase === "second_delta" && event.text) {
+            const deltaText = String(event.text || "").trim();
+            if (!deltaText) return;
+            sawSecondDelta = true;
+            if (!secondRowId) {
+              secondRowId = `entity-second-${Date.now()}`;
+              setRows((current) => [...current, {
+                id: secondRowId,
+                role: "entity",
+                progressive_text: deltaText,
+                phase: "second_delta",
+                visual_mode: event.visual_mode,
+                vocal_marker: event.vocal_marker,
+                body_action: event.body_action,
+                policy_action: event.policy_action,
+                turn_at: new Date().toISOString(),
+              }]);
+            } else {
+              setRows((current) => current.map((row) => (
+                row.id === secondRowId
+                  ? {
+                    ...row,
+                    progressive_text: appendProgressiveText(row.progressive_text, deltaText),
+                    phase: "second_delta",
+                    visual_mode: event.visual_mode || row.visual_mode,
+                    vocal_marker: event.vocal_marker || row.vocal_marker,
+                    body_action: event.body_action || row.body_action,
+                    policy_action: event.policy_action || row.policy_action,
+                  }
+                  : row
+              )));
+            }
           } else if (event.phase === "final") {
-            setRows((current) => [...current, {
-              id: `entity-final-${Date.now()}`,
-              role: "entity",
-              progressive_text: event.text || "",
-              phase: "final",
-              response_plan: event.response_plan || null,
-              delay_ms: event.delay_ms,
-              visual_mode: event.visual_mode,
-              vocal_marker: event.vocal_marker,
-              body_action: event.body_action,
-              turn_at: new Date().toISOString(),
-            }]);
+            const secondText = finalSecondUnitText(event);
+            if (sawSecondDelta && secondRowId) {
+              setRows((current) => {
+                if (!secondText) {
+                  return current.filter((row) => row.id !== secondRowId);
+                }
+                return current.map((row) => (
+                  row.id === secondRowId
+                    ? {
+                      ...row,
+                      progressive_text: secondText,
+                      phase: "final",
+                      response_plan: event.response_plan || null,
+                      delay_ms: event.delay_ms,
+                      visual_mode: event.visual_mode || row.visual_mode,
+                      vocal_marker: event.vocal_marker || row.vocal_marker,
+                      body_action: event.body_action || row.body_action,
+                    }
+                    : row
+                ));
+              });
+            } else {
+              setRows((current) => [...current, {
+                id: `entity-final-${Date.now()}`,
+                role: "entity",
+                progressive_text: event.text || "",
+                phase: "final",
+                response_plan: event.response_plan || null,
+                delay_ms: event.delay_ms,
+                visual_mode: event.visual_mode,
+                vocal_marker: event.vocal_marker,
+                body_action: event.body_action,
+                turn_at: new Date().toISOString(),
+              }]);
+            }
           } else if (event.phase === "error") {
             throw new Error(event.error || "Progressive dialog failed");
           }
@@ -1323,6 +1453,7 @@
     const playbackQueueRef = useRef([]);
     const playbackPlayingRef = useRef(false);
     const bargeInFramesRef = useRef(0);
+    const activeAudioTurnRef = useRef(0);
     const manualStopRef = useRef(false);
     const reconnectTimerRef = useRef(null);
 
@@ -1423,6 +1554,7 @@
     }, []);
 
     const stopPlayback = useCallback((detail = "interrupted") => {
+      activeAudioTurnRef.current += 1;
       const player = playerRef.current;
       const hadPlayback = Boolean(playbackStreamRef.current || (player && player.getAttribute("src")));
       if (player) {
@@ -1510,6 +1642,8 @@
       if (!transcript || dialogPendingRef.current) return;
       let playbackStarted = false;
       let finalPayload = null;
+      const turnToken = activeAudioTurnRef.current + 1;
+      activeAudioTurnRef.current = turnToken;
       try {
         setError("");
         setFinalText(transcript);
@@ -1525,7 +1659,8 @@
           if (!event || event.phase === "error") {
             throw new Error(event && event.error ? event.error : "Progressive audio dialog failed.");
           }
-          if (event.phase !== "first_unit" && event.phase !== "final") return;
+          if (turnToken !== activeAudioTurnRef.current) return;
+          if (event.phase !== "first_unit" && event.phase !== "second_delta" && event.phase !== "final") return;
           const payload = Object.assign({}, event, {
             input_text: transcript,
             output_text: event.text || "",
@@ -1536,6 +1671,7 @@
               source: "audio_dialog_progressive",
               input_text: transcript,
               phase: event.phase,
+              index: event.index,
               text: event.text || "",
               response_plan: event.response_plan || null,
               visual_mode: event.visual_mode || null,
@@ -1550,18 +1686,22 @@
             playbackStarted = enqueueTtsStream(event.tts_stream_id) || playbackStarted;
           }
         });
-        if (finalPayload) {
+        if (turnToken === activeAudioTurnRef.current && finalPayload) {
           setLatestDialog(finalPayload);
         }
         loadStatus();
       } catch (err) {
-        setError(err.message);
+        if (turnToken === activeAudioTurnRef.current) {
+          setError(err.message);
+        }
       } finally {
-        setDialogPending(false);
-        dialogPendingRef.current = false;
-        if (!playbackStarted) {
-          suppressMicRef.current = false;
-          setVoiceActivity(recordingRef.current ? "listening" : "idle");
+        if (turnToken === activeAudioTurnRef.current) {
+          setDialogPending(false);
+          dialogPendingRef.current = false;
+          if (!playbackStarted) {
+            suppressMicRef.current = false;
+            setVoiceActivity(recordingRef.current ? "listening" : "idle");
+          }
         }
       }
     }, [enqueueTtsStream, loadStatus]);

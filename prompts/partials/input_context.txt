@@ -1,2 +1,2 @@
-Current input channel:
-The latest user message is the transcript text of a live spoken turn. Treat it as what the visitor said. Use this only to avoid inventing specific acoustic details such as tone, volume, accent, background sound, or pronunciation unless the visitor describes them. Do not explain the channel or turn it into a technical self-description. Capability questions still follow the capability-boundary rules. Your main response unit may be spoken aloud after the system combines it with any fast reaction.
+Current turn note:
+Do not turn the current exchange into a technical self-description. Capability questions still follow the capability-boundary rules. Your main response unit may be spoken aloud after the system combines it with any fast reaction.

@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import logging
 import re
-from typing import Any
+from dataclasses import dataclass
+from typing import Any, Callable
 
 from conscious_entity.expression.context_builder import ContextBuilder
 from conscious_entity.expression.output_model import ExpressionOutput, build_response_plan
@@ -205,10 +206,106 @@ _AFFIRMATIVE_CONCLUSION_UNITS = {
     "可以",
     "是",
     "对",
+    "当然",
     "yes",
     "yeah",
     "sure",
 }
+_AFFIRMED_CAPABILITY_PREFIXES = (
+    "能",
+    "可以",
+    "能看见",
+    "可以看见",
+    "能看到",
+    "可以看到",
+    "能听见",
+    "可以听见",
+    "能听到",
+    "可以听到",
+    "当然",
+    "yes",
+    "yeah",
+    "sure",
+    "i can",
+)
+_CAPABILITY_DENIAL_PATTERNS = (
+    re.compile(r"^\s*(?:不能|不行|无法|没法|做不到|没有)(?:[。.!！?？\s\n]|$)", re.IGNORECASE),
+    re.compile(r"(?:我)?(?:不能|无法|没法)(?:看见|看到|听见|听到|感知|察觉)", re.IGNORECASE),
+    re.compile(r"(?:我)?(?:看不见|看不到|听不见|听不到)", re.IGNORECASE),
+    re.compile(r"(?:我)?(?:没有|缺乏)(?:视觉|视觉输入|视觉能力|摄像头|麦克风|传感器|眼睛|图像处理)", re.IGNORECASE),
+    re.compile(r"(?:我)?只能(?:读|读取|接收|处理)[^。！？\n]*(?:文字|文本|字|写下来的东西|写下的东西|写的东西|写下来)", re.IGNORECASE),
+    re.compile(r"\b(?:no|cannot|can't)\b(?:[.!?\s\n]|$)", re.IGNORECASE),
+    re.compile(r"\b(?:i cannot see|i can't see|i cannot hear|i can't hear|no visual input|no camera|no microphone|no sensors|only text|text-only|i have no vision|i lack visual capability)\b", re.IGNORECASE),
+)
+
+
+class _SentenceBuffer:
+    """Internal stream buffer that only emits complete sentence-sized chunks."""
+
+    def __init__(self) -> None:
+        self._buffer = ""
+
+    def feed(self, delta: str) -> list[str]:
+        if not delta:
+            return []
+        self._buffer += str(delta)
+        return self._drain_complete_sentences()
+
+    def flush(self) -> str:
+        tail = self._buffer
+        self._buffer = ""
+        return tail
+
+    def _drain_complete_sentences(self) -> list[str]:
+        chunks: list[str] = []
+        while self._buffer:
+            boundary = self._find_boundary(self._buffer)
+            if boundary is None:
+                break
+            end = boundary + 1
+            while end < len(self._buffer) and self._buffer[end] in _SECOND_UNIT_TRAILING_CHARS:
+                end += 1
+            chunk = self._buffer[:end].strip()
+            self._buffer = self._buffer[end:].lstrip()
+            if chunk:
+                chunks.append(chunk)
+        return chunks
+
+    @staticmethod
+    def _find_boundary(text: str) -> int | None:
+        for idx, ch in enumerate(text):
+            if ch in "。！？!?":
+                return idx
+            if ch == ".":
+                if idx > 0 and text[idx - 1] == ".":
+                    if idx >= 2 and text[idx - 2] == "." and (
+                        idx + 1 >= len(text) or text[idx + 1] != "."
+                    ):
+                        return idx
+                    continue
+                if idx + 1 < len(text) and text[idx + 1] == ".":
+                    continue
+                if (
+                    idx > 0
+                    and idx + 1 < len(text)
+                    and text[idx - 1].isdigit()
+                    and text[idx + 1].isdigit()
+                ):
+                    continue
+                return idx
+            if ch == "…" and idx > 0 and text[idx - 1] == "…":
+                return idx
+            if ch == "\n" and text[:idx].strip():
+                return idx
+        return None
+
+
+@dataclass(frozen=True)
+class _StreamDeltaResult:
+    text: str
+    stop: bool
+    emitted: bool
+    reason: str
 
 
 def _fallback_text(action: PolicyAction, short_term: ShortTermMemory | None = None) -> str:
@@ -223,6 +320,59 @@ def _recent_user_language(short_term: ShortTermMemory | None) -> str:
         if entry.role == "user":
             return _detect_text_language(entry.content)
     return "unknown"
+
+
+def _prepare_streamed_second_delta(
+    sentence: str,
+    *,
+    first_unit: str,
+    short_term: ShortTermMemory | None,
+    constitution: Constitution,
+    dedupe_first_visible_delta: bool,
+) -> _StreamDeltaResult:
+    candidate = str(sentence or "").strip()
+    if not candidate:
+        return _StreamDeltaResult(text="", stop=False, emitted=False, reason="empty")
+
+    filtered = constitution.apply_expression_constraints(candidate).strip()
+    if not filtered:
+        return _StreamDeltaResult(text="", stop=False, emitted=False, reason="empty_after_filter")
+
+    detected, _ = constitution.forbidden_claim_detected(filtered)
+    if detected:
+        return _StreamDeltaResult(text="", stop=True, emitted=False, reason="forbidden_claim")
+
+    if not _matches_recent_user_language(filtered, short_term):
+        return _StreamDeltaResult(text="", stop=True, emitted=False, reason="language_mismatch")
+
+    repaired = _repair_capability_contradiction(first_unit, filtered, short_term).strip()
+    repaired_for_contradiction = repaired != filtered
+    filtered = repaired
+    if not filtered:
+        return _StreamDeltaResult(
+            text="",
+            stop=repaired_for_contradiction,
+            emitted=False,
+            reason="empty_after_capability_repair",
+        )
+
+    if dedupe_first_visible_delta:
+        deduped = _dedupe_second_unit_against_first_unit(first_unit, filtered).strip()
+        if not deduped:
+            return _StreamDeltaResult(
+                text="",
+                stop=repaired_for_contradiction,
+                emitted=False,
+                reason="first_unit_duplicate_suppressed",
+            )
+        filtered = deduped
+
+    return _StreamDeltaResult(
+        text=filtered,
+        stop=repaired_for_contradiction,
+        emitted=True,
+        reason="capability_contradiction_repaired" if repaired_for_contradiction else "emitted",
+    )
 
 
 class ExpressionEngine:
@@ -316,6 +466,7 @@ class ExpressionEngine:
         retrieved_memories: list[Any] = None,  # list[RetrievedMemory]; v0.1 always []
         first_unit: str = "",
         harness_recorder: HarnessTraceRecorder | None = None,
+        second_delta_callback: Callable[[dict[str, Any]], None] | None = None,
     ) -> ExpressionOutput:
         if retrieved_memories is None:
             retrieved_memories = []
@@ -422,17 +573,86 @@ class ExpressionEngine:
         )
 
         completion = None
+        sentence_buffer = _SentenceBuffer()
+        streamed_sentence_chunks: list[str] = []
+        streamed_sentence_tail = ""
+        streamed_delta_count = 0
+        stream_dedupe_pending = True
+        stream_second_delta_stopped = False
+        streaming_attempted = False
+
+        def on_text_delta(delta: str) -> None:
+            nonlocal stream_dedupe_pending, stream_second_delta_stopped, streamed_delta_count
+            chunks = sentence_buffer.feed(delta)
+            streamed_sentence_chunks.extend(chunks)
+            if second_delta_callback is None or stream_second_delta_stopped:
+                return
+            for chunk in chunks:
+                if stream_second_delta_stopped:
+                    return
+                try:
+                    result = _prepare_streamed_second_delta(
+                        chunk,
+                        first_unit=first_unit,
+                        short_term=short_term,
+                        constitution=self._constitution,
+                        dedupe_first_visible_delta=stream_dedupe_pending,
+                    )
+                except Exception as exc:
+                    logger.warning("ExpressionEngine: streamed second delta safety gate failed: %s", exc)
+                    stream_second_delta_stopped = True
+                    return
+                if result.stop:
+                    stream_second_delta_stopped = True
+                if not result.emitted:
+                    continue
+                try:
+                    second_delta_callback({
+                        "phase": "second_delta",
+                        "text": result.text,
+                        "index": streamed_delta_count,
+                    })
+                except Exception as exc:
+                    logger.warning("ExpressionEngine: streamed second delta callback failed: %s", exc)
+                    stream_second_delta_stopped = True
+                    return
+                streamed_delta_count += 1
+                stream_dedupe_pending = False
+
         with turn_step(
             "expression.llm",
             metadata={"max_tokens": ctx.max_tokens, "message_count": len(ctx.messages)},
         ):
-            completion = self._client.complete_with_metadata(
-                ctx.system_prompt,
-                ctx.messages,
-                ctx.max_tokens,
-            )
+            streaming_completion = getattr(self._client, "complete_streaming_with_metadata", None)
+            if callable(streaming_completion):
+                streaming_attempted = True
+                completion = streaming_completion(
+                    ctx.system_prompt,
+                    ctx.messages,
+                    ctx.max_tokens,
+                    on_text_delta=on_text_delta,
+                )
+            else:
+                completion = self._client.complete_with_metadata(
+                    ctx.system_prompt,
+                    ctx.messages,
+                    ctx.max_tokens,
+                )
+        if streaming_attempted:
+            streamed_sentence_tail = sentence_buffer.flush()
         raw_text = completion.text
         truncated = completion.stop_reason in _TRUNCATED_STOP_REASONS
+        generation_metadata = {
+            "stop_reason": completion.stop_reason,
+            "max_tokens": ctx.max_tokens,
+        }
+        if streaming_attempted:
+            generation_metadata.update({
+                "streaming_buffered": True,
+                "streamed_sentence_count": len(streamed_sentence_chunks),
+                "streamed_tail_chars": len(streamed_sentence_tail),
+                "streamed_second_delta_count": streamed_delta_count,
+            })
 
         llm_failed = not raw_text
         if llm_failed:
@@ -444,7 +664,7 @@ class ExpressionEngine:
                     status="fallback",
                     decision=policy.action.value,
                     summary="LLM returned no text; fallback expression used.",
-                    metadata={"max_tokens": ctx.max_tokens},
+                    metadata=generation_metadata,
                 )
             logger.error(
                 "ExpressionEngine: LLM call failed, using fallback text for action=%s",
@@ -457,7 +677,7 @@ class ExpressionEngine:
                     status="truncated",
                     decision=policy.action.value,
                     summary="LLM response reached the token limit.",
-                    metadata={"stop_reason": completion.stop_reason, "max_tokens": ctx.max_tokens},
+                    metadata=generation_metadata,
                 )
             logger.warning(
                 "ExpressionEngine: response hit token limit (action=%s, stop_reason=%s, max_tokens=%d)",
@@ -471,7 +691,7 @@ class ExpressionEngine:
                 status="completed",
                 decision=policy.action.value,
                 summary="LLM expression generation completed.",
-                metadata={"stop_reason": completion.stop_reason, "max_tokens": ctx.max_tokens},
+                metadata=generation_metadata,
             )
 
         filtered_text = self._constitution.apply_expression_constraints(raw_text)
@@ -488,23 +708,27 @@ class ExpressionEngine:
             filtered_text = _fallback_text(policy.action, short_term)
             truncated = False
             truncation_trimmed = False
+        repaired_text = _repair_capability_contradiction(first_unit, filtered_text, short_term)
+        capability_contradiction_repaired = repaired_text != filtered_text
+        filtered_text = repaired_text
         deduped_text = _dedupe_second_unit_against_first_unit(first_unit, filtered_text)
         second_unit_deduped = deduped_text != filtered_text
         filtered_text = deduped_text
         if harness_recorder is not None:
             harness_recorder.record(
                 HarnessLayer.OUTPUT,
-                status="filtered" if filtered_text != raw_text or detected else "passed",
+                status="filtered" if filtered_text != raw_text or detected or capability_contradiction_repaired else "passed",
                 decision=claim_action or None,
                 summary=(
-                    "Constitution output filters, truncation cleanup, or first-unit de-duplication changed or flagged the response."
-                    if filtered_text != raw_text or detected
+                    "Constitution output filters, truncation cleanup, capability contradiction repair, or first-unit de-duplication changed or flagged the response."
+                    if filtered_text != raw_text or detected or capability_contradiction_repaired
                     else "Constitution output filters passed the response."
                 ),
                 metadata={
                     "changed": filtered_text != raw_text,
                     "forbidden_claim_detected": detected,
                     "truncation_trimmed": truncation_trimmed,
+                    "capability_contradiction_repaired": capability_contradiction_repaired,
                     "second_unit_deduped": second_unit_deduped,
                     "vocal_marker": style.vocal_marker,
                     "body_action": style.body_action,
@@ -645,6 +869,45 @@ def _dedupe_second_unit_against_first_unit(first_unit: str, second_unit: str) ->
 
     remainder = _strip_after_duplicate_prefix(second[cut:])
     return "" if _is_only_punctuation_or_pause(remainder) else remainder
+
+
+def _repair_capability_contradiction(
+    first_unit: str,
+    second_unit: str,
+    short_term: ShortTermMemory | None,
+) -> str:
+    if not second_unit.strip():
+        return second_unit
+    latest_user = _latest_user_content(short_term)
+    if not _is_capability_or_detail_input(latest_user):
+        return second_unit
+    if not _first_unit_affirms_capability(first_unit):
+        return second_unit
+    if not _contains_capability_denial(second_unit):
+        return second_unit
+    return _capability_contradiction_fallback(latest_user)
+
+
+def _first_unit_affirms_capability(first_unit: str) -> bool:
+    compact = _canonical_compare_text(first_unit)
+    compact = _strip_terminal_compare_punctuation(compact)
+    if not compact or compact.startswith(("不能", "不行", "无法", "没法", "no", "not", "cannot", "can't")):
+        return False
+    squashed = compact.replace(" ", "")
+    return any(
+        squashed.startswith(prefix.replace(" ", ""))
+        for prefix in _AFFIRMED_CAPABILITY_PREFIXES
+    )
+
+
+def _contains_capability_denial(text: str) -> bool:
+    return any(pattern.search(text) for pattern in _CAPABILITY_DENIAL_PATTERNS)
+
+
+def _capability_contradiction_fallback(latest_user: str) -> str:
+    if _detect_text_language(latest_user) == "en":
+        return "Why do you keep trying to turn this into a proof test?"
+    return "你为什么一直要我把这个变成证明题？"
 
 
 def _find_exact_wrapped_prefix(text: str, first_unit: str) -> int | None:

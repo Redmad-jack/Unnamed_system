@@ -400,7 +400,7 @@ def _render_already_spoken_first_unit(text: str) -> str:
             "This fast reaction has already been spoken or displayed to the visitor:",
             _compact_bridge_text(spoken, max_chars=120),
             "Generate the main response as a continuation after it. Do not restart the answer, repeat it, or contradict it.",
-            "If it was slightly off, continue in a way that naturally turns the reply back toward the current policy and context.",
+            "Treat it as publicly committed. If it is incomplete, narrow or redirect it without reversing it.",
         ]),
     )
 

@@ -8,8 +8,8 @@
 
 - 当前进行中：无
 - 当前可运行形态：CLI + 本地 FastAPI 开发者 API + Web 看板 + progressive text/audio NDJSON + 可选 Vision 面板 + 可选 Audio Adapter + `/visitor` 临时身体表面；观众侧最终呈现方向是身体，不是传统 UI
-- 当前核心能力：Stranger 文本协议、最高优先级艺术运行 context、热加载 prompt partial、本轮语言强制优先与错语言兜底、非否认式能力边界正向模板与输入通道防自我否认约束、含“恋旧” memory_gravity 的新心理状态机、带上一轮轻量 bridge 的 pre-memory 轻量 `first_unit` + 已说出口 first 去重续写的 memory-aware `second_unit` progressive 输出、two-stage TTS、短期/情节/反思记忆、匿名 visitor profile 与跨 session visitor 记忆召回、Visitor Identity & Session Gating V1、可解释/可选 embedding 召回、Memory Preview、managed memory proposal → commit、influence log / curation、Runtime Harness Trace、可选 YOLO person presence detection、可选火山 ASR 2.0 / TTS 2.0 双向流式 Audio Adapter
-- 当前验证基线：`.venv/bin/python -m pytest -p no:debugging`，最近一次完整结果为 `472 passed`
+- 当前核心能力：Stranger 文本协议、最高优先级艺术运行 context、热加载 prompt partial、本轮语言强制优先与错语言兜底、非否认式能力边界正向模板与输入通道防自我否认约束、含“恋旧” memory_gravity 的新心理状态机、带上一轮轻量 bridge 的 pre-memory 轻量 `first_unit` + 已说出口 first 去重续写的 memory-aware `second_unit` 按句文本/audio progressive 输出、main LLM 后端 streaming buffer、two-stage / sentence-queued TTS、短期/情节/反思记忆、匿名 visitor profile 与跨 session visitor 记忆召回、Visitor Identity & Session Gating V1、可解释/可选 embedding 召回、Memory Preview、managed memory proposal → commit、influence log / curation、Runtime Harness Trace、可选 YOLO person presence detection、可选火山 ASR 2.0 / TTS 2.0 双向流式 Audio Adapter
+- 当前验证基线：`.venv/bin/python -m pytest -p no:debugging`，最近一次完整结果为 `521 passed`
 - 当前交接重点：下一步不再优先扩展 UI，而是先补齐完整声纹识别、视觉识别和访客库；能力自我描述已改为非否认式边界，后续按该口径继续做行为测试调优
 - 当前注意事项：`AGENTS.md` 与 `CLAUDE.md` 有用户侧未提交差异；除非明确要求，不应在常规任务中触碰
 
@@ -45,6 +45,121 @@
 ---
 
 ## Changelog
+
+### 2026-05-18：Step 17.3 Audio Progressive 按句 TTS Queue
+
+- [x] `/api/v1/audio/dialog/progressive` 不再过滤 `second_delta`；每个已通过 Step 17.2 safety gate 的完整句都会创建独立 `dialog_second_delta` TTS stream
+- [x] audio progressive 现在输出 `first_unit → second_delta* → final`；只要 audio client 实际收到过 `second_delta`，final 就只返回完整 metadata / `response_plan`，不再创建整段 `dialog_second_unit` TTS，避免重复朗读
+- [x] 若没有任何 `second_delta` 被发出，final 仍保留旧兜底行为，为完整 `second_unit` 创建 `dialog_second_unit` stream
+- [x] 现场修正：如果 SDK streaming 不可用或供应商网关回退，`ClaudeClient` 会尝试 raw HTTP/SSE streaming fallback（custom `ENTITY_LLM_MESSAGES_ENDPOINT` 或由 `ANTHROPIC_BASE_URL` 推导 `/v1/messages`），避免 second_unit 仍等完整生成后才一次性出现
+- [x] 现场修正：如果 `second_delta` TTS disabled / 创建失败，或已播 delta 没覆盖完整 final `second_unit`，final 会补播完整 second_unit 或只补播剩余文本；如果已播 delta 已覆盖 final，则 final 仍不重复朗读
+- [x] Dashboard Audio 面板改为接受 `second_delta`：所有 `tts_stream_id` 都进入现有播放队列，final 不清空或打断队列；对话日志里第一条 delta 创建第二段消息，后续 delta 追加，final 用权威 `second_unit` reconcile
+- [x] 未改普通 `/api/v1/audio/dialog`、DB schema、ResponsePlan schema、memory、managed memory、interaction_log、LLM provider 或 TTS provider 协议
+- [x] 验证：
+  - `.venv/bin/python -m py_compile src/conscious_entity/interfaces/api_audio.py`
+  - `node --check src/conscious_entity/interfaces/static/dashboard.js`
+  - `.venv/bin/python -m pytest -p no:debugging tests/unit/test_api_audio.py`
+  - `15 passed`
+  - `.venv/bin/python -m pytest -p no:debugging tests/unit/test_api_audio.py tests/unit/test_audio_manager.py tests/unit/test_speech_text.py tests/integration/test_full_loop.py tests/integration/test_step9_response_plan_contract.py`
+  - `81 passed`
+  - `.venv/bin/python -m pytest -p no:debugging tests/unit/test_claude_client.py tests/unit/test_api_audio.py tests/unit/test_audio_manager.py tests/unit/test_speech_text.py tests/integration/test_full_loop.py tests/integration/test_step9_response_plan_contract.py`
+  - `105 passed`
+  - `.venv/bin/python -m pytest -p no:debugging`
+  - `521 passed`
+
+### 2026-05-18：Step 17.2 second_unit 按句 Progressive 文本输出
+
+- [x] `ExpressionEngine.generate()` 新增 `second_delta_callback`；main LLM streaming 产出完整句后，先经过 constitution、forbidden claim、语言匹配、能力矛盾修复和 first-unit 去重，再发 `second_delta`
+- [x] `second_delta` 只按实际 emit 递增 index；forbidden claim / 语言错乱 / 安全处理异常会停止后续 delta；能力矛盾命中时发安全反问后停止
+- [x] 完整 raw text 仍走既有 final 后处理链路，`final.response_plan.second_unit` 继续是权威文本；`second_delta` 不写入 memory、managed memory、interaction_log、DB、TTS 或 ResponsePlan
+- [x] `/api/v1/dialog/progressive` 现在输出 `first_unit → second_delta* → final`；`final.text` 仍只包含完整 `second_unit`
+- [x] `/api/v1/audio/dialog/progressive` 显式过滤 `second_delta`，对外仍只输出 `first_unit → final`，TTS 仍只创建 first/final 两个 stream
+- [x] Dashboard 文本输入支持 `second_delta`：第一条 delta 创建第二段临时消息，后续 delta 追加同一条，final 到达后用权威 `second_unit` 覆盖或清理临时消息
+- [x] 验证：
+  - `.venv/bin/python -m py_compile src/conscious_entity/expression/expression_engine.py src/conscious_entity/core/loop.py src/conscious_entity/interfaces/api_audio.py tests/unit/test_expression_engine.py tests/unit/test_api_audio.py tests/integration/test_full_loop.py`
+  - `node --check src/conscious_entity/interfaces/static/dashboard.js`
+  - `.venv/bin/python -m pytest -p no:debugging tests/unit/test_expression_engine.py tests/unit/test_api_audio.py`
+  - `55 passed`
+  - `.venv/bin/python -m pytest -p no:debugging tests/integration/test_full_loop.py tests/integration/test_step9_response_plan_contract.py`
+  - `52 passed`
+  - `.venv/bin/python -m pytest -p no:debugging`
+  - `515 passed`
+- [ ] 注意：本阶段只改善 Dashboard 文本可见延迟；audio/TTS 按句播放仍留给 Step 17.3
+
+### 2026-05-18：Step 17.1 main LLM 后端 streaming buffer
+
+- [x] `ClaudeClient` 新增 `complete_streaming_with_metadata()`：官方 Anthropic SDK 路径优先使用 `messages.stream(...)` 收集 text delta，最终仍返回完整 `ClaudeCompletion`
+- [x] custom `ENTITY_LLM_MESSAGES_ENDPOINT`、SDK streaming 不可用或 streaming 报错时，自动回退旧 `complete_with_metadata()`；delta callback 失败只记录 warning，不中断生成
+- [x] `ExpressionEngine.generate()` 的 main LLM 路径改为优先 streaming 读取并 buffer；最终 `second_unit` 仍来自完整 raw text 后处理结果
+- [x] 新增内部 `_SentenceBuffer`，验证中文 / 英文 / 省略号 / 换行句界切分；当前只记录 harness metadata 的 chunk 数和尾部长度，不向 frontend、TTS、DB、memory 或 ResponsePlan 暴露 partial
+- [x] 保持外部行为不变：`/dialog/progressive` 仍只输出 `first_unit → final`，`/audio/dialog/progressive` 仍只生成 first / second 两个 TTS stream，未改 DB、ResponsePlan schema、frontend、memory、policy、retrieval 或 constitution
+- [x] 验证：
+  - `.venv/bin/python -m py_compile src/conscious_entity/llm/claude_client.py src/conscious_entity/expression/expression_engine.py tests/unit/test_claude_client.py tests/unit/test_expression_engine.py tests/integration/test_full_loop.py`
+  - `.venv/bin/python -m pytest -p no:debugging tests/unit/test_claude_client.py tests/unit/test_expression_engine.py`
+  - `57 passed`
+  - `.venv/bin/python -m pytest -p no:debugging tests/unit/test_api_audio.py tests/unit/test_speech_text.py tests/integration/test_full_loop.py tests/integration/test_step9_response_plan_contract.py tests/integration/test_runtime_context_minimal_contract.py`
+  - `86 passed`
+  - `.venv/bin/python -m pytest -p no:debugging`
+  - `508 passed`
+- [ ] 注意：本阶段只降低后续按句 streaming 的技术风险，不改善前端可见 `second_unit` 延迟；真正 `second_delta` / 按句 TTS 需要后续阶段单独实现
+
+### 2026-05-18：清空本地持久记忆
+
+- [x] 按用户要求清空当前 `data/memory.db` 中会进入对话召回 / 记忆链路的持久数据：
+  - `interaction_log`
+  - `managed_memories` 与 `managed_memories_fts`
+  - `episodic_memories`
+  - `reflective_summaries`
+  - `memory_operation_proposals`
+  - `memory_operation_log`
+  - `memory_influence_log`
+  - `memory_curation_log`
+- [x] 清空前已备份：`data/memory.backup-20260518-1527-before-clear.db`
+- [x] 保留 `sessions`、`visitor_profiles`、`state_snapshots`，避免把身份 / 会话配置和心理状态历史误当记忆删除
+- [x] 验证：上述记忆 / 历史对话表计数均为 `0`
+
+### 2026-05-18：audio input context 去通道化
+
+- [x] `prompts/partials/input_context.txt` 删除 “latest user message is transcript text” 提醒，不再把 audio turn 引导成 transcript / text-only 自我说明
+- [x] 删除 “avoid inventing specific acoustic details such as tone, volume, accent...” 提醒，避免模型把声学细节边界扩展成“不能听见 / 只能读字”
+- [x] audio turn 仍会注入一个极短 current-turn note，只保留：
+  - 不要把当前交流变成技术性自我描述
+  - 能力问题仍按 capability-boundary rules
+  - main response 可能会被外层和 fast reaction 合并后朗读
+- [x] 同步更新 `tests/unit/test_context_builder.py` 与 `tests/integration/test_full_loop.py` 的 prompt contract
+- [x] 验证：
+  - `.venv/bin/python -m pytest -p no:debugging tests/unit/test_context_builder.py tests/integration/test_full_loop.py`
+  - `93 passed`
+  - `rg` 确认 `prompts/` 与 `src/conscious_entity/expression` 中不再含 `transcript text` / `acoustic details` / `raw audio` 等提示词
+- [ ] 注意：prompt partial 可热加载；如 API 已关闭则下次启动生效，如仍有旧进程则刷新/重启更稳
+
+### 2026-05-18：能力肯定模板改为“当然”
+
+- [x] 检查并移除运行路径中的“能接住你 / 可以接住 / 能看见你 / 能听见你”等能力肯定示例，避免把隐喻句误当视觉能力回答
+- [x] `constitution_block.txt` 的能力存在问题示例改为“当然。”、“能。”、“可以。”和“当然，但我不接受这种证明题。”
+- [x] `constitution.yaml` 的能力自我否认过滤替换文案改为“当然，但...”，不再输出“能接住你”
+- [x] `ExpressionEngine` 的 first-unit / second-unit 矛盾 guard 现在把“当然”识别为能力肯定前缀
+- [x] 当前 `rg` 检查结果：`能接住你` 只剩测试断言中的反向检查，不再出现在 prompt / config / runtime code 文案中
+- [x] 验证：
+  - `.venv/bin/python -m py_compile src/conscious_entity/expression/expression_engine.py tests/unit/test_constitution.py tests/unit/test_expression_engine.py tests/integration/test_runtime_context_minimal_contract.py`
+  - `.venv/bin/python -m pytest -p no:debugging tests/unit/test_constitution.py tests/unit/test_expression_engine.py tests/unit/test_context_builder.py tests/integration/test_runtime_context_minimal_contract.py`
+  - `135 passed`
+- [ ] 注意：当前 8000 API 进程需要重启后才能加载新的 config / prompt / Python guard
+
+### 2026-05-18：first_unit 公开承诺后的 second_unit 矛盾修复
+
+- [x] 收紧 `already_spoken_fast_reaction` prompt：`first_unit` 被视为已经对观众公开承诺，`second_unit` 只能补窄或转向，不能重启、重复、反向否认
+- [x] 删除旧 prompt 口子：不再允许 “If it was slightly off” 让 main LLM 在正式回应里纠正第一句
+- [x] `ExpressionEngine.generate()` 增加窄 hard guard：当前输入是能力 / 证明相关问题，且 `first_unit` 已经肯定能力时，如果 `second_unit` 输出“不能 / 看不见 / 没有视觉 / 没有摄像头 / 只能读文字”等能力否认，则替换为短反问
+- [x] guard 不作用于普通身份定义拒绝、服务拒绝或 `first_unit` 未肯定能力的情况
+- [x] 未改 DB、policy、memory、TTS、ResponsePlan schema 或 LLM provider
+- [x] 验证：
+  - `.venv/bin/python -m py_compile src/conscious_entity/expression/context_builder.py src/conscious_entity/expression/expression_engine.py tests/unit/test_context_builder.py tests/unit/test_expression_engine.py`
+  - `.venv/bin/python -m pytest -p no:debugging tests/unit/test_context_builder.py tests/unit/test_expression_engine.py`
+  - `86 passed`
+  - `.venv/bin/python -m pytest -p no:debugging tests/integration/test_runtime_context_minimal_contract.py tests/integration/test_step9_response_plan_contract.py tests/integration/test_full_loop.py`
+  - `68 passed`
+- [ ] 注意：当前 8000 API 进程需要重启后才能加载新的 Python guard
 
 ### 2026-05-18：Progressive Response 去重与轻量 first_unit 修复
 

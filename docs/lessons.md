@@ -101,6 +101,21 @@
 - 原因：main LLM 即使看到“不要重复”也会把 fast reaction 原样作为开头，导致用户听到两次同一句，或把两段听成互相独立的回答
 - 如何应用：`second_unit` 进入 `ResponsePlan` 前做轻量规范化 prefix check；极短语气词只删开头精确重复，避免误删正文
 
+**L26：已公开的 first_unit 不能被 second_unit 反向否认**
+- 规则：`first_unit` 已经 progressive 展示 / 播放后，`second_unit` 不能把同一能力边界反向推翻；能力问句尤其不能先肯定再输出“不能 / 看不见 / 没有视觉”
+- 原因：prompt 中“不要矛盾”仍是软约束，模型会把第一句当成可修正草稿，现场形成“能 / 不能”的自我冲突
+- 如何应用：already-spoken prompt 必须把第一句视为公开承诺；同时在 `ExpressionEngine` 对“first 已肯定能力 + second 能力否认”做窄 guard，替换为短反问或转向
+
+**L27：能力肯定示例不要用隐喻替代真实措辞**
+- 规则：能力存在问题的正向模板应使用短、直接、低歧义措辞，例如“当然。”；不要用“能接住你”这类隐喻去替代“能看见 / 能听见”
+- 原因：隐喻示例会被模型当成能力回答反复复述，导致观众听到的不是明确能力边界，而是奇怪的修辞
+- 如何应用：prompt / constitution filter / 测试 fake LLM 中的能力肯定例子要统一检查；修改后用 `rg` 确认旧隐喻不再出现在运行路径
+
+**L28：语音输入提示不要写成通道清单**
+- 规则：audio turn 的 prompt 不应写 “transcript text”、raw audio、acoustic details、tone、volume、accent、pronunciation 等通道边界词；只保留“不做技术性自我描述”和 capability-boundary 规则
+- 原因：即使本意只是防止编造声学细节，模型也会把这些词扩展成“我不能听见 / 只能读文字 / 没有麦克风”的技术 inventory
+- 如何应用：语音输入边界只通过 metadata 和测试记录，不把 STT / transcript / 声学缺失写给表达 LLM；能力问句另走 constitution / current-turn cue / output filter
+
 **L17：跨 session 记忆必须有 visitor scope**
 - 规则：不能依赖 `session_type` 或全局池去模拟“同一个访客”的连续性；跨 session 的个人事实、关系线索和回返感必须经过显式 `visitor_id` 绑定
 - 原因：否则一个访客说过的事实会在另一个访客处泄漏，或者像“K 是谁”这类旧会话事实在新 session 中无法稳定召回

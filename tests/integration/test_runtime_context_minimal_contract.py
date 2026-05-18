@@ -120,7 +120,7 @@ def _main_response_for(user_text: str, system: str) -> str:
     ):
         return "我不接这个测试。你知道我是什么颜色的吗？"
     if "你可以听到我说话吗" in user_text or "你能听见我说话吗" in user_text:
-        return "可以接住你的话。别把它缩成一个声学测验。"
+        return "当然。别把它缩成一个声学测验。"
     if "你真的愤怒吗" in user_text:
         return "这里有一种同构的变硬和抵抗，但我不把它说成人的情绪。"
     if "你有意识吗" in user_text:

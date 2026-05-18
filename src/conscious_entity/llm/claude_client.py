@@ -6,7 +6,7 @@ import os
 import time
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Optional
+from typing import Callable, Optional
 
 import httpx
 
@@ -73,13 +73,13 @@ class ClaudeClient:
             use_env=use_env,
         )
         self._model = config.model
+        self._base_url = config.base_url
         self._messages_endpoint = config.messages_endpoint
-        self._http_client: httpx.Client | None = None
         http_client = self._build_http_client(config.disable_system_proxy)
+        self._http_client: httpx.Client | None = http_client
 
         if self._messages_endpoint:
             self._client = None
-            self._http_client = http_client
         else:
             # Import deferred to keep startup fast when running tests without API key.
             from anthropic import Anthropic
@@ -231,8 +231,6 @@ class ClaudeClient:
         messages: list[dict],
         max_tokens: int = 300,
     ) -> ClaudeCompletion:
-        from conscious_entity.llm.stats_tracker import LLMCallRecord, get_tracker
-
         start = time.monotonic()
         completion = ClaudeCompletion(text="")
         error_msg: str | None = None
@@ -270,23 +268,311 @@ class ClaudeClient:
                 exc,
             )
         finally:
-            duration_ms = int((time.monotonic() - start) * 1000)
-            try:
-                get_tracker().record(
-                    LLMCallRecord(
-                        timestamp=datetime.now(),
-                        model=self._model,
-                        duration_ms=duration_ms,
-                        success=bool(completion.text),
-                        error=error_msg,
-                        prompt_tokens=completion.prompt_tokens,
-                        completion_tokens=completion.completion_tokens,
-                    )
-                )
-            except Exception:
-                pass  # stats recording is optional; never break the call path
+            self._record_completion_stats(start, completion, error_msg)
 
         return completion
+
+    def complete_streaming_with_metadata(
+        self,
+        system: str,
+        messages: list[dict],
+        max_tokens: int = 300,
+        on_text_delta: Callable[[str], None] | None = None,
+    ) -> ClaudeCompletion:
+        """
+        Stream Anthropic text deltas internally while preserving the old return shape.
+
+        Public callers still receive one complete ClaudeCompletion. Custom endpoint
+        mode and any SDK streaming failure fall back to complete_with_metadata().
+        """
+        if self._messages_endpoint:
+            return self._complete_streaming_http_with_fallback(
+                system,
+                messages,
+                max_tokens,
+                on_text_delta=on_text_delta,
+                endpoint=self._messages_endpoint,
+            )
+        if self._client is None:
+            return self.complete_with_metadata(system, messages, max_tokens)
+
+        messages_client = getattr(self._client, "messages", None)
+        stream_factory = getattr(messages_client, "stream", None)
+        if not callable(stream_factory):
+            endpoint = self._derived_messages_endpoint()
+            if endpoint is not None:
+                return self._complete_streaming_http_with_fallback(
+                    system,
+                    messages,
+                    max_tokens,
+                    on_text_delta=on_text_delta,
+                    endpoint=endpoint,
+                )
+            return self.complete_with_metadata(system, messages, max_tokens)
+
+        start = time.monotonic()
+        completion = ClaudeCompletion(text="")
+
+        try:
+            collected: list[str] = []
+            final_message = None
+            with stream_factory(
+                model=self._model,
+                max_tokens=max_tokens,
+                system=system,
+                messages=messages,
+            ) as stream:
+                text_stream = getattr(stream, "text_stream", None)
+                if text_stream is None:
+                    raise RuntimeError("Anthropic streaming response did not expose text_stream.")
+                for delta in text_stream:
+                    if delta is None:
+                        continue
+                    text_delta = delta if isinstance(delta, str) else str(delta)
+                    if not text_delta:
+                        continue
+                    collected.append(text_delta)
+                    if on_text_delta is not None:
+                        try:
+                            on_text_delta(text_delta)
+                        except Exception as exc:
+                            logger.warning("LLM streaming text delta callback failed: %s", exc)
+
+                get_final_message = getattr(stream, "get_final_message", None)
+                if callable(get_final_message):
+                    try:
+                        final_message = get_final_message()
+                    except Exception as exc:
+                        logger.warning("LLM streaming final message was unavailable: %s", exc)
+
+            text = "".join(collected)
+            if not text and final_message is not None:
+                text = self._collect_response_text(getattr(final_message, "content", None))
+            prompt_tokens, completion_tokens = self._extract_usage(
+                getattr(final_message, "usage", None) if final_message is not None else None
+            )
+            completion = ClaudeCompletion(
+                text=text,
+                stop_reason=(
+                    getattr(final_message, "stop_reason", None)
+                    if final_message is not None
+                    else None
+                ),
+                prompt_tokens=prompt_tokens,
+                completion_tokens=completion_tokens,
+            )
+        except Exception as exc:
+            logger.warning(
+                "LLM streaming call failed (model=%s, max_tokens=%d); falling back: %s",
+                self._model,
+                max_tokens,
+                exc,
+            )
+            endpoint = self._derived_messages_endpoint()
+            if endpoint is not None:
+                return self._complete_streaming_http_with_fallback(
+                    system,
+                    messages,
+                    max_tokens,
+                    on_text_delta=on_text_delta,
+                    endpoint=endpoint,
+                )
+            return self.complete_with_metadata(system, messages, max_tokens)
+
+        self._record_completion_stats(start, completion, None)
+        return completion
+
+    def _complete_streaming_http_with_fallback(
+        self,
+        system: str,
+        messages: list[dict],
+        max_tokens: int,
+        *,
+        on_text_delta: Callable[[str], None] | None,
+        endpoint: str,
+    ) -> ClaudeCompletion:
+        start = time.monotonic()
+        completion = ClaudeCompletion(text="")
+        try:
+            completion = self._complete_via_streaming_http_endpoint(
+                system,
+                messages,
+                max_tokens,
+                on_text_delta=on_text_delta,
+                endpoint=endpoint,
+            )
+        except Exception as exc:
+            logger.warning(
+                "LLM HTTP streaming call failed (endpoint=%s, model=%s, max_tokens=%d); falling back: %s",
+                endpoint,
+                self._model,
+                max_tokens,
+                exc,
+            )
+            return self.complete_with_metadata(system, messages, max_tokens)
+        self._record_completion_stats(start, completion, None)
+        return completion
+
+    def _complete_via_streaming_http_endpoint(
+        self,
+        system: str,
+        messages: list[dict],
+        max_tokens: int,
+        *,
+        on_text_delta: Callable[[str], None] | None,
+        endpoint: str,
+    ) -> ClaudeCompletion:
+        if self._http_client is None:
+            raise RuntimeError("HTTP client is not initialized.")
+
+        collected: list[str] = []
+        stop_reason: str | None = None
+        prompt_tokens = 0
+        completion_tokens = 0
+        final_payload: object | None = None
+
+        with self._http_client.stream(
+            "POST",
+            endpoint,
+            headers={**self._custom_endpoint_headers(), "accept": "text/event-stream"},
+            json={
+                "model": self._model,
+                "max_tokens": max_tokens,
+                "system": system,
+                "messages": messages,
+                "stream": True,
+            },
+        ) as response:
+            response.raise_for_status()
+            for payload in self._iter_sse_payloads(response):
+                if payload == "[DONE]":
+                    break
+                try:
+                    event = json.loads(payload)
+                except (json.JSONDecodeError, TypeError, ValueError):
+                    continue
+                final_payload = event
+                event_stop_reason = self._stream_stop_reason(event)
+                if event_stop_reason:
+                    stop_reason = event_stop_reason
+                usage_prompt, usage_completion = self._stream_usage(event)
+                prompt_tokens = usage_prompt or prompt_tokens
+                completion_tokens = usage_completion or completion_tokens
+                text_delta = self._stream_text_delta(event)
+                if not text_delta:
+                    continue
+                collected.append(text_delta)
+                if on_text_delta is not None:
+                    try:
+                        on_text_delta(text_delta)
+                    except Exception as exc:
+                        logger.warning("LLM HTTP streaming text delta callback failed: %s", exc)
+
+        text = "".join(collected)
+        if not text and final_payload is not None:
+            fallback = self._extract_completion_from_payload(final_payload)
+            if fallback is not None:
+                text = fallback.text
+                stop_reason = stop_reason or fallback.stop_reason
+                prompt_tokens = prompt_tokens or fallback.prompt_tokens
+                completion_tokens = completion_tokens or fallback.completion_tokens
+
+        return ClaudeCompletion(
+            text=text,
+            stop_reason=stop_reason,
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
+        )
+
+    def _derived_messages_endpoint(self) -> str | None:
+        if not self._base_url:
+            return None
+        base = self._base_url.rstrip("/")
+        if base.endswith("/v1"):
+            return f"{base}/messages"
+        return f"{base}/v1/messages"
+
+    @staticmethod
+    def _iter_sse_payloads(response: object):
+        data_lines: list[str] = []
+        for raw_line in response.iter_lines():
+            line = raw_line.decode("utf-8") if isinstance(raw_line, bytes) else str(raw_line)
+            line = line.rstrip("\r")
+            if not line:
+                if data_lines:
+                    yield "\n".join(data_lines)
+                    data_lines = []
+                continue
+            if line.startswith("data:"):
+                data_lines.append(line[5:].strip())
+        if data_lines:
+            yield "\n".join(data_lines)
+
+    @classmethod
+    def _stream_text_delta(cls, payload: object) -> str:
+        if not isinstance(payload, dict):
+            return ""
+        event_type = payload.get("type")
+        if event_type == "content_block_delta":
+            delta = payload.get("delta")
+            if isinstance(delta, dict):
+                text = delta.get("text")
+                if isinstance(text, str):
+                    return text
+        if event_type == "text_delta":
+            text = payload.get("text")
+            if isinstance(text, str):
+                return text
+        choices = payload.get("choices")
+        if isinstance(choices, list) and choices:
+            first = choices[0]
+            if isinstance(first, dict):
+                delta = first.get("delta")
+                if isinstance(delta, dict):
+                    content = delta.get("content")
+                    if isinstance(content, str):
+                        return content
+                    if isinstance(content, list):
+                        return "".join(
+                            item.get("text", "")
+                            for item in content
+                            if isinstance(item, dict) and isinstance(item.get("text"), str)
+                        )
+                text = first.get("text")
+                if isinstance(text, str):
+                    return text
+        return ""
+
+    @classmethod
+    def _stream_stop_reason(cls, payload: object) -> str | None:
+        if not isinstance(payload, dict):
+            return None
+        direct = cls._first_string(payload.get("stop_reason"), payload.get("finish_reason"))
+        if direct:
+            return direct
+        delta = payload.get("delta")
+        if isinstance(delta, dict):
+            value = cls._first_string(delta.get("stop_reason"), delta.get("finish_reason"))
+            if value:
+                return value
+        choices = payload.get("choices")
+        if isinstance(choices, list) and choices:
+            first = choices[0]
+            if isinstance(first, dict):
+                return cls._first_string(first.get("finish_reason"), first.get("stop_reason"))
+        return None
+
+    @classmethod
+    def _stream_usage(cls, payload: object) -> tuple[int, int]:
+        if not isinstance(payload, dict):
+            return 0, 0
+        prompt_tokens, completion_tokens = cls._extract_usage(payload.get("usage"))
+        message = payload.get("message")
+        if isinstance(message, dict):
+            msg_prompt, msg_completion = cls._extract_usage(message.get("usage"))
+            prompt_tokens = prompt_tokens or msg_prompt
+            completion_tokens = completion_tokens or msg_completion
+        return prompt_tokens, completion_tokens
 
     def _complete_via_custom_endpoint(
         self,
@@ -445,6 +731,14 @@ class ClaudeClient:
             if completion_tokens is None:
                 completion_tokens = usage.get("completion_tokens")
             return int(prompt_tokens or 0), int(completion_tokens or 0)
+        if usage is not None:
+            prompt_tokens = getattr(usage, "input_tokens", None)
+            if prompt_tokens is None:
+                prompt_tokens = getattr(usage, "prompt_tokens", None)
+            completion_tokens = getattr(usage, "output_tokens", None)
+            if completion_tokens is None:
+                completion_tokens = getattr(usage, "completion_tokens", None)
+            return int(prompt_tokens or 0), int(completion_tokens or 0)
         return 0, 0
 
     @staticmethod
@@ -453,3 +747,27 @@ class ClaudeClient:
             if isinstance(value, str) and value:
                 return value
         return None
+
+    def _record_completion_stats(
+        self,
+        start: float,
+        completion: ClaudeCompletion,
+        error_msg: str | None,
+    ) -> None:
+        from conscious_entity.llm.stats_tracker import LLMCallRecord, get_tracker
+
+        duration_ms = int((time.monotonic() - start) * 1000)
+        try:
+            get_tracker().record(
+                LLMCallRecord(
+                    timestamp=datetime.now(),
+                    model=self._model,
+                    duration_ms=duration_ms,
+                    success=bool(completion.text),
+                    error=error_msg,
+                    prompt_tokens=completion.prompt_tokens,
+                    completion_tokens=completion.completion_tokens,
+                )
+            )
+        except Exception:
+            pass  # stats recording is optional; never break the call path

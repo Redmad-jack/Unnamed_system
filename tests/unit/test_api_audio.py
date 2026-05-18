@@ -14,10 +14,15 @@ from conscious_entity.interfaces.api_models import AudioDialogRequest, DialogReq
 
 
 class FakeLoop:
-    def __init__(self, *, first_unit="唉。", second_unit="我记得一点。"):
+    def __init__(self, *, first_unit="唉。", second_unit="我记得一点。", second_deltas=None):
         self.inputs = []
         self.first_unit = first_unit
         self.second_unit = second_unit
+        self.second_deltas = list(
+            second_deltas
+            if second_deltas is not None
+            else ([second_unit] if second_unit else [])
+        )
 
     def run_turn(self, text, source="dialog", input_metadata=None, progress_callback=None):
         self.inputs.append((text, source, input_metadata))
@@ -47,6 +52,16 @@ class FakeLoop:
                 "body_action": "pause",
                 "visual_mode": "normal",
             })
+            for index, delta in enumerate(self.second_deltas):
+                progress_callback({
+                    "phase": "second_delta",
+                    "text": delta,
+                    "index": index,
+                    "policy_action": "respond_openly",
+                    "vocal_marker": "sigh",
+                    "body_action": "pause",
+                    "visual_mode": "normal",
+                })
         return ExpressionOutput(
             text=plan.combined_text,
             spoken_text=plan.combined_text,
@@ -81,6 +96,28 @@ class FakeAudioManager:
 
     def get_tts_stream(self, stream_id):
         raise AudioRuntimeError("tts_stream_expired", "expired")
+
+
+class FakeAudioManagerSecondDeltaDisabled(FakeAudioManager):
+    def create_tts_stream_from_text(self, text, *, source="dialog_output"):
+        self.created_texts.append((text, source))
+        if source == "dialog_second_delta":
+            return None, True
+        if not text.strip():
+            return None, False
+        stream_id = f"tts_progressive_{len(self.created_texts)}"
+        return SimpleNamespace(stream_id=stream_id), bool(text.strip())
+
+
+class FakeAudioManagerSecondDeltaBroken(FakeAudioManager):
+    def create_tts_stream_from_text(self, text, *, source="dialog_output"):
+        self.created_texts.append((text, source))
+        if source == "dialog_second_delta":
+            raise RuntimeError("tts failed")
+        if not text.strip():
+            return None, False
+        stream_id = f"tts_progressive_{len(self.created_texts)}"
+        return SimpleNamespace(stream_id=stream_id), bool(text.strip())
 
 
 class FakeIdentityGating:
@@ -146,10 +183,12 @@ def test_dialog_progressive_emits_first_before_final():
     ))
     events = asyncio.run(_collect_streaming_response(response))
 
-    assert [event["phase"] for event in events] == ["first_unit", "final"]
+    assert [event["phase"] for event in events] == ["first_unit", "second_delta", "final"]
     assert events[0]["text"] == "唉。"
     assert events[0]["response_plan"]["second_unit"] == ""
-    assert events[1]["response_plan"]["second_unit"] == "我记得一点。"
+    assert events[1]["text"] == "我记得一点。"
+    assert events[1]["index"] == 0
+    assert events[2]["response_plan"]["second_unit"] == "我记得一点。"
 
 
 def test_dialog_progressive_final_text_is_second_unit_only():
@@ -205,12 +244,38 @@ def test_audio_dialog_reuses_loop_and_creates_tts_stream():
     assert result["response_plan"]["combined_text"] == result["output_text"]
 
 
-def test_audio_progressive_creates_two_tts_streams_from_first_and_second_only():
+def test_audio_progressive_creates_tts_streams_for_first_and_second_delta():
     loop = FakeLoop()
     manager = FakeAudioManager()
 
     response = asyncio.run(api.audio_dialog_progressive(
         AudioDialogRequest(transcript="  你还记得我吗？ ", audio_session_id="aud"),
+        _request(loop=loop, audio_manager=manager),
+    ))
+    events = asyncio.run(_collect_streaming_response(response))
+
+    assert [event["phase"] for event in events] == ["first_unit", "second_delta", "final"]
+    assert [event["tts_stream_id"] for event in events] == [
+        "tts_progressive_1",
+        "tts_progressive_2",
+        None,
+    ]
+    assert manager.created_texts == [
+        ("唉。", "dialog_first_unit"),
+        ("我记得一点。", "dialog_second_delta"),
+    ]
+    assert events[1]["should_speak"] is True
+    assert events[-1]["should_speak"] is False
+    assert events[-1]["text"] == "我记得一点。"
+    assert events[-1]["response_plan"]["combined_text"] == "唉。\n我记得一点。"
+
+
+def test_audio_progressive_falls_back_to_final_tts_when_no_second_delta_emitted():
+    loop = FakeLoop(second_deltas=[])
+    manager = FakeAudioManager()
+
+    response = asyncio.run(api.audio_dialog_progressive(
+        AudioDialogRequest(transcript="你还记得我吗？", audio_session_id="aud"),
         _request(loop=loop, audio_manager=manager),
     ))
     events = asyncio.run(_collect_streaming_response(response))
@@ -224,8 +289,67 @@ def test_audio_progressive_creates_two_tts_streams_from_first_and_second_only():
         ("唉。", "dialog_first_unit"),
         ("我记得一点。", "dialog_second_unit"),
     ]
-    assert events[-1]["text"] == "我记得一点。"
-    assert events[-1]["response_plan"]["combined_text"] == "唉。\n我记得一点。"
+
+
+def test_audio_progressive_second_delta_without_stream_falls_back_to_final_replay():
+    loop = FakeLoop()
+    manager = FakeAudioManagerSecondDeltaDisabled()
+
+    response = asyncio.run(api.audio_dialog_progressive(
+        AudioDialogRequest(transcript="你还记得我吗？", audio_session_id="aud"),
+        _request(loop=loop, audio_manager=manager),
+    ))
+    events = asyncio.run(_collect_streaming_response(response))
+
+    assert [event["phase"] for event in events] == ["first_unit", "second_delta", "final"]
+    assert events[1]["tts_stream_id"] is None
+    assert events[1]["should_speak"] is False
+    assert events[-1]["tts_stream_id"] == "tts_progressive_3"
+    assert events[-1]["should_speak"] is True
+    assert manager.created_texts == [
+        ("唉。", "dialog_first_unit"),
+        ("我记得一点。", "dialog_second_delta"),
+        ("我记得一点。", "dialog_second_unit"),
+    ]
+
+
+def test_audio_progressive_second_delta_tts_error_falls_back_to_final_replay():
+    loop = FakeLoop()
+    manager = FakeAudioManagerSecondDeltaBroken()
+
+    response = asyncio.run(api.audio_dialog_progressive(
+        AudioDialogRequest(transcript="你还记得我吗？", audio_session_id="aud"),
+        _request(loop=loop, audio_manager=manager),
+    ))
+    events = asyncio.run(_collect_streaming_response(response))
+
+    assert [event["phase"] for event in events] == ["first_unit", "second_delta", "final"]
+    assert events[1]["tts_stream_id"] is None
+    assert events[1]["should_speak"] is False
+    assert "tts failed" in events[1]["audio_disabled_reason"]
+    assert events[-1]["tts_stream_id"] == "tts_progressive_3"
+    assert events[-1]["should_speak"] is True
+    assert events[-1]["response_plan"]["second_unit"] == "我记得一点。"
+
+
+def test_audio_progressive_speaks_final_remainder_after_second_delta_streams():
+    loop = FakeLoop(second_unit="第一句。第二句。", second_deltas=["第一句。"])
+    manager = FakeAudioManager()
+
+    response = asyncio.run(api.audio_dialog_progressive(
+        AudioDialogRequest(transcript="继续", audio_session_id="aud"),
+        _request(loop=loop, audio_manager=manager),
+    ))
+    events = asyncio.run(_collect_streaming_response(response))
+
+    assert [event["phase"] for event in events] == ["first_unit", "second_delta", "final"]
+    assert events[-1]["tts_stream_id"] == "tts_progressive_3"
+    assert events[-1]["text"] == "第一句。第二句。"
+    assert manager.created_texts == [
+        ("唉。", "dialog_first_unit"),
+        ("第一句。", "dialog_second_delta"),
+        ("第二句。", "dialog_second_unit_remainder"),
+    ]
 
 
 def test_audio_progressive_allows_empty_second_unit_without_tts_stream():

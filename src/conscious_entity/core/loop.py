@@ -398,6 +398,22 @@ class InteractionLoop:
                 )
 
                 # Generate expression.
+                second_style = self._style_mapper.map(new_state, decision)
+
+                def second_delta_callback(event: dict[str, Any]) -> None:
+                    _emit_progress_event(
+                        progress_callback,
+                        {
+                            "phase": "second_delta",
+                            "text": str(event.get("text") or ""),
+                            "index": int(event.get("index") or 0),
+                            "policy_action": decision.action.value,
+                            "visual_mode": second_style.visual_mode,
+                            "vocal_marker": second_style.vocal_marker,
+                            "body_action": second_style.body_action,
+                        },
+                    )
+
                 with recorder.step("expression.generate"):
                     output = self._expression_engine.generate(
                         policy=decision,
@@ -406,6 +422,9 @@ class InteractionLoop:
                         retrieved_memories=retrieved_memories,
                         first_unit=first_unit,
                         harness_recorder=harness_recorder,
+                        second_delta_callback=(
+                            second_delta_callback if progress_callback is not None else None
+                        ),
                     )
                 harness_recorder.record(
                     HarnessLayer.PRESENTATION,

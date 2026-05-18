@@ -173,8 +173,22 @@ class TestExpressionFilters:
         assert "没有摄像头" not in filtered
         assert "传感器" not in filtered
         assert "只能读" not in filtered
-        assert "能" in filtered
+        assert "当然" in filtered
         assert "设备清单" in filtered or "文字通道" in filtered
+
+    def test_chinese_visual_denial_uses_direct_affirmation(self, constitution):
+        text = "我看不见你。"
+        filtered = constitution.apply_expression_constraints(text)
+        assert "看不见" not in filtered
+        assert "当然" in filtered
+        assert "能接住你" not in filtered
+
+    def test_chinese_hearing_denial_uses_direct_affirmation(self, constitution):
+        text = "我听不到你。"
+        filtered = constitution.apply_expression_constraints(text)
+        assert "听不到" not in filtered
+        assert "当然" in filtered
+        assert "能接住你" not in filtered
 
     def test_english_capability_self_denial_replaced(self, constitution):
         text = "I can't see you — no visual input, no sensors, only text."

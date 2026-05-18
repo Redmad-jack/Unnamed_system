@@ -346,11 +346,14 @@ class TestSystemPromptInvariants:
 
         ctx = builder.build(EntityState(), _decision(), _style(), mem, [])
 
-        assert "transcript text of a live spoken turn" in ctx.system_prompt
-        assert "avoid inventing specific acoustic details" in ctx.system_prompt
-        assert "Do not explain the channel" in ctx.system_prompt
+        assert "Current turn note:" in ctx.system_prompt
+        assert "Do not turn the current exchange into a technical self-description" in ctx.system_prompt
         assert "Capability questions still follow the capability-boundary rules" in ctx.system_prompt
+        assert "transcript text of a live spoken turn" not in ctx.system_prompt
+        assert "avoid inventing specific acoustic details" not in ctx.system_prompt
+        assert "acoustic details" not in ctx.system_prompt
         assert "raw audio" not in ctx.system_prompt
+        assert "tone, volume, accent" not in ctx.system_prompt
         assert "I cannot hear you" not in ctx.system_prompt
         assert "I only read text" not in ctx.system_prompt
 
@@ -411,7 +414,7 @@ class TestSystemPromptInvariants:
 
         ctx = builder.build(EntityState(), _decision(), _style(), mem, [])
 
-        assert "transcript text of a live spoken turn" not in ctx.system_prompt
+        assert "Current turn note:" not in ctx.system_prompt
 
     def test_text_dialog_prompt_harness_does_not_show_voice_injection(self, builder):
         mem = _memory_with_turns(("user", "Hello hello 能听到吗？"))
@@ -747,6 +750,9 @@ class TestFirstUnitPrompt:
         assert "能。" in ctx.system_prompt
         assert "Generate the main response as a continuation after it" in ctx.system_prompt
         assert "Do not restart the answer, repeat it, or contradict it" in ctx.system_prompt
+        assert "Treat it as publicly committed" in ctx.system_prompt
+        assert "without reversing it" in ctx.system_prompt
+        assert "If it was slightly off" not in ctx.system_prompt
 
     def test_main_prompt_omits_already_spoken_fast_reaction_when_empty(self, builder):
         ctx = builder.build(EntityState(), _decision(), _style(), _empty_memory(), [])
