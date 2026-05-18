@@ -11,6 +11,7 @@
 - 当前核心能力：Stranger 文本协议、状态机、短期/情节/反思记忆、匿名 visitor profile 与跨 session visitor 记忆召回、Visitor Identity & Session Gating V1、可解释/可选 embedding 召回、Memory Preview、managed memory proposal → commit、influence log / curation、Runtime Harness Trace、可选 YOLO person presence detection、可选火山 ASR 2.0 / TTS 2.0 双向流式 Audio Adapter
 - 当前验证基线：`PYTHONPATH=src python3 -m pytest -p no:debugging`，最近一次完整结果为 `364 passed`
 - 当前交接重点：下一步不再优先扩展 UI，而是先补齐完整声纹识别、视觉识别和访客库；随后做能力自我描述回归测试与行为测试调优
+- 当前硬件参考方案：`docs/references/hardware.md` 已更新为单 Stranger 移动身体：Mac mini 随身上位机 + 1 片 ESP32-S3 + TCA9548A + 4 个 VL53L1X + 四路有刷电机驱动 + 4 个 36JP555；当前仅为硬件规划同步，尚未接入代码
 - 当前注意事项：`AGENTS.md` 与 `CLAUDE.md` 有用户侧未提交差异；除非明确要求，不应在常规任务中触碰
 
 ---
@@ -38,13 +39,23 @@
 
 ### P2：后续身体与展览阶段
 
-- [ ] 继续规划非移动身体阶段：身体外观、声音风格、显示/投影/光的呈现映射；更完整空间感知仍待设计
-- [ ] 物理移动、循路、避障、底盘控制和安全边界放到更后阶段，等非物理身体通道稳定后再实现
+- [ ] 按 `docs/references/hardware.md` 的单 Stranger 移动身体方案推进硬件原型；代码接入前先完成 ESP32-S3 + TCA9548A + 4 个 VL53L1X 的 ToF 避障验证
+- [ ] 身体外观、声音风格、小屏幕身体表面和移动行为映射仍待设计；不要把小屏幕做成观众侧 dashboard
+- [ ] 更完整的运动安全策略、IMU、编码器、稳定巡路和底盘控制闭环暂缓，等 ToF 避障和低速开环游走稳定后再实现
 - [ ] 部署认证、访客身份策略最终版与展期终止仪式仍待设计确认
 
 ---
 
 ## Changelog
+
+### 2026-05-18：单 Stranger 移动身体硬件方案同步
+
+- [x] 覆盖更新 `docs/references/hardware.md`：
+  - 移除旧的 Shopkeeper + Stranger 双实体、两片 ESP32、ESP32 I2S DAC / PCM5102A 音频方案
+  - 明确当前硬件目标为 Mac mini 随身上位机 + 单片 ESP32-S3 下位机
+  - 记录 TCA9548A + 4 个 VL53L1X ToF、四路有刷电机驱动、4 个 36JP555、Mac mini 直连小音响和小屏幕身体表面
+  - 当前阶段先完成 ToF 避障逻辑；IMU、编码器和更完整运动安全策略暂缓
+- [x] 未改动核心代码、配置或运行依赖
 
 ### 2026-05-13：交接文档与待办优先级整理
 

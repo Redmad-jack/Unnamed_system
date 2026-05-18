@@ -45,6 +45,9 @@ Status values: `in_progress`, `done`
 
 | File | Agent | Status | Started |
 |------|-------|--------|---------|
+| docs/references/hardware.md | Codex | done | 2026-05-18 10:27 CST |
+| docs/progress.md | Codex | done | 2026-05-18 10:27 CST |
+| agents/task-registry.md | Codex | done | 2026-05-18 10:27 CST |
 | README.md | Codex | done | 2026-05-13 09:29 CST |
 | docs/PRD.md | Codex | done | 2026-05-13 09:29 CST |
 | docs/APP_FLOW.md | Codex | done | 2026-05-13 09:29 CST |
