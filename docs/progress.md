@@ -11,7 +11,7 @@
 - 当前核心能力：Stranger 文本协议、状态机、短期/情节/反思记忆、匿名 visitor profile 与跨 session visitor 记忆召回、Visitor Identity & Session Gating V1、可解释/可选 embedding 召回、Memory Preview、managed memory proposal → commit、influence log / curation、Runtime Harness Trace、可选 YOLO person presence detection、可选火山 ASR 2.0 / TTS 2.0 双向流式 Audio Adapter
 - 当前验证基线：`PYTHONPATH=src python3 -m pytest -p no:debugging`，最近一次完整结果为 `364 passed`
 - 当前交接重点：下一步不再优先扩展 UI，而是先补齐完整声纹识别、视觉识别和访客库；随后做能力自我描述回归测试与行为测试调优
-- 当前硬件参考方案：`docs/references/hardware.md` 已更新为单 Stranger 移动身体：Mac mini 随身上位机 + 1 片 ESP32-S3 + TCA9548A + 4 个 VL53L1X + 四路有刷电机驱动 + 4 个 36JP555；当前仅为硬件规划同步，尚未接入代码
+- 当前硬件参考方案：`docs/references/hardware.md` 与 `docs/references/system_logic.md` 已更新为单 Stranger 移动身体：Mac mini 随身上位机 + 1 片 ESP32-S3 + TCA9548A + 4 个 VL53L1X + 四路有刷电机驱动 + 4 个 36JP555；当前仅为硬件规划同步，尚未接入代码
 - 当前注意事项：`AGENTS.md` 与 `CLAUDE.md` 有用户侧未提交差异；除非明确要求，不应在常规任务中触碰
 
 ---
@@ -47,6 +47,15 @@
 ---
 
 ## Changelog
+
+### 2026-05-18：软硬件系统逻辑文档重写
+
+- [x] 覆盖更新 `docs/references/system_logic.md`：
+  - 移除旧的双实体 Shopkeeper + Stranger、两片 ESP32、WiFi 音频流、PCM5102A 和耳机输出逻辑
+  - 重写为单 Stranger 移动身体拓扑：Mac mini 上位机、ESP32-S3 下位控制、TCA9548A + 4 个 VL53L1X、四路电机驱动、小音响和小屏幕身体表面
+  - 明确 ToF 避障闭环、运动命令流、语音输出流、小屏幕身体表面流和 USB Serial 协议草案
+  - 明确当前运动能力只能描述为低速开环移动、反应式游走和 ToF 近场避障，不能描述为精确定位或稳定巡路
+- [x] 未改动核心代码、配置或运行依赖
 
 ### 2026-05-18：单 Stranger 移动身体硬件方案同步
 
