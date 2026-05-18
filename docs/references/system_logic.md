@@ -180,6 +180,88 @@ ESP32-S3 不运行：
 | 声音输出 | 小音响 | 1 | Stranger 语音输出 | Mac mini audio |
 | 显示输出 | 小屏幕 | 1 | 身体状态表面 | Mac mini display / local rendering |
 
+### 3.4 当前接线总表
+
+具体引脚以 `docs/references/hardware.md` 的完整接线方案为准。本节只记录系统逻辑层需要稳定引用的 wiring map。
+
+#### Mac mini 连接
+
+| Mac mini | 连接对象 | 用途 |
+|---|---|---|
+| USB | ESP32-S3 USB | 下位机烧录、USB Serial 命令和 telemetry |
+| Audio / USB audio | 小音响 | Stranger 语音输出 |
+| HDMI / USB-C display | 小屏幕 | 身体状态表面 |
+| Power | Mac mini 电源方案 | 上位机供电 |
+
+#### ESP32-S3 推荐 pin map
+
+这些 GPIO 是当前推荐分配，接线前必须按实际 ESP32-S3 开发板丝印和板卡文档复核。
+
+| 功能 | 推荐 GPIO | 连接对象 |
+|---|---:|---|
+| I2C SDA | GPIO8 | TCA9548A `SDA` |
+| I2C SCL | GPIO9 | TCA9548A `SCL` |
+| M1 PWM | GPIO4 | 电机驱动 `P1` |
+| M1 DIR | GPIO10 | 电机驱动 `D1` |
+| M2 PWM | GPIO5 | 电机驱动 `P2` |
+| M2 DIR | GPIO11 | 电机驱动 `D2` |
+| M3 PWM | GPIO6 | 电机驱动 `P3` |
+| M3 DIR | GPIO12 | 电机驱动 `D3` |
+| M4 PWM | GPIO7 | 电机驱动 `P4` |
+| M4 DIR | GPIO13 | 电机驱动 `D4` |
+
+#### TCA9548A 与 ToF 通道
+
+| TCA9548A channel | VL53L1X sensor | 位置 |
+|---:|---|---|
+| 0 | `front_left` | 前左 |
+| 1 | `front_right` | 前右 |
+| 2 | `left` | 左侧 |
+| 3 | `right` | 右侧 |
+
+TCA9548A channel connector 与 VL53L1X module connector 的线序不同，必须交叉连接：
+
+| TCA9548A channel pin | VL53L1X pin |
+|---|---|
+| `GND` | `GND` |
+| `VCC` | `VIN` |
+| `SCLn` | `SCL` |
+| `SDAn` | `SDA` |
+
+#### 电机驱动控制侧
+
+| 电机 | 驱动板控制脚 | ESP32-S3 推荐 GPIO | 逻辑 |
+|---|---|---:|---|
+| M1 | `P1` | GPIO4 | PWM 调速 |
+| M1 | `D1` | GPIO10 | 方向 |
+| M2 | `P2` | GPIO5 | PWM 调速 |
+| M2 | `D2` | GPIO11 | 方向 |
+| M3 | `P3` | GPIO6 | PWM 调速 |
+| M3 | `D3` | GPIO12 | 方向 |
+| M4 | `P4` | GPIO7 | PWM 调速 |
+| M4 | `D4` | GPIO13 | 方向 |
+| signal `+V` | - | ESP32-S3 `3V3` | 隔离信号侧供电 |
+| signal `-V` | - | ESP32-S3 `GND` | 隔离信号侧地 |
+
+电机驱动逻辑：
+
+| P | D | 状态 |
+|---|---|---|
+| PWM | 0 | 正转 |
+| PWM | 1 | 反转 |
+| 0 | 0 或 1 | 制动 / 停止 |
+
+#### 电机与供电
+
+| 连接 | 说明 |
+|---|---|
+| 驱动板 M1-M4 输出 | 分别接 4 个 36JP555 电机 |
+| 驱动板 motor bus positive / negative | 接独立电机电源或电池 |
+| ESP32-S3 USB / 3V3 | 只供下位机逻辑、TCA9548A、VL53L1X 和驱动板信号侧 |
+| Mac mini / 小屏幕 / 小音响 | 使用 Mac mini 侧显示、音频和电源路径 |
+
+不要用 ESP32-S3 USB 给电机供电；不要把 motor bus positive 接到 ESP32-S3。
+
 ---
 
 ## 四、软件层详解

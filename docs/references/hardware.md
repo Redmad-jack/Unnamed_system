@@ -130,6 +130,219 @@ The ESP32-S3 must not run LLM logic, memory, policy selection, or artistic behav
 
 ---
 
+## Complete wiring plan
+
+This wiring plan is the current recommended plan for the first ESP32-S3 body controller build. The exact ESP32-S3 GPIO numbers must be verified against the actual development board before power-on, because some ESP32-S3 boards reserve different pins for flash, PSRAM, USB, bootstrapping, or onboard peripherals.
+
+### Wiring assumptions
+
+- Logic voltage is **3.3V**.
+- Mac mini connects to ESP32-S3 through USB for flashing, serial command, and first-stage debugging.
+- TCA9548A and VL53L1X sensor logic run from the ESP32-S3 3.3V rail.
+- The motor driver motor-bus supply is separate from ESP32-S3 logic power.
+- The motor driver's isolated signal side is powered by ESP32-S3 logic power through the driver's `+V` / `-V` control header.
+- Small speaker and small screen connect to the Mac mini, not to ESP32-S3, unless a later display design explicitly changes this.
+
+### Proposed ESP32-S3 pin map
+
+| Function | ESP32-S3 GPIO | Connected hardware | Notes |
+|---|---:|---|---|
+| I2C SDA | GPIO8 | TCA9548A `SDA` | Suggested only; confirm board support |
+| I2C SCL | GPIO9 | TCA9548A `SCL` | Suggested only; confirm board support |
+| M1 PWM | GPIO4 | Motor driver `P1` | LEDC PWM, start low duty |
+| M1 DIR | GPIO10 | Motor driver `D1` | `0` forward, `1` reverse per driver manual |
+| M2 PWM | GPIO5 | Motor driver `P2` | LEDC PWM |
+| M2 DIR | GPIO11 | Motor driver `D2` | Direction can be inverted in firmware if mechanical mounting requires |
+| M3 PWM | GPIO6 | Motor driver `P3` | LEDC PWM |
+| M3 DIR | GPIO12 | Motor driver `D3` | Direction can be inverted in firmware if needed |
+| M4 PWM | GPIO7 | Motor driver `P4` | LEDC PWM |
+| M4 DIR | GPIO13 | Motor driver `D4` | Direction can be inverted in firmware if needed |
+| Serial command | USB | Mac mini | Use USB CDC / serial monitor first |
+
+Avoid using ESP32-S3 pins that are tied to USB D+/D-, boot mode, flash, PSRAM, or board-specific onboard peripherals. If the chosen development board exposes a safer documented I2C pair, prefer the board's documented pair and update this table before firmware is finalized.
+
+### Mac mini wiring
+
+| Mac mini side | Connected device | Purpose |
+|---|---|---|
+| USB | ESP32-S3 USB port | Flashing, serial command, telemetry |
+| Audio output / USB audio | Small speaker | Stranger voice output |
+| HDMI / USB-C display output | Small screen | Stranger body-state surface |
+| Power input | Mac mini power supply / mobile power solution | Upper-computer power |
+
+The small screen is a body-state surface. It should display body modes and visual states, not developer logs or internal numeric state.
+
+### ESP32-S3 to TCA9548A wiring
+
+Use the TCA9548A board's upstream connector, labeled as `J9` in the referenced schematic.
+
+| TCA9548A upstream pin | ESP32-S3 connection | Notes |
+|---|---|---|
+| `GND` | ESP32-S3 `GND` | Shared logic ground |
+| `VCC` | ESP32-S3 `3V3` | Keep I2C at 3.3V |
+| `SCL` | ESP32-S3 I2C SCL, proposed GPIO9 | Verify actual board pin |
+| `SDA` | ESP32-S3 I2C SDA, proposed GPIO8 | Verify actual board pin |
+| `RESET` | Pull up to `3V3`, or optional ESP32 GPIO later | First build can keep it pulled high |
+
+TCA9548A address pins:
+
+| Pin | First-build setting | Result |
+|---|---|---|
+| `A0` | GND | Address bit 0 = 0 |
+| `A1` | GND | Address bit 1 = 0 |
+| `A2` | GND | Address bit 2 = 0, final I2C address `0x70` |
+
+If the expansion board switches already set `A0`, `A1`, and `A2`, keep all three at GND for the first build.
+
+### TCA9548A to VL53L1X wiring
+
+Use four downstream TCA9548A channels:
+
+| TCA9548A channel | Sensor name | Placement |
+|---:|---|---|
+| 0 | `front_left` | Front-left obstacle sensing |
+| 1 | `front_right` | Front-right obstacle sensing |
+| 2 | `left` | Left side clearance |
+| 3 | `right` | Right side clearance |
+
+The referenced TCA9548A channel connector order is:
+
+```text
+TCA9548A J1-J8
+1 GND
+2 VCC
+3 SCLn
+4 SDAn
+```
+
+The referenced VL53L1X module connector order is:
+
+```text
+VL53L1X P1
+1 VIN
+2 SDA
+3 SCL
+4 GND
+```
+
+Required cross-wiring for each ToF sensor:
+
+| TCA9548A channel pin | VL53L1X pin | Purpose |
+|---|---|---|
+| `GND` | `GND` | Logic ground |
+| `VCC` | `VIN` | Sensor module input power |
+| `SCLn` | `SCL` | I2C clock |
+| `SDAn` | `SDA` | I2C data |
+
+Do not use a straight 1-to-1 cable unless the cable has already been rewired to match this mapping.
+
+Optional VL53L1X pins:
+
+| Pin | Current plan |
+|---|---|
+| `XSHUT` | Leave unconnected for first build if module pull-up is present |
+| `GPIO1` | Leave unconnected for first build |
+
+Because TCA9548A isolates the sensors by channel, `XSHUT` address reassignment is not needed for the first four-sensor build.
+
+### ESP32-S3 to motor driver control wiring
+
+The motor driver control side uses one PWM line and one direction line per motor. The driver's isolated signal side must also receive logic power.
+
+Control power:
+
+| Motor driver signal header | ESP32-S3 connection | Notes |
+|---|---|---|
+| `+V` | ESP32-S3 `3V3` | Driver manual supports 3-5.5V signal-side supply |
+| `-V` | ESP32-S3 `GND` | Signal-side ground |
+
+Control signals:
+
+| Motor | Motor driver pin | ESP32-S3 GPIO | Signal type |
+|---|---|---:|---|
+| M1 | `P1` | GPIO4 | PWM |
+| M1 | `D1` | GPIO10 | Direction |
+| M2 | `P2` | GPIO5 | PWM |
+| M2 | `D2` | GPIO11 | Direction |
+| M3 | `P3` | GPIO6 | PWM |
+| M3 | `D3` | GPIO12 | Direction |
+| M4 | `P4` | GPIO7 | PWM |
+| M4 | `D4` | GPIO13 | Direction |
+
+Driver logic from the manual:
+
+| P line | D line | Motor state |
+|---|---|---|
+| PWM | 0 | Forward |
+| PWM | 1 | Reverse |
+| 0 | 0 or 1 | Brake / stop |
+
+Firmware should support per-motor direction inversion, because final forward movement depends on motor placement and wiring polarity.
+
+### Motor driver to 36JP555 motor wiring
+
+| Motor driver output | Motor | Notes |
+|---|---|---|
+| `M1` output terminal | 36JP555 motor 1 | Verify physical wheel position during bring-up |
+| `M2` output terminal | 36JP555 motor 2 | Verify physical wheel position during bring-up |
+| `M3` output terminal | 36JP555 motor 3 | Verify physical wheel position during bring-up |
+| `M4` output terminal | 36JP555 motor 4 | Verify physical wheel position during bring-up |
+
+Initial suggested physical naming:
+
+| Motor | Physical position |
+|---|---|
+| M1 | front_left wheel |
+| M2 | front_right wheel |
+| M3 | rear_left wheel |
+| M4 | rear_right wheel |
+
+If the mechanical layout uses a different order, update both wiring and firmware constants before movement testing.
+
+### Motor power wiring
+
+| Motor driver power terminal | Connection |
+|---|---|
+| Motor bus `VCC` / positive | Motor battery or regulated motor supply positive |
+| Motor bus `GND` / negative | Motor battery or regulated motor supply negative |
+
+Important boundaries:
+
+- Do not power motors from ESP32-S3 USB.
+- Do not connect motor bus positive to ESP32-S3.
+- The motor bus and ESP32 logic side are separated by the driver's isolated signal design; only connect ESP32 to the driver's signal-side `+V` / `-V` unless the driver vendor documentation requires another connection.
+- Keep motor wiring physically away from I2C sensor wiring where possible.
+- Twist motor leads or route them away from the ToF/I2C harness to reduce noise.
+
+### Power wiring overview
+
+| Subsystem | Power source | Notes |
+|---|---|---|
+| Mac mini | Dedicated Mac mini supply / mobile AC or battery solution | Upper computer |
+| ESP32-S3 | USB from Mac mini for first build | Also provides serial |
+| TCA9548A | ESP32-S3 `3V3` | Logic only |
+| VL53L1X x4 | TCA9548A channel `VCC` to sensor `VIN` | Keep logic at 3.3V |
+| Motor driver signal side | ESP32-S3 `3V3` and `GND` to `+V` / `-V` | Isolated signal input side |
+| Motor driver motor bus | Separate motor supply / battery | Must match 36JP555 and driver current demand |
+| Small speaker | Mac mini audio / USB / own power | Do not route through ESP32 |
+| Small screen | Mac mini HDMI / USB-C and screen power | Do not expose debug dashboard to visitors |
+
+### First power-on checklist
+
+1. Disconnect motor bus power.
+2. Power ESP32-S3 from USB.
+3. Confirm TCA9548A appears at I2C address `0x70`.
+4. Confirm each VL53L1X responds only on its selected TCA9548A channel.
+5. Confirm Serial telemetry prints four distance values.
+6. Connect motor driver signal-side `+V` / `-V`, still with motor bus power disconnected.
+7. Confirm PWM and DIR pins idle to safe values (`PWM = 0`).
+8. Connect one motor channel only with low current / low PWM for first motor test.
+9. Verify forward / reverse / brake for one motor.
+10. Repeat for M2-M4.
+11. Only after each motor channel is verified, test four-wheel low-speed motion with ToF obstacle gate enabled.
+
+---
+
 ## 4. ToF obstacle sensing
 
 ### Hardware

@@ -11,7 +11,7 @@
 - 当前核心能力：Stranger 文本协议、状态机、短期/情节/反思记忆、匿名 visitor profile 与跨 session visitor 记忆召回、Visitor Identity & Session Gating V1、可解释/可选 embedding 召回、Memory Preview、managed memory proposal → commit、influence log / curation、Runtime Harness Trace、可选 YOLO person presence detection、可选火山 ASR 2.0 / TTS 2.0 双向流式 Audio Adapter
 - 当前验证基线：`PYTHONPATH=src python3 -m pytest -p no:debugging`，最近一次完整结果为 `364 passed`
 - 当前交接重点：下一步不再优先扩展 UI，而是先补齐完整声纹识别、视觉识别和访客库；随后做能力自我描述回归测试与行为测试调优
-- 当前硬件参考方案：`docs/references/hardware.md` 与 `docs/references/system_logic.md` 已更新为单 Stranger 移动身体：Mac mini 随身上位机 + 1 片 ESP32-S3 + TCA9548A + 4 个 VL53L1X + 四路有刷电机驱动 + 4 个 36JP555；当前仅为硬件规划同步，尚未接入代码
+- 当前硬件参考方案：`docs/references/hardware.md` 与 `docs/references/system_logic.md` 已更新为单 Stranger 移动身体：Mac mini 随身上位机 + 1 片 ESP32-S3 + TCA9548A + 4 个 VL53L1X + 四路有刷电机驱动 + 4 个 36JP555，并已补充推荐接线方案；当前仅为硬件规划同步，尚未接入代码
 - 当前注意事项：`AGENTS.md` 与 `CLAUDE.md` 有用户侧未提交差异；除非明确要求，不应在常规任务中触碰
 
 ---
@@ -47,6 +47,15 @@
 ---
 
 ## Changelog
+
+### 2026-05-18：硬件接线方案补全
+
+- [x] 在 `docs/references/hardware.md` 补充完整接线方案：
+  - Mac mini、ESP32-S3、TCA9548A、4 个 VL53L1X、四路电机驱动、4 个 36JP555、小音响和小屏幕的连接关系
+  - 推荐 ESP32-S3 GPIO pin map、TCA9548A 与 VL53L1X 的交叉线序、电机驱动 PWM/DIR 接线、供电边界和首次上电检查
+  - 明确 GPIO 分配需按实际 ESP32-S3 开发板复核后再接线
+- [x] 在 `docs/references/system_logic.md` 增加系统逻辑层接线总表，和硬件文档保持一致
+- [x] 未改动核心代码、配置或运行依赖
 
 ### 2026-05-18：软硬件系统逻辑文档重写
 
