@@ -11,7 +11,7 @@
 - 当前核心能力：Stranger 文本协议、状态机、短期/情节/反思记忆、匿名 visitor profile 与跨 session visitor 记忆召回、Visitor Identity & Session Gating V1、可解释/可选 embedding 召回、Memory Preview、managed memory proposal → commit、influence log / curation、Runtime Harness Trace、可选 YOLO person presence detection、可选火山 ASR 2.0 / TTS 2.0 双向流式 Audio Adapter
 - 当前验证基线：`PYTHONPATH=src python3 -m pytest -p no:debugging`，最近一次完整结果为 `364 passed`
 - 当前交接重点：下一步不再优先扩展 UI，而是先补齐完整声纹识别、视觉识别和访客库；随后做能力自我描述回归测试与行为测试调优
-- 当前硬件参考方案：`docs/references/hardware.md` 与 `docs/references/system_logic.md` 已更新为单 Stranger 移动身体：Mac mini 随身上位机 + 1 片 ESP32-S3 + TCA9548A + 4 个 VL53L1X + 四路有刷电机驱动 + 4 个 36JP555，并已补充推荐接线方案；当前仅为硬件规划同步，尚未接入代码
+- 当前硬件参考方案：`docs/references/hardware.md` 与 `docs/references/system_logic.md` 已更新为单 Stranger 移动身体：Mac mini 随身上位机 + 1 片 ESP32-S3 + TCA9548A + 4 个 VL53L1X + 四路有刷电机驱动 + 4 个 36JP555，并已补充推荐接线方案；`firmware/stranger_esp32s3` 已新增 PlatformIO 下位机 smoke firmware，用于先验证串口、I2C/TCA 通道扫描和电机 PWM 引脚初始化
 - 当前注意事项：`AGENTS.md` 与 `CLAUDE.md` 有用户侧未提交差异；除非明确要求，不应在常规任务中触碰
 
 ---
@@ -47,6 +47,19 @@
 ---
 
 ## Changelog
+
+### 2026-05-19：ESP32-S3 PlatformIO 下位机工程初始化
+
+- [x] 新增 `firmware/stranger_esp32s3`：
+  - 使用 PlatformIO + Arduino framework，board target 为通用 `esp32-s3-devkitc-1`
+  - 针对当前 ESP32-S3 N16R8 / CH343 USB-UART 板，设置 16MB Flash 分区，并关闭 Arduino USB CDC on boot，优先走 USB-UART 串口
+  - `src/main.cpp` 初始化 GPIO8/GPIO9 I2C、TCA9548A `0x70` 扫描、4 个 VL53L1X 通道探测和 4 路电机 PWM/DIR 输出
+  - 所有电机 PWM 启动默认为 0，不会在烧录后主动移动
+- [x] 保持当前阶段只做下位机 smoke test，不接入上位机 Body Bridge，也不引入外部 ToF 库
+- [x] 本机验证：
+  - `~/.platformio/penv/bin/pio run -d firmware/stranger_esp32s3`
+  - `~/.platformio/penv/bin/pio run -d firmware/stranger_esp32s3 -t upload --upload-port /dev/cu.usbmodem5C4D0378301`
+  - 串口 `status` / `scan` 能返回；当前未检测到 TCA9548A `0x70`，需在接好传感器板后复测
 
 ### 2026-05-18：硬件接线方案补全
 

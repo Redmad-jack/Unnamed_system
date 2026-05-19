@@ -18,6 +18,9 @@ build/
 .venv/
 venv/
 
+# PlatformIO
+.pio/
+
 # Claude Code infrastructure (skills package manager)
 skills/
 skills-lock.json
