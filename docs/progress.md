@@ -48,6 +48,20 @@
 
 ## Changelog
 
+### 2026-05-19：电机驱动板初始化与安全测试命令
+
+- [x] 更新 `firmware/stranger_esp32s3/src/main.cpp` 的电机测试逻辑：
+  - 上电默认四路 PWM=0，DIR=0，不主动转动电机
+  - 新增 `arm` / `disarm`，必须先 `arm` 才能执行非零电机输出
+  - `motor <1-4> <duty -120..120> [duration_ms]` 改为定时脉冲，默认 500 ms，最长 2000 ms，到时自动停
+  - 新增 `test <1-4>` 和 `test all`，用于低速正反转检查四路通道与电机方向
+  - `motors off` 始终可用，用于立即关闭全部 PWM，并同时退出 armed 状态
+- [x] 当前仍不接入 TCA9548A / VL53L1X 读取逻辑之外的新库；TCA 未连接时可忽略 `scan` 的 `0x70` 缺失结果
+- [x] 本机验证：
+  - `~/.platformio/penv/bin/pio run -d firmware/stranger_esp32s3`
+  - `~/.platformio/penv/bin/pio run -d firmware/stranger_esp32s3 -t upload --upload-port /dev/cu.usbmodem5C4D0378301`
+  - 串口 `status` 返回四路电机 duty=0；未 `arm` 时 `motor 1 60 100` 被拒绝；`motors off` 可关闭输出
+
 ### 2026-05-19：ESP32-S3 PlatformIO 下位机工程初始化
 
 - [x] 新增 `firmware/stranger_esp32s3`：

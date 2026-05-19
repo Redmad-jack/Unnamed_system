@@ -35,7 +35,9 @@ The first smoke firmware does not use PSRAM. It sets the flash size to 16MB and 
 | M4 PWM | GPIO7 |
 | M4 DIR | GPIO13 |
 
-The motor outputs initialize to `PWM=0`. The firmware will not move motors unless a serial motor command is sent manually.
+The motor outputs initialize to `PWM=0`. The firmware will not move motors on boot.
+
+Motor commands are guarded by `arm`. After `arm`, the firmware allows short timed motor pulses for testing. The arm window expires after 60 seconds and all motor pulses auto-stop.
 
 ## Serial commands
 
@@ -45,19 +47,34 @@ Open the PlatformIO serial monitor at `115200`.
 help
 status
 scan
+arm
+disarm
 motors off
-motor <1-4> <duty -255..255>
+motor <1-4> <duty -120..120> [duration_ms]
+test <1-4> [duty 1..120] [duration_ms]
+test all [duty 1..120] [duration_ms]
 ```
 
 Examples:
 
 ```text
 scan
-motor 1 60
-motor 1 0
-motor 1 -60
+arm
+motor 1 70 500
+motor 1 -70 500
+test 1
+test all 60 400
 motors off
+disarm
 ```
+
+`motor 1 70 500` means: run motor 1 forward at duty 70 for 500 ms, then auto-stop.
+
+`test 1` means: run motor 1 forward briefly, stop, then reverse briefly, then stop.
+
+`motors off` immediately stops all PWM outputs and disarms the motor test gate.
+
+Use a low duty first. If a motor does not move at duty 60-70, increase gradually, but keep the first mechanical test below 120.
 
 Use `scan` after wiring the TCA9548A and VL53L1X sensors. The expected first result is TCA9548A at `0x70`, then VL53L1X at `0x29` on channels 0-3.
 
