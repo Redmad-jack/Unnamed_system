@@ -48,6 +48,15 @@
 
 ## Changelog
 
+### 2026-05-19：ESP32-S3 VS Code workspace 与 IntelliSense 修复
+
+- [x] 新增 `stranger_esp32s3.code-workspace`，让 VS Code 直接以 `firmware/stranger_esp32s3` 作为 PlatformIO 项目根打开
+- [x] 在 firmware README 说明：
+  - `src/main.cpp` 中 `#include <Arduino.h>` 与 `#include <Wire.h>` 应保留
+  - `.cpp` 不会像 Arduino IDE 的 `.ino` 一样自动补 `Arduino.h`
+  - 若编辑器红线仍存在，应执行 `PlatformIO: Rebuild IntelliSense Index`，必要时执行 `C/C++: Reset IntelliSense Database`
+- [x] 验证真实 PlatformIO 编译成功；当前问题属于编辑器索引，不是固件编译错误
+
 ### 2026-05-19：电机驱动板初始化与安全测试命令
 
 - [x] 更新 `firmware/stranger_esp32s3/src/main.cpp` 的电机测试逻辑：

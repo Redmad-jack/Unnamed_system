@@ -20,6 +20,37 @@ framework = arduino
 
 The first smoke firmware does not use PSRAM. It sets the flash size to 16MB and keeps serial on the CH343 USB-UART path.
 
+## VS Code / IntelliSense
+
+This PlatformIO project is nested under the main repository. If VS Code is opened at the repository root, C/C++ IntelliSense may not find `Arduino.h`, `Wire.h`, `Serial`, or Arduino types even though the firmware builds correctly.
+
+Open the firmware workspace instead:
+
+```text
+/Users/jackzhang/Unnamed_sys/stranger_esp32s3.code-workspace
+```
+
+Then run:
+
+```text
+PlatformIO: Rebuild IntelliSense Index
+```
+
+If red squiggles remain after the index rebuild, run:
+
+```text
+C/C++: Reset IntelliSense Database
+```
+
+Keep these includes in `src/main.cpp`:
+
+```cpp
+#include <Arduino.h>
+#include <Wire.h>
+```
+
+PlatformIO `.cpp` files do not get the same automatic `Arduino.h` insertion that Arduino IDE applies to `.ino` sketches.
+
 ## Wiring used by this firmware
 
 | Function | ESP32-S3 GPIO |
