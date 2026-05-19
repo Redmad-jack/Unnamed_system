@@ -11,7 +11,7 @@
 - 当前核心能力：Stranger 文本协议、状态机、短期/情节/反思记忆、匿名 visitor profile 与跨 session visitor 记忆召回、Visitor Identity & Session Gating V1、可解释/可选 embedding 召回、Memory Preview、managed memory proposal → commit、influence log / curation、Runtime Harness Trace、可选 YOLO person presence detection、可选火山 ASR 2.0 / TTS 2.0 双向流式 Audio Adapter
 - 当前验证基线：`PYTHONPATH=src python3 -m pytest -p no:debugging`，最近一次完整结果为 `364 passed`
 - 当前交接重点：下一步不再优先扩展 UI，而是先补齐完整声纹识别、视觉识别和访客库；随后做能力自我描述回归测试与行为测试调优
-- 当前硬件参考方案：`docs/references/hardware.md` 与 `docs/references/system_logic.md` 已更新为单 Stranger 移动身体：Mac mini 随身上位机 + 1 片 ESP32-S3 + TCA9548A + 4 个 VL53L1X + 四路有刷电机驱动 + 4 个 36JP555，并已补充推荐接线方案；`firmware/stranger_esp32s3` 已新增 PlatformIO 下位机固件，当前包含串口协议、I2C/TCA 扫描、四路电机测试入口和 4WD 差速底盘开环控制
+- 当前硬件参考方案：`docs/references/hardware.md` 与 `docs/references/system_logic.md` 已更新为单 Stranger 移动身体：Mac mini 随身上位机 + 1 片 ESP32-S3 + TCA9548A + 4 个 VL53L1X + 四路有刷电机驱动 + 4 个 36JP555，并已补充推荐接线方案；`firmware/stranger_esp32s3` 已新增 PlatformIO 下位机固件，当前包含串口协议、VL53L1X 距离 telemetry、ToF obstacle gate、四路电机测试入口、4WD 差速底盘开环控制和 ESP32 本地低速 roam
 - 当前注意事项：`AGENTS.md` 与 `CLAUDE.md` 有用户侧未提交差异；除非明确要求，不应在常规任务中触碰
 
 ---
@@ -39,7 +39,7 @@
 
 ### P2：后续身体与展览阶段
 
-- [ ] 按 `docs/references/hardware.md` 的单 Stranger 移动身体方案推进硬件原型；代码接入前先完成 ESP32-S3 + TCA9548A + 4 个 VL53L1X 的 ToF 避障验证
+- [ ] 按 `docs/references/hardware.md` 的单 Stranger 移动身体方案推进硬件原型；下一步在真实 TCA9548A + 4 个 VL53L1X 接线后验证 `scan` / `tof` telemetry、遮挡响应和 ToF obstacle gate
 - [ ] 身体外观、声音风格、小屏幕身体表面和移动行为映射仍待设计；不要把小屏幕做成观众侧 dashboard
 - [ ] 更完整的运动安全策略、IMU、编码器、稳定巡路和底盘控制闭环暂缓，等 ToF 避障和低速开环游走稳定后再实现
 - [ ] 部署认证、访客身份策略最终版与展期终止仪式仍待设计确认
@@ -47,6 +47,32 @@
 ---
 
 ## Changelog
+
+### 2026-05-19：ESP32 本地 ToF 反应式避障与低速 roam
+
+- [x] 将 `tof_scan.*` 从 I2C presence scan 扩展为 VL53L1X 距离读取：
+  - 使用 `pololu/VL53L1X@^1.3.1`
+  - 经 TCA9548A 轮询 `front_left` / `front_right` / `left` / `right`
+  - 新增 `tof` telemetry，输出每路 `distance_mm`、freshness、range status 和 timeout 状态
+- [x] 新增 ESP32 本地 `ObstacleGate`：
+  - `sensor_fault`：关键前向 ToF 缺失、超时或读数过旧时阻止底盘运动
+  - `obstacle_stop`：任一前向 ToF `< 250 mm` 时阻止常规 `drive` / `spin`
+  - `slow_zone`：前向 ToF `250-600 mm` 时限制 forward throttle，并按左右前方距离差添加转向偏置
+  - `clear`：允许低速开环底盘运动
+- [x] 新增本地 roam 模式：
+  - 文本命令：`roam start` / `roam stop`
+  - JSON 命令：`{"cmd":"roam","enabled":true}`
+  - 需要先 `arm`，并要求 `avoidance on`
+  - 只做慢速前进、慢区偏转、硬停后的短暂后退和转开，不做定位、转角或距离闭环
+- [x] 新增 `avoidance on/off` 与 JSON `{"cmd":"avoidance","enabled":true}`；`avoidance off` 仅用于调试，重启后默认恢复 on
+- [x] 当前 Mac 联动仍未接入；下一阶段 Mac 只消费 telemetry 并发送高层模式命令，不把安全 gate 放到 Mac 侧
+- [x] 本机验证：
+  - `~/.platformio/penv/bin/pio run -d firmware/stranger_esp32s3`
+  - `~/.platformio/penv/bin/pio run -d firmware/stranger_esp32s3 -t upload --upload-port /dev/cu.usbmodem5C4D0378301`
+  - 串口 `scan` 当前返回 `devices=0` 与 `tca9548a_not_found`，符合 TCA9548A 未连接状态
+  - 串口 `tof` 能返回四路 telemetry，当前 `tca_0x70=false` 且 obstacle state 为 `sensor_fault`
+  - 未 `arm` 时 `drive 60 0 100` 与 JSON roam start 均返回 `motors_disarmed`；四路电机 duty 保持 0
+  - `avoidance off/on`、`motors off`、`status` 可正常返回
 
 ### 2026-05-19：4WD 差速底盘驱动模块化重构
 
@@ -60,7 +86,7 @@
 - [x] 新增底盘控制命令：
   - 文本：`drive <throttle> <turn> [ms]`、`spin <duty> [ms]`
   - JSON：`{"cmd":"drive","throttle":70,"turn":-20,"ms":500}`、`{"cmd":"spin","duty":60,"ms":500}`
-- [x] 当前仍为低速开环差速控制，不引入编码器、IMU 或 ToF obstacle gate
+- [x] 该阶段仍为低速开环差速控制，当时尚未引入编码器、IMU 或 ToF obstacle gate；后续 ToF gate 已在 2026-05-19 的新条目中补上
 - [x] 本机验证：
   - `~/.platformio/penv/bin/pio run -d firmware/stranger_esp32s3`
   - `~/.platformio/penv/bin/pio run -d firmware/stranger_esp32s3 -t upload --upload-port /dev/cu.usbmodem5C4D0378301`

@@ -69,6 +69,8 @@ The motor outputs initialize to `PWM=0`. The firmware will not move motors on bo
 
 Motor commands are guarded by `arm`. After `arm`, the firmware allows short timed motor pulses for testing. The arm window expires after 60 seconds and all motor pulses auto-stop.
 
+The first local safety loop is ToF based. It does not estimate pose, distance traveled, or heading. Without encoders or IMU, motion is open-loop and low-speed only; the closed loop is limited to near-field obstacle reaction.
+
 ## Firmware structure
 
 The firmware is split by responsibility:
@@ -77,8 +79,10 @@ The firmware is split by responsibility:
 |---|---|
 | `main.cpp` | Boot sequence, main loop, heartbeat scheduling |
 | `motor_driver.*` | PWM/DIR output, arm/disarm, auto-stop, single-motor tests |
-| `chassis.*` | 4WD differential mixing for throttle + turn |
-| `tof_scan.*` | TCA9548A / VL53L1X bus scan helper |
+| `chassis.*` | 4WD differential mixing for throttle + turn, with obstacle gate filtering |
+| `tof_scan.*` | TCA9548A / VL53L1X channel scan and distance telemetry |
+| `obstacle_gate.*` | ToF safety state, slow-zone clipping, hard-stop blocking |
+| `roam_controller.*` | ESP32-local low-speed reactive roaming |
 | `serial_protocol.*` | Text and JSON serial command parsing |
 | `config.h` | Pin map, motor positions, limits, timing constants |
 
@@ -90,6 +94,11 @@ Open the PlatformIO serial monitor at `115200`.
 help
 status
 scan
+tof
+avoidance on
+avoidance off
+roam start
+roam stop
 arm
 disarm
 motors off
@@ -104,6 +113,7 @@ Examples:
 
 ```text
 scan
+tof
 arm
 motor 1 70 500
 motor 1 -70 500
@@ -112,6 +122,8 @@ drive 60 -20 500
 spin 60 500
 test 1
 test all 60 400
+roam start
+roam stop
 motors off
 disarm
 ```
@@ -136,18 +148,42 @@ right side -> M2 front_right + M4 rear_right
 
 If either side exceeds the max duty, both sides are scaled down proportionally.
 
+ToF obstacle gate:
+
+```text
+sensor_fault   -> block chassis drive/spin and keep PWM at zero
+obstacle_stop  -> block normal chassis drive/spin and keep PWM at zero
+slow_zone      -> cap forward throttle to 45 and bias away from the closer front sensor
+clear          -> allow low-speed open-loop movement
+```
+
+Thresholds are currently:
+
+| Zone | Distance |
+|---|---:|
+| hard stop | `< 250 mm` |
+| slow zone | `250-600 mm` |
+| clear | `> 600 mm` |
+
+`motor`, `test`, and `test all` remain bring-up tools. They still require `arm`, but they do not pass through the ToF obstacle gate so that individual motor channels can be verified during wiring.
+
 JSON commands are also accepted for the later Mac mini bridge:
 
 ```json
 {"cmd":"arm"}
 {"cmd":"status"}
+{"cmd":"tof"}
+{"cmd":"avoidance","enabled":true}
+{"cmd":"roam","enabled":true}
 {"cmd":"motor","m":1,"duty":70,"ms":500}
 {"cmd":"drive","throttle":70,"turn":-20,"ms":500}
 {"cmd":"spin","duty":60,"ms":500}
 {"cmd":"stop"}
 ```
 
-Use `scan` after wiring the TCA9548A and VL53L1X sensors. The expected first result is TCA9548A at `0x70`, then VL53L1X at `0x29` on channels 0-3.
+Use `scan` after wiring the TCA9548A and VL53L1X sensors. The expected first result is TCA9548A at `0x70`, then VL53L1X at `0x29` on channels 0-3. Use `tof` after `scan` succeeds to inspect per-channel `distance_mm`, freshness, and VL53L1X range status.
+
+`roam start` requires `arm` and `avoidance on`. Roam is local to the ESP32 and only uses conservative primitives: slow forward, slow-zone steering bias, hard-stop escape reverse, and turn-away.
 
 ## Local CLI notes
 

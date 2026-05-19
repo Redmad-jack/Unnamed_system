@@ -7,8 +7,13 @@
 namespace stranger {
 
 SerialProtocol::SerialProtocol(MotorDriver &motors,
-                               ChassisController &chassis, TofScanner &tof)
-    : motors_(motors), chassis_(chassis), tof_(tof) {}
+                               ChassisController &chassis, TofScanner &tof,
+                               ObstacleGate &gate, RoamController &roam)
+    : motors_(motors),
+      chassis_(chassis),
+      tof_(tof),
+      gate_(gate),
+      roam_(roam) {}
 
 void SerialProtocol::update() {
   while (Serial.available() > 0) {
@@ -27,6 +32,11 @@ void SerialProtocol::printHelp() {
   Serial.println("  help");
   Serial.println("  status");
   Serial.println("  scan");
+  Serial.println("  tof");
+  Serial.println("  avoidance on");
+  Serial.println("  avoidance off");
+  Serial.println("  roam start");
+  Serial.println("  roam stop");
   Serial.println("  arm");
   Serial.println("  disarm");
   Serial.println("  motors off");
@@ -36,6 +46,9 @@ void SerialProtocol::printHelp() {
   Serial.println("  test <1-4> [duty 1..120] [duration_ms]");
   Serial.println("  test all [duty 1..120] [duration_ms]");
   Serial.println("JSON examples:");
+  Serial.println("  {\"cmd\":\"tof\"}");
+  Serial.println("  {\"cmd\":\"avoidance\",\"enabled\":true}");
+  Serial.println("  {\"cmd\":\"roam\",\"enabled\":true}");
   Serial.println("  {\"cmd\":\"drive\",\"throttle\":70,\"turn\":-20,\"ms\":500}");
   Serial.println("  {\"cmd\":\"motor\",\"m\":1,\"duty\":70,\"ms\":500}");
 }
@@ -45,16 +58,24 @@ void SerialProtocol::printStatus() {
   Serial.printf(
       "{\"type\":\"status\",\"uptime_ms\":%lu,\"motor_armed\":%s,"
       "\"max_test_duty\":%d,\"tca_0x70\":%s,\"sda\":%u,\"scl\":%u,"
-      "\"last_left\":%d,\"last_right\":%d}\n",
+      "\"last_left\":%d,\"last_right\":%d,\"avoidance_enabled\":%s,"
+      "\"obstacle_state\":\"%s\",\"roam_enabled\":%s,\"roam_mode\":\"%s\"}\n",
       static_cast<unsigned long>(millis()), motors_.isArmed() ? "true" : "false",
       MOTOR_TEST_MAX_DUTY, tof_.tcaPresent() ? "true" : "false", PIN_I2C_SDA,
-      PIN_I2C_SCL, mix.left, mix.right);
+      PIN_I2C_SCL, mix.left, mix.right, gate_.enabled() ? "true" : "false",
+      gate_.stateName(), roam_.enabled() ? "true" : "false", roam_.mode());
   motors_.printStatus(Serial);
+  gate_.printState(Serial);
 }
 
 void SerialProtocol::printHeartbeat() {
   Serial.printf("{\"type\":\"heartbeat\",\"uptime_ms\":%lu}\n",
                 static_cast<unsigned long>(millis()));
+}
+
+void SerialProtocol::printTelemetry() {
+  tof_.printTelemetry(Serial);
+  gate_.printState(Serial);
 }
 
 void SerialProtocol::handleLine(String line) {
@@ -85,18 +106,40 @@ void SerialProtocol::handleText(String command) {
     tof_.scan(Serial);
     return;
   }
+  if (command == "tof") {
+    printTelemetry();
+    return;
+  }
+  if (command == "avoidance on") {
+    setAvoidance(true);
+    return;
+  }
+  if (command == "avoidance off") {
+    setAvoidance(false);
+    return;
+  }
+  if (command == "roam start") {
+    setRoam(true);
+    return;
+  }
+  if (command == "roam stop") {
+    setRoam(false);
+    return;
+  }
   if (command == "arm") {
     motors_.arm();
     printAck("arm");
     return;
   }
   if (command == "disarm") {
+    roam_.stop();
     motors_.disarm("manual");
     chassis_.resetLastMix();
     printAck("disarm");
     return;
   }
   if (command == "motors off") {
+    roam_.stop();
     motors_.disarm("motors_off");
     chassis_.resetLastMix();
     printAck("motors_off");
@@ -125,7 +168,7 @@ void SerialProtocol::handleText(String command) {
     if (chassis_.drive(throttle, turn, durationMs)) {
       printAck("drive");
     } else {
-      printError(motors_.lastError());
+      printError(chassis_.lastError());
     }
     return;
   }
@@ -136,7 +179,7 @@ void SerialProtocol::handleText(String command) {
     if (chassis_.spin(duty, durationMs)) {
       printAck("spin");
     } else {
-      printError(motors_.lastError());
+      printError(chassis_.lastError());
     }
     return;
   }
@@ -185,6 +228,7 @@ void SerialProtocol::handleJson(const String &line) {
   }
   if (strcmp(cmd, "disarm") == 0 || strcmp(cmd, "stop") == 0 ||
       strcmp(cmd, "motors_off") == 0) {
+    roam_.stop();
     motors_.disarm(cmd);
     chassis_.resetLastMix();
     printAck(cmd);
@@ -196,6 +240,18 @@ void SerialProtocol::handleJson(const String &line) {
   }
   if (strcmp(cmd, "scan") == 0) {
     tof_.scan(Serial);
+    return;
+  }
+  if (strcmp(cmd, "tof") == 0) {
+    printTelemetry();
+    return;
+  }
+  if (strcmp(cmd, "avoidance") == 0) {
+    setAvoidance(doc["enabled"] | true);
+    return;
+  }
+  if (strcmp(cmd, "roam") == 0) {
+    setRoam(doc["enabled"] | true);
     return;
   }
   if (strcmp(cmd, "motor") == 0) {
@@ -217,7 +273,7 @@ void SerialProtocol::handleJson(const String &line) {
     if (chassis_.drive(throttle, turn, durationMs)) {
       printAck("drive");
     } else {
-      printError(motors_.lastError());
+      printError(chassis_.lastError());
     }
     return;
   }
@@ -227,12 +283,30 @@ void SerialProtocol::handleJson(const String &line) {
     if (chassis_.spin(duty, durationMs)) {
       printAck("spin");
     } else {
-      printError(motors_.lastError());
+      printError(chassis_.lastError());
     }
     return;
   }
 
   printError("unknown_json_command");
+}
+
+void SerialProtocol::setAvoidance(bool enabled) {
+  if (!enabled) {
+    roam_.stop();
+  }
+  gate_.setEnabled(enabled);
+  Serial.printf("{\"type\":\"ack\",\"action\":\"avoidance\",\"enabled\":%s}\n",
+                enabled ? "true" : "false");
+}
+
+void SerialProtocol::setRoam(bool enabled) {
+  if (roam_.setEnabled(enabled)) {
+    Serial.printf("{\"type\":\"ack\",\"action\":\"roam\",\"enabled\":%s}\n",
+                  enabled ? "true" : "false");
+  } else {
+    printError(roam_.lastError());
+  }
 }
 
 void SerialProtocol::printAck(const char *action) {
