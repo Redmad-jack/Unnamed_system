@@ -11,7 +11,7 @@
 - 当前核心能力：Stranger 文本协议、状态机、短期/情节/反思记忆、匿名 visitor profile 与跨 session visitor 记忆召回、Visitor Identity & Session Gating V1、可解释/可选 embedding 召回、Memory Preview、managed memory proposal → commit、influence log / curation、Runtime Harness Trace、可选 YOLO person presence detection、可选火山 ASR 2.0 / TTS 2.0 双向流式 Audio Adapter
 - 当前验证基线：`PYTHONPATH=src python3 -m pytest -p no:debugging`，最近一次完整结果为 `364 passed`
 - 当前交接重点：下一步不再优先扩展 UI，而是先补齐完整声纹识别、视觉识别和访客库；随后做能力自我描述回归测试与行为测试调优
-- 当前硬件参考方案：`docs/references/hardware.md` 与 `docs/references/system_logic.md` 已更新为单 Stranger 移动身体：Mac mini 随身上位机 + 1 片 ESP32-S3 + TCA9548A + 4 个 VL53L1X + 四路有刷电机驱动 + 4 个 36JP555，并已补充推荐接线方案；`firmware/stranger_esp32s3` 已新增 PlatformIO 下位机 smoke firmware，用于先验证串口、I2C/TCA 通道扫描和电机 PWM 引脚初始化
+- 当前硬件参考方案：`docs/references/hardware.md` 与 `docs/references/system_logic.md` 已更新为单 Stranger 移动身体：Mac mini 随身上位机 + 1 片 ESP32-S3 + TCA9548A + 4 个 VL53L1X + 四路有刷电机驱动 + 4 个 36JP555，并已补充推荐接线方案；`firmware/stranger_esp32s3` 已新增 PlatformIO 下位机固件，当前包含串口协议、I2C/TCA 扫描、四路电机测试入口和 4WD 差速底盘开环控制
 - 当前注意事项：`AGENTS.md` 与 `CLAUDE.md` 有用户侧未提交差异；除非明确要求，不应在常规任务中触碰
 
 ---
@@ -47,6 +47,24 @@
 ---
 
 ## Changelog
+
+### 2026-05-19：4WD 差速底盘驱动模块化重构
+
+- [x] 将 `firmware/stranger_esp32s3/src/main.cpp` 拆分为模块化固件结构：
+  - `motor_driver.*`：四路 PWM/DIR、arm/disarm、自动停、单电机测试
+  - `chassis.*`：4WD 差速底盘 `throttle + turn` 混控
+  - `tof_scan.*`：TCA9548A / VL53L1X 扫描辅助
+  - `serial_protocol.*`：文本命令与 JSON 命令解析
+  - `config.h`：GPIO、M1-M4 物理位置、限幅和时间常量
+- [x] 保留原有测试入口：`motor`、`test`、`test all`、`motors off`
+- [x] 新增底盘控制命令：
+  - 文本：`drive <throttle> <turn> [ms]`、`spin <duty> [ms]`
+  - JSON：`{"cmd":"drive","throttle":70,"turn":-20,"ms":500}`、`{"cmd":"spin","duty":60,"ms":500}`
+- [x] 当前仍为低速开环差速控制，不引入编码器、IMU 或 ToF obstacle gate
+- [x] 本机验证：
+  - `~/.platformio/penv/bin/pio run -d firmware/stranger_esp32s3`
+  - `~/.platformio/penv/bin/pio run -d firmware/stranger_esp32s3 -t upload --upload-port /dev/cu.usbmodem5C4D0378301`
+  - 串口验证未 `arm` 时文本 `drive 60 0 100` 与 JSON `{"cmd":"drive","throttle":60,"turn":0,"ms":100}` 均返回 `motors_disarmed`；四路电机 duty 保持 0；`last_left/right` 保持 0
 
 ### 2026-05-19：ESP32-S3 VS Code workspace 与 IntelliSense 修复
 

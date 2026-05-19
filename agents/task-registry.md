@@ -45,6 +45,20 @@ Status values: `in_progress`, `done`
 
 | File | Agent | Status | Started |
 |------|-------|--------|---------|
+| firmware/stranger_esp32s3/platformio.ini | Codex | done | 2026-05-19 11:35 CST |
+| firmware/stranger_esp32s3/src/main.cpp | Codex | done | 2026-05-19 11:35 CST |
+| firmware/stranger_esp32s3/src/config.h | Codex | done | 2026-05-19 11:35 CST |
+| firmware/stranger_esp32s3/src/motor_driver.h | Codex | done | 2026-05-19 11:35 CST |
+| firmware/stranger_esp32s3/src/motor_driver.cpp | Codex | done | 2026-05-19 11:35 CST |
+| firmware/stranger_esp32s3/src/chassis.h | Codex | done | 2026-05-19 11:35 CST |
+| firmware/stranger_esp32s3/src/chassis.cpp | Codex | done | 2026-05-19 11:35 CST |
+| firmware/stranger_esp32s3/src/tof_scan.h | Codex | done | 2026-05-19 11:35 CST |
+| firmware/stranger_esp32s3/src/tof_scan.cpp | Codex | done | 2026-05-19 11:35 CST |
+| firmware/stranger_esp32s3/src/serial_protocol.h | Codex | done | 2026-05-19 11:35 CST |
+| firmware/stranger_esp32s3/src/serial_protocol.cpp | Codex | done | 2026-05-19 11:35 CST |
+| firmware/stranger_esp32s3/README.md | Codex | done | 2026-05-19 11:35 CST |
+| docs/progress.md | Codex | done | 2026-05-19 11:35 CST |
+| agents/task-registry.md | Codex | done | 2026-05-19 11:35 CST |
 | stranger_esp32s3.code-workspace | Codex | done | 2026-05-19 11:10 CST |
 | firmware/stranger_esp32s3/README.md | Codex | done | 2026-05-19 11:10 CST |
 | docs/progress.md | Codex | done | 2026-05-19 11:10 CST |

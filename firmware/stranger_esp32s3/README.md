@@ -1,6 +1,6 @@
 # Stranger ESP32-S3 firmware
 
-This is the first PlatformIO firmware scaffold for the Stranger lower body controller.
+This is the PlatformIO firmware for the Stranger lower body controller.
 
 ## Board
 
@@ -18,7 +18,7 @@ board = esp32-s3-devkitc-1
 framework = arduino
 ```
 
-The first smoke firmware does not use PSRAM. It sets the flash size to 16MB and keeps serial on the CH343 USB-UART path.
+The current firmware does not use PSRAM. It sets the flash size to 16MB and keeps serial on the CH343 USB-UART path.
 
 ## VS Code / IntelliSense
 
@@ -42,14 +42,13 @@ If red squiggles remain after the index rebuild, run:
 C/C++: Reset IntelliSense Database
 ```
 
-Keep these includes in `src/main.cpp`:
+Keep `Arduino.h` included in every `.cpp` file that directly uses Arduino APIs:
 
 ```cpp
 #include <Arduino.h>
-#include <Wire.h>
 ```
 
-PlatformIO `.cpp` files do not get the same automatic `Arduino.h` insertion that Arduino IDE applies to `.ino` sketches.
+PlatformIO `.cpp` files do not get the same automatic `Arduino.h` insertion that Arduino IDE applies to `.ino` sketches. I2C code lives in `tof_scan.*`, so `Wire.h` is included there instead of in `main.cpp`.
 
 ## Wiring used by this firmware
 
@@ -70,6 +69,19 @@ The motor outputs initialize to `PWM=0`. The firmware will not move motors on bo
 
 Motor commands are guarded by `arm`. After `arm`, the firmware allows short timed motor pulses for testing. The arm window expires after 60 seconds and all motor pulses auto-stop.
 
+## Firmware structure
+
+The firmware is split by responsibility:
+
+| Module | Responsibility |
+|---|---|
+| `main.cpp` | Boot sequence, main loop, heartbeat scheduling |
+| `motor_driver.*` | PWM/DIR output, arm/disarm, auto-stop, single-motor tests |
+| `chassis.*` | 4WD differential mixing for throttle + turn |
+| `tof_scan.*` | TCA9548A / VL53L1X bus scan helper |
+| `serial_protocol.*` | Text and JSON serial command parsing |
+| `config.h` | Pin map, motor positions, limits, timing constants |
+
 ## Serial commands
 
 Open the PlatformIO serial monitor at `115200`.
@@ -82,6 +94,8 @@ arm
 disarm
 motors off
 motor <1-4> <duty -120..120> [duration_ms]
+drive <throttle -120..120> <turn -120..120> [duration_ms]
+spin <duty -120..120> [duration_ms]
 test <1-4> [duty 1..120] [duration_ms]
 test all [duty 1..120] [duration_ms]
 ```
@@ -93,6 +107,9 @@ scan
 arm
 motor 1 70 500
 motor 1 -70 500
+drive 70 0 500
+drive 60 -20 500
+spin 60 500
 test 1
 test all 60 400
 motors off
@@ -106,6 +123,29 @@ disarm
 `motors off` immediately stops all PWM outputs and disarms the motor test gate.
 
 Use a low duty first. If a motor does not move at duty 60-70, increase gradually, but keep the first mechanical test below 120.
+
+4WD differential mixing:
+
+```text
+left  = throttle + turn
+right = throttle - turn
+
+left side  -> M1 front_left + M3 rear_left
+right side -> M2 front_right + M4 rear_right
+```
+
+If either side exceeds the max duty, both sides are scaled down proportionally.
+
+JSON commands are also accepted for the later Mac mini bridge:
+
+```json
+{"cmd":"arm"}
+{"cmd":"status"}
+{"cmd":"motor","m":1,"duty":70,"ms":500}
+{"cmd":"drive","throttle":70,"turn":-20,"ms":500}
+{"cmd":"spin","duty":60,"ms":500}
+{"cmd":"stop"}
+```
 
 Use `scan` after wiring the TCA9548A and VL53L1X sensors. The expected first result is TCA9548A at `0x70`, then VL53L1X at `0x29` on channels 0-3.
 
