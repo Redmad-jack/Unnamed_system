@@ -330,15 +330,16 @@
         onSessionTypeChange: applySessionType,
         armState,
         onArm: armExhibition,
-        onSave: saveConversation,
-        onReset: resetMemory,
         onConfig: () => setConfigOpen(true),
       }),
       h("main", { className, style: gridStyle },
         h(Panel, { title: "Entity State", className: "state-panel" }, h(EntityState)),
         h(Panel, { title: "Vision", className: "vision-panel", bodyClassName: "vision-body" }, h(VisionPanel)),
         h(Panel, { title: "Dialog", className: "dialog-panel", bodyClassName: "dialog-panel" }, h(DialogPanel)),
-        h(Panel, { title: "Memory System", className: "memory-panel" }, h(MemorySummary)),
+        h(Panel, { title: "Memory System", className: "memory-panel" }, h(MemorySummary, {
+          onSave: saveConversation,
+          onReset: resetMemory,
+        })),
         h(Panel, { title: "Right Sidebar", className: "runtime-panel", bodyClassName: "sidebar-body" }, h(RuntimeSidebar)),
         h("div", {
           className: `resize-handle vertical ${resizeMode === "left" ? "active" : ""}`,
@@ -363,9 +364,10 @@
     );
   }
 
-  function Header({ health, sessionType, onSessionTypeChange, armState, onArm, onSave, onReset, onConfig }) {
+  function Header({ health, sessionType, onSessionTypeChange, armState, onArm, onConfig }) {
     const status = health && health.status ? health.status : "connecting";
     const armStatus = armState && armState.status ? armState.status : "idle";
+    const armLabel = armStatus === "arming" ? "ARMING" : `ARM: ${armStatus.toUpperCase()}`;
     return h("header", { className: "app-header" },
       h("h1", { className: "app-title" }, "CONSCIOUS ENTITY — DEV PANEL"),
       h("span", { className: `badge ${status === "ok" ? "ok" : status === "connecting" ? "" : "err"}` }, status.toUpperCase()),
@@ -378,19 +380,13 @@
         h("option", { value: "test" }, "test"),
         h("option", { value: "exhibition" }, "exhibition"),
       ),
-      h("button", { className: "btn-sm", onClick: onSave }, "Save Dialog"),
-      h("button", { className: "btn-sm", onClick: onReset }, "Reset Memory / New Session"),
       h("button", { className: "btn-sm", onClick: onConfig }, "YAML Config"),
       h("button", {
-        className: armStatus === "ready" ? "btn-sm active" : "btn-sm",
+        className: armStatus === "ready" ? "btn-sm active arm-button" : `btn-sm arm-button ${armStatus === "error" ? "err-action" : ""}`,
         onClick: onArm,
         disabled: armStatus === "arming",
         title: armState ? armState.detail : "",
-      }, armStatus === "arming" ? "Arming…" : "Exhibition Arm"),
-      h("span", {
-        className: `badge arm-badge ${armStatus === "ready" ? "ok" : armStatus === "error" ? "err" : ""}`,
-        title: armState ? armState.detail : "",
-      }, armStatus.toUpperCase()),
+      }, armLabel),
       h("div", { className: "header-spacer" }),
       h("span", { className: "session-label" }, health && health.session_id ? `session: ${compactId(health.session_id)} · ${sessionType} · visitor: ${health.visitor_id ? compactId(health.visitor_id) : "none"}` : "session: —"),
     );
@@ -986,7 +982,7 @@
     );
   }
 
-  function MemorySummary() {
+  function MemorySummary({ onSave, onReset }) {
     const [summary, setSummary] = useState(null);
     const [previewQuery, setPreviewQuery] = useState("");
     const [preview, setPreview] = useState(null);
@@ -1031,6 +1027,10 @@
     }, [previewQuery]);
 
     return h(React.Fragment, null,
+      h("div", { className: "toolbar memory-actions" },
+        h("button", { className: "btn-sm", onClick: onSave }, "Save Dialog"),
+        h("button", { className: "btn-sm", onClick: onReset }, "Reset Memory / New Session"),
+      ),
       summary ? h("table", null, h("tbody", null,
         h("tr", null, h("td", null, "Episodic events"), h("td", null, summary.episodic)),
         h("tr", null, h("td", null, "Unreflected"), h("td", null, summary.unreflected)),

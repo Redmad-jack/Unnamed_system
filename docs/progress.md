@@ -59,7 +59,8 @@
 - [x] 开发者面板顶栏新增 `Exhibition Arm`：
   - 开展前由操作员在 Safari / Chrome 中点击一次
   - 统一请求 camera / microphone 权限，并用静音音频解锁 playback
-  - 顶栏显示 `IDLE / ARMING / READY / ERROR`，错误详情保存在按钮 title 中
+  - 顶栏用单个紧凑按钮显示 `ARM: IDLE / ARMING / ARM: READY / ARM: ERROR`，错误详情保存在按钮 title 中
+- [x] 顶栏减负：`Save Dialog` 与 `Reset Memory / New Session` 移到 `Memory System` 面板顶部，靠近 memory summary
 - [x] 新增 `GET /api/v1/vision/cameras`，扫描本机 OpenCV 可打开的 camera index，用于现场选择可用通道
 - [x] 新增 `POST /api/v1/vision/config`，支持运行期切换 `camera_index`；若 vision worker 正在运行，会释放旧摄像头并按新 index 重启
 - [x] OpenCV 打开摄像头时优先尝试 macOS AVFoundation backend，再回退默认 backend，并在 status / Realtime Recognition 中暴露 camera open attempts

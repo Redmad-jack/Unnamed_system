@@ -66,7 +66,9 @@ button, input, select, textarea {
 }
 .badge.ok { border-color: var(--green); color: var(--green); }
 .badge.err { border-color: var(--red); color: var(--red); }
-.arm-badge { max-width: 80px; overflow: hidden; text-overflow: ellipsis; }
+.arm-button { min-width: 76px; text-align: center; }
+.btn-sm.err-action { border-color: var(--red); color: var(--red); }
+.memory-actions { margin-bottom: 8px; }
 
 .btn-sm {
   background: var(--surface2);

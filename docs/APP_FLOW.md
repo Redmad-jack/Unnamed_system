@@ -169,11 +169,13 @@ python scripts/inspect_state.py
 
 **当前 API 方式：** FastAPI `/api/v1/state` 端点 → 本地开发者 Web 看板（观众不可见）
 
-**Exhibition Arm：** 开发者 Web 看板顶栏提供 `Exhibition Arm`。开展前由操作员在 Safari / Chrome 中点击一次，用浏览器手势统一请求 camera、microphone，并播放静音音频解锁 playback；状态以 `IDLE / ARMING / READY / ERROR` 显示在顶栏。这个按钮只处理浏览器权限和播放解锁，不创建 visitor、不切换 session、不替代 Vision / Audio 面板的运行状态。
+**Exhibition Arm：** 开发者 Web 看板顶栏提供紧凑的 `ARM: IDLE / ARMING / ARM: READY / ARM: ERROR` 按钮。开展前由操作员在 Safari / Chrome 中点击一次，用浏览器手势统一请求 camera、microphone，并播放静音音频解锁 playback。这个按钮只处理浏览器权限和播放解锁，不创建 visitor、不切换 session、不替代 Vision / Audio 面板的运行状态。
 
 **Vision 工作区：** 开发者 Web 看板左侧 `Entity State` 下方显示 Vision 面板，主操作流收束为 `Scan Cameras -> Select Camera -> Connect -> Stop`。面板默认使用浏览器摄像头采集并上传帧给后端 YOLO 识别，避免 Python/OpenCV 在 macOS 下没有摄像头权限时阻塞现场联调；OpenCV camera index / open attempts 仅作为状态诊断信息保留。面板显示 runtime status、模型路径状态、输入来源、FPS、detections、最近 vision events，并通过 WebSocket JPEG frames 显示后端标注后的实时画面。
 
 **Audio 工作区：** 开发者 Web 看板 `Runtime` 区域显示 Audio Adapter，可启动/停止浏览器麦克风，查看 provider、disabled reason、STT partial/final transcript、TTS stream id 和错误，并将 final transcript 送入现有对话回合。
+
+**Memory System 工作区：** `Save Dialog` 与 `Reset Memory / New Session` 放在 Memory System 面板顶部，避免顶栏拥挤，并让 session / memory 操作靠近 memory 状态摘要。
 
 **Harness 工作区：** 开发者 Web 看板 `Runtime` 区域显示最近一轮 Harness layer 状态、decision 和摘要。Prompt Harness 只显示 partial 名称与摘要，不显示完整 hidden prompt。
 
