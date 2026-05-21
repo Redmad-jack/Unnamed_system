@@ -389,25 +389,32 @@
     const scanCameras = useCallback(async () => {
       setScanning(true);
       try {
-        if (!navigator.mediaDevices || !navigator.mediaDevices.enumerateDevices) {
-          throw new Error("Browser camera enumeration is not available.");
+        if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+          throw new Error("Browser camera capture is not available.");
         }
-        let devices = await navigator.mediaDevices.enumerateDevices();
+        let devices = navigator.mediaDevices.enumerateDevices
+          ? await navigator.mediaDevices.enumerateDevices()
+          : [];
         let permissionStream = null;
         const hasNamedCamera = devices.some((device) => device.kind === "videoinput" && device.label);
-        if (!hasNamedCamera && !browserStreamRef.current && navigator.mediaDevices.getUserMedia) {
+        if (!hasNamedCamera && !browserStreamRef.current) {
           permissionStream = await navigator.mediaDevices.getUserMedia({ audio: false, video: true });
-          devices = await navigator.mediaDevices.enumerateDevices();
+          devices = navigator.mediaDevices.enumerateDevices
+            ? await navigator.mediaDevices.enumerateDevices()
+            : [];
         }
         if (permissionStream) {
           permissionStream.getTracks().forEach((track) => track.stop());
         }
-        const cameras = devices
+        const scannedCameras = devices
           .filter((device) => device.kind === "videoinput")
           .map((device, index) => ({
             deviceId: device.deviceId,
             label: device.label || `Camera ${index + 1}`,
           }));
+        const cameras = scannedCameras.length
+          ? scannedCameras
+          : [{ deviceId: "", label: "Default Camera" }];
         setCameraOptions(cameras);
         if (cameras.length && !cameras.some((item) => item.deviceId === selectedCameraId)) {
           setSelectedCameraId(cameras[0].deviceId);

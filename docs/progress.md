@@ -57,6 +57,7 @@
 - [x] 新增 Browser Camera fallback：`POST /api/v1/vision/frame` 接收浏览器上传的 JPEG/PNG 帧，由已授权浏览器负责摄像头采集，后端只做解码、YOLO 检测和 snapshot 发布
 - [x] Vision 面板显示输入来源 `opencv` / `browser`，可在 Python/OpenCV 被 macOS 拒绝摄像头权限时继续联调识别链路
 - [x] Vision 面板主操作流已收束为 `Scan Cameras -> Select Camera -> Connect -> Stop`；OpenCV direct start / reconnect / apply camera / browser fallback 分裂按钮不再出现在主界面
+- [x] Browser camera scan 不再强依赖 `enumerateDevices()` 返回列表；枚举为空时保留 `Default Camera`，`Connect` 会直接调用系统默认摄像头
 - [x] 验证：
   - `node --check src/conscious_entity/interfaces/static/dashboard.js`
   - `PYTHONPATH=src python3 -m py_compile src/conscious_entity/vision/runtime.py src/conscious_entity/interfaces/api_routes.py src/conscious_entity/interfaces/api.py`
