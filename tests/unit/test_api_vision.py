@@ -7,6 +7,7 @@ import pytest
 from fastapi import HTTPException
 
 from conscious_entity.interfaces import api
+from conscious_entity.interfaces.api_models import VisionRuntimeConfigRequest
 from conscious_entity.vision import VisionConfigurationError
 
 
@@ -15,6 +16,7 @@ class _FakeVisionManager:
         self.start_error = start_error
         self.started = False
         self.stopped = False
+        self.camera_index = 0
 
     def status(self):
         return {
@@ -33,6 +35,20 @@ class _FakeVisionManager:
     def stop(self):
         self.stopped = True
         return self.status()
+
+    def scan_cameras(self, *, max_index=5):
+        return {
+            "selected_index": self.camera_index,
+            "running": self.started and not self.stopped,
+            "cameras": [
+                {"index": index, "opened": index == 1, "frame_readable": index == 1}
+                for index in range(max_index + 1)
+            ],
+        }
+
+    def set_camera_index(self, camera_index):
+        self.camera_index = camera_index
+        return {"config": {"camera_index": camera_index}, "running": False}
 
 
 def _request(manager):
@@ -67,6 +83,28 @@ def test_vision_stop_delegates_to_manager():
 
     assert manager.stopped is True
     assert result["running"] is False
+
+
+def test_vision_cameras_lists_probe_results():
+    manager = _FakeVisionManager()
+
+    result = asyncio.run(api.vision_cameras(_request(manager), max_index=2))
+
+    assert result["selected_index"] == 0
+    assert len(result["cameras"]) == 3
+    assert result["cameras"][1]["opened"] is True
+
+
+def test_vision_config_update_changes_camera_index():
+    manager = _FakeVisionManager()
+
+    result = asyncio.run(api.vision_config_update(
+        VisionRuntimeConfigRequest(camera_index=2),
+        _request(manager),
+    ))
+
+    assert manager.camera_index == 2
+    assert result["config"]["camera_index"] == 2
 
 
 def test_identity_status_reports_controller_state():

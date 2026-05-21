@@ -64,6 +64,10 @@ class VisitorSelectRequest(BaseModel):
     visitor_id: Optional[str] = None
 
 
+class VisionRuntimeConfigRequest(BaseModel):
+    camera_index: int
+
+
 class IdentityConfigRequest(BaseModel):
     auto_bind_high_confidence: Optional[bool] = None
 

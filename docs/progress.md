@@ -8,8 +8,8 @@
 
 - 当前进行中：无
 - 当前可运行形态：CLI + 本地 FastAPI 开发者 API + Web 看板 + 可选 Vision 面板 + 可选 Audio Adapter + `/visitor` 临时身体表面；观众侧最终呈现方向是身体，不是传统 UI
-- 当前核心能力：Stranger 文本协议、状态机、短期/情节/反思记忆、匿名 visitor profile 与跨 session visitor 记忆召回、Visitor Identity & Session Gating V1（含结构化 match result、candidate confirmation 和运行期 auto-bind 调试开关）、可解释/可选 embedding 召回、Memory Preview、managed memory proposal → commit、influence log / curation、Runtime Harness Trace、JSONL 端到端 latency 日志、可选 YOLO person presence detection、可选火山 ASR 2.0 / TTS 2.0 双向流式 Audio Adapter
-- 当前验证基线：`PYTHONPATH=src python3 -m pytest -p no:debugging`，最近一次完整结果为 `381 passed`
+- 当前核心能力：Stranger 文本协议、状态机、短期/情节/反思记忆、匿名 visitor profile 与跨 session visitor 记忆召回、Visitor Identity & Session Gating V1（含结构化 match result、candidate confirmation 和运行期 auto-bind 调试开关）、可解释/可选 embedding 召回、Memory Preview、managed memory proposal → commit、influence log / curation、Runtime Harness Trace、JSONL 端到端 latency 日志、可选 YOLO person presence detection（含运行期 camera index 扫描/切换）、可选火山 ASR 2.0 / TTS 2.0 双向流式 Audio Adapter
+- 当前验证基线：`PYTHONPATH=src python3 -m pytest -p no:debugging`，最近一次完整结果为 `385 passed`
 - 当前交接重点：下一步不再优先扩展 UI，而是先补齐完整声纹识别、视觉识别和访客库；随后做能力自我描述回归测试与行为测试调优
 - 当前硬件参考方案：`docs/references/hardware.md` 与 `docs/references/system_logic.md` 已更新为单 Stranger 移动身体：Mac mini 随身上位机 + 1 片 ESP32-S3 + TCA9548A + 4 个 VL53L1X + 四路有刷电机驱动 + 4 个 36JP555，并已补充推荐接线方案；`firmware/stranger_esp32s3` 已新增 PlatformIO 下位机固件，当前包含串口协议、VL53L1X 距离 telemetry、ToF obstacle gate、四路电机测试入口、4WD 差速底盘开环控制和 ESP32 本地低速 roam
 - 当前注意事项：`AGENTS.md` 与 `CLAUDE.md` 有用户侧未提交差异；除非明确要求，不应在常规任务中触碰
@@ -47,6 +47,14 @@
 ---
 
 ## Changelog
+
+### 2026-05-21：Vision camera index 选择与打开诊断
+
+- [x] 新增 `GET /api/v1/vision/cameras`，扫描本机 OpenCV 可打开的 camera index，用于现场选择可用通道
+- [x] 新增 `POST /api/v1/vision/config`，支持运行期切换 `camera_index`；若 vision worker 正在运行，会释放旧摄像头并按新 index 重启
+- [x] OpenCV 打开摄像头时优先尝试 macOS AVFoundation backend，再回退默认 backend，并在 status / Realtime Recognition 中暴露 camera open attempts
+- [x] 开发者 Vision 面板新增 Scan Cameras、camera selector 和 Apply Camera，便于修复 index 0 被占用或不可用的问题
+- [x] 验证：`PYTHONPATH=src python3 -m pytest -p no:debugging`，`385 passed`
 
 ### 2026-05-21：用户可感知端到端 latency 日志 v2
 

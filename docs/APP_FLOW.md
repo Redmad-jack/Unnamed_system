@@ -42,7 +42,7 @@ Identity & Session Gating 记录 encounter_candidate，但不创建 session / �
 **成功状态：** 系统就绪，等待访客输入
 **错误状态：** 数据库连接失败 → fallback 到默认初始状态，记录错误日志
 
-**当前视觉入口：** 可选 vision runtime 使用 Mac 摄像头 + 本地 YOLO 模型，只检测 `person` class。稳定检测到人会触发 `USER_ENTERED`，人离开超过阈值会触发 `USER_LEFT`，持续存在但长时间没有文字交互会触发 `LONG_SILENCE_DETECTED`。这些事件同时进入 `loop.handle_system_event(...)` 和 Identity & Session Gating：前者更新状态，后者只记录 encounter / intent 状态。presence 不等于对话意图，不会自动创建新 session 或切换 visitor。
+**当前视觉入口：** 可选 vision runtime 使用 Mac 摄像头 + 本地 YOLO 模型，只检测 `person` class。开发者面板可扫描本机 OpenCV 可打开的 camera index，并运行期切换通道；切换时会释放旧摄像头，必要时重启 vision worker。稳定检测到人会触发 `USER_ENTERED`，人离开超过阈值会触发 `USER_LEFT`，持续存在但长时间没有文字交互会触发 `LONG_SILENCE_DETECTED`。这些事件同时进入 `loop.handle_system_event(...)` 和 Identity & Session Gating：前者更新状态，后者只记录 encounter / intent 状态。presence 不等于对话意图，不会自动创建新 session 或切换 visitor。
 
 **macOS 摄像头权限注意：** 摄像头授权绑定启动 API 的宿主进程。Codex 启动的 Python 可能无法获得 Camera 权限；若出现 `Could not open camera index N`，优先从已授权的 Terminal / VS Code 启动同一 API 进程。
 
@@ -169,7 +169,7 @@ python scripts/inspect_state.py
 
 **当前 API 方式：** FastAPI `/api/v1/state` 端点 → 本地开发者 Web 看板（观众不可见）
 
-**Vision 工作区：** 开发者 Web 看板左侧 `Entity State` 下方显示 Vision 面板，可启动/停止摄像头与 YOLO worker，查看 runtime status、模型路径状态、camera index、FPS、detections、最近 vision events，并通过 WebSocket JPEG frames 显示后端标注后的实时画面。
+**Vision 工作区：** 开发者 Web 看板左侧 `Entity State` 下方显示 Vision 面板，可扫描/选择 camera index，启动/停止摄像头与 YOLO worker，查看 runtime status、模型路径状态、camera open attempts、FPS、detections、最近 vision events，并通过 WebSocket JPEG frames 显示后端标注后的实时画面。
 
 **Audio 工作区：** 开发者 Web 看板 `Runtime` 区域显示 Audio Adapter，可启动/停止浏览器麦克风，查看 provider、disabled reason、STT partial/final transcript、TTS stream id 和错误，并将 final transcript 送入现有对话回合。
 
@@ -260,7 +260,7 @@ HarnessTraceStore.record(...)
 | Embedding 计算失败 | 跳过向量写入或语义召回，退回可解释召回 |
 | Managed memory proposal / commit 失败 | 记录错误，不影响本轮 ExpressionOutput |
 | Vision optional deps 未安装或模型路径缺失 | `/api/v1/vision/status` 返回 disabled reason；启动 worker 时返回明确 400，不影响文本系统 |
-| 摄像头无法打开或帧读取失败 | vision worker 记录 runtime error，释放摄像头；主 loop 继续运行 |
+| 摄像头无法打开或帧读取失败 | vision worker 记录 runtime error 和 camera open attempts，释放摄像头；可在开发者面板扫描并切换 camera index；主 loop 继续运行 |
 | Audio optional deps / 火山凭证 / 音色缺失 | `/api/v1/audio/status` 返回 disabled reason；文本系统继续运行 |
 | STT / TTS 流式连接失败 | 记录 sanitized error 与 logid，不保存原始音频，不影响现有文本 dialog |
 | Identity/session gating 状态异常 | 降级为未确认 visitor 的当前 session，不自动创建新 session，不影响主 turn loop |

@@ -42,6 +42,7 @@ from conscious_entity.interfaces.api_models import (
     MemoryStatusRequest,
     PresentationLatencyRequest,
     SessionTypeRequest,
+    VisionRuntimeConfigRequest,
     VisitorCreateRequest,
     VisitorSelectRequest,
 )
@@ -103,6 +104,8 @@ from conscious_entity.interfaces.api_routes import (
     visitor_current_update,
     visitors,
     visitor_surface,
+    vision_cameras,
+    vision_config_update,
     vision_start,
     vision_status,
     vision_stop,

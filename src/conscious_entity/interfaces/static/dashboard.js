@@ -326,6 +326,9 @@
     const [identityStatus, setIdentityStatus] = useState(null);
     const [metadata, setMetadata] = useState(null);
     const [error, setError] = useState("");
+    const [cameraIndex, setCameraIndex] = useState("");
+    const [cameraOptions, setCameraOptions] = useState([]);
+    const [scanning, setScanning] = useState(false);
     const [frameUrl, setFrameUrl] = useState("");
     const socketRef = useRef(null);
     const frameUrlRef = useRef("");
@@ -369,6 +372,11 @@
         ]);
         setStatus(data);
         setIdentityStatus(identity);
+        const configuredIndex = data && data.config ? data.config.camera_index : null;
+        if (configuredIndex != null) setCameraIndex(String(configuredIndex));
+        if (data && data.camera_scan && Array.isArray(data.camera_scan.cameras)) {
+          setCameraOptions(data.camera_scan.cameras);
+        }
         setError(data.error || data.disabled_reason || "");
         if (data.running) connectStream();
       } catch (err) {
@@ -399,6 +407,44 @@
       }
     }, [disconnectStream]);
 
+    const scanCameras = useCallback(async () => {
+      setScanning(true);
+      try {
+        const data = await fetchJSON("/api/v1/vision/cameras?max_index=5");
+        setCameraOptions(data.cameras || []);
+        if (data.selected_index != null) setCameraIndex(String(data.selected_index));
+        setError("");
+      } catch (err) {
+        setError(err.message);
+      } finally {
+        setScanning(false);
+      }
+    }, []);
+
+    const applyCamera = useCallback(async () => {
+      const parsed = Number.parseInt(cameraIndex, 10);
+      if (!Number.isFinite(parsed) || parsed < 0) {
+        setError("Camera index must be 0 or greater.");
+        return;
+      }
+      try {
+        disconnectStream();
+        const data = await fetchJSON("/api/v1/vision/config", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ camera_index: parsed }),
+        });
+        setStatus(data);
+        setMetadata(null);
+        setFrameUrl("");
+        if (data.running) connectStream();
+        setError(data.error || "");
+      } catch (err) {
+        setError(err.message);
+        await loadStatus();
+      }
+    }, [cameraIndex, connectStream, disconnectStream, loadStatus]);
+
     useEffect(() => {
       loadStatus();
       return () => {
@@ -417,6 +463,10 @@
     const identity = identityStatus && identityStatus.status ? identityStatus.status : null;
     const statusText = recognition.pipeline_status || (running ? "running" : status && status.enabled ? "ready" : "disabled");
     const statusClass = statusText === "running" ? "ok" : statusText === "error" || statusText === "disabled" ? "err" : "dim";
+    const selectedOption = cameraOptions.find((item) => String(item.index) === String(cameraIndex));
+    const cameraDetail = selectedOption
+      ? `${selectedOption.opened ? "openable" : "closed"}${selectedOption.frame_readable ? " · frame ok" : ""}${selectedOption.backend ? ` · ${selectedOption.backend}` : ""}`
+      : "scan to list devices";
 
     return h(React.Fragment, null,
       h("div", { className: "toolbar" },
@@ -424,6 +474,28 @@
         h("button", { className: "btn-sm", onClick: stop }, "Stop"),
         h("button", { className: "btn-sm", onClick: () => { disconnectStream(); connectStream(); } }, "Reconnect"),
       ),
+      h("div", { className: "toolbar", style: { marginTop: "8px" } },
+        h("select", {
+          value: cameraIndex,
+          onChange: (event) => setCameraIndex(event.target.value),
+          title: "Camera index",
+        },
+          cameraOptions.length
+            ? cameraOptions.map((item) => h("option", { key: item.index, value: String(item.index) },
+              `Camera ${item.index}${item.opened ? " · openable" : " · unavailable"}`,
+            ))
+            : h("option", { value: cameraIndex || "0" }, `Camera ${cameraIndex || "0"}`),
+        ),
+        h("input", {
+          value: cameraIndex,
+          onChange: (event) => setCameraIndex(event.target.value),
+          placeholder: "camera index",
+          style: { width: "90px" },
+        }),
+        h("button", { className: "btn-sm", onClick: applyCamera }, "Apply Camera"),
+        h("button", { className: "btn-sm", onClick: scanCameras, disabled: scanning }, scanning ? "Scanning…" : "Scan Cameras"),
+      ),
+      h("div", { className: "item-meta", style: { marginTop: "4px" } }, cameraDetail),
       h("div", { className: "vision-preview" }, frameUrl
         ? h("img", { src: frameUrl, alt: "Vision stream" })
         : h("div", { className: "dim", style: { padding: "12px" } }, "No frame yet.")),

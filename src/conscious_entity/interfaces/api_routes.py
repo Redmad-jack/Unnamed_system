@@ -29,6 +29,7 @@ from conscious_entity.interfaces.api_models import (
     MemoryStatusRequest,
     PresentationLatencyRequest,
     SessionTypeRequest,
+    VisionRuntimeConfigRequest,
     VisitorCreateRequest,
     VisitorSelectRequest,
 )
@@ -286,6 +287,28 @@ async def vision_status(request: Request):
     if manager is None:
         return {"enabled": False, "running": False, "error": "Vision runtime not initialised"}
     return manager.status()
+
+
+@router.get("/api/v1/vision/cameras")
+async def vision_cameras(request: Request, max_index: int = 5):
+    manager = getattr(request.app.state, "vision_manager", None)
+    if manager is None:
+        raise HTTPException(status_code=503, detail="Vision runtime not initialised")
+    try:
+        return manager.scan_cameras(max_index=max_index)
+    except VisionConfigurationError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@router.post("/api/v1/vision/config")
+async def vision_config_update(body: VisionRuntimeConfigRequest, request: Request):
+    manager = getattr(request.app.state, "vision_manager", None)
+    if manager is None:
+        raise HTTPException(status_code=503, detail="Vision runtime not initialised")
+    try:
+        return manager.set_camera_index(body.camera_index)
+    except VisionConfigurationError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
 
 
 @router.post("/api/v1/vision/start")

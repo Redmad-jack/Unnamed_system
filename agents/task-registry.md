@@ -45,6 +45,17 @@ Status values: `in_progress`, `done`
 
 | File | Agent | Status | Started |
 |------|-------|--------|---------|
+| src/conscious_entity/vision/runtime.py | Codex | done | 2026-05-21 11:23 CST |
+| src/conscious_entity/vision/__init__.py | Codex | done | 2026-05-21 11:23 CST |
+| src/conscious_entity/interfaces/api_models.py | Codex | done | 2026-05-21 11:23 CST |
+| src/conscious_entity/interfaces/api_routes.py | Codex | done | 2026-05-21 11:23 CST |
+| src/conscious_entity/interfaces/api.py | Codex | done | 2026-05-21 11:23 CST |
+| src/conscious_entity/interfaces/static/dashboard.js | Codex | done | 2026-05-21 11:23 CST |
+| tests/unit/test_vision_runtime.py | Codex | done | 2026-05-21 11:23 CST |
+| tests/unit/test_api_vision.py | Codex | done | 2026-05-21 11:23 CST |
+| docs/APP_FLOW.md | Codex | done | 2026-05-21 11:23 CST |
+| docs/BACKEND_STRUCTURE.md | Codex | done | 2026-05-21 11:23 CST |
+| docs/progress.md | Codex | done | 2026-05-21 11:23 CST |
 | src/conscious_entity/telemetry/latency.py | Codex | done | 2026-05-21 11:05 CST |
 | src/conscious_entity/llm/stats_tracker.py | Codex | done | 2026-05-21 11:05 CST |
 | src/conscious_entity/memory/retrieval.py | Codex | done | 2026-05-21 11:05 CST |

@@ -4,7 +4,7 @@ import importlib.util
 import os
 import threading
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -86,6 +86,28 @@ class VisionRuntimeEvent:
             "event_type": self.event_type.value,
             "timestamp": self.timestamp.isoformat(),
             "reason": self.reason,
+        }
+
+
+@dataclass(frozen=True)
+class VisionCameraProbe:
+    index: int
+    opened: bool
+    frame_readable: bool = False
+    backend: str = "default"
+    width: int | None = None
+    height: int | None = None
+    error: str | None = None
+
+    def to_public_dict(self) -> dict[str, Any]:
+        return {
+            "index": self.index,
+            "opened": self.opened,
+            "frame_readable": self.frame_readable,
+            "backend": self.backend,
+            "width": self.width,
+            "height": self.height,
+            "error": self.error,
         }
 
 
@@ -196,6 +218,8 @@ class VisionManager:
         self._snapshot = VisionSnapshot()
         self._recent_events: list[VisionRuntimeEvent] = []
         self._pending_events: list[EventType] = []
+        self._camera_open_attempts: list[dict[str, Any]] = []
+        self._camera_scan: list[VisionCameraProbe] = []
 
     @property
     def running(self) -> bool:
@@ -228,6 +252,11 @@ class VisionManager:
                     "exists": model_ok,
                 },
                 "config": self.config.to_public_dict(),
+                "camera_scan": {
+                    "selected_index": self.config.camera_index,
+                    "cameras": [item.to_public_dict() for item in self._camera_scan],
+                },
+                "camera_open_attempts": self._camera_open_attempts,
                 "frame_id": self._snapshot.frame_id,
                 "timestamp": self._snapshot.timestamp.isoformat() if self._snapshot.timestamp else None,
                 "detections": [item.to_public_dict() for item in self._snapshot.detections],
@@ -247,17 +276,18 @@ class VisionManager:
             return self.status()
         with self._lock:
             self._error = None
+            self._camera_open_attempts = []
             self._stop_event.clear()
 
         cv2 = _import_required("cv2", "opencv-python")
         yolo_cls = _import_yolo()
         model = yolo_cls(str(self.config.model_path))
-        capture = cv2.VideoCapture(self.config.camera_index)
-        capture.set(cv2.CAP_PROP_FRAME_WIDTH, self.config.width)
-        capture.set(cv2.CAP_PROP_FRAME_HEIGHT, self.config.height)
-        capture.set(cv2.CAP_PROP_FPS, self.config.fps)
-        if not capture.isOpened():
-            capture.release()
+        capture, attempts = self._open_capture(cv2, self.config.camera_index)
+        with self._lock:
+            self._camera_open_attempts = attempts
+        if capture is None or not capture.isOpened():
+            if capture is not None:
+                capture.release()
             message = f"Could not open camera index {self.config.camera_index}"
             self._set_error(message)
             raise VisionConfigurationError(message)
@@ -273,6 +303,70 @@ class VisionManager:
         )
         self._thread.start()
         return self.status()
+
+    def set_camera_index(self, camera_index: int) -> dict[str, Any]:
+        if camera_index < 0:
+            raise VisionConfigurationError("camera_index must be >= 0")
+        was_running = self.running
+        if was_running:
+            self.stop()
+        with self._lock:
+            self.config = replace(self.config, camera_index=int(camera_index))
+            self._tracker = VisionPresenceTracker(
+                enter_frames=self.config.enter_frames,
+                leave_seconds=self.config.leave_seconds,
+                silence_seconds=self.config.silence_seconds,
+            )
+            self._snapshot = VisionSnapshot()
+            self._pending_events.clear()
+            self._error = None
+            self._camera_open_attempts = []
+        if was_running:
+            return self.start()
+        return self.status()
+
+    def scan_cameras(self, *, max_index: int = 5) -> dict[str, Any]:
+        cv2 = _import_required("cv2", "opencv-python")
+        probes: list[VisionCameraProbe] = []
+        for index in range(0, max(0, int(max_index)) + 1):
+            capture, attempts = self._open_capture(cv2, index)
+            opened = bool(capture is not None and capture.isOpened())
+            frame_readable = False
+            width = None
+            height = None
+            error = None
+            backend = attempts[-1]["backend"] if attempts else "default"
+            if opened and capture is not None:
+                try:
+                    ok, _frame = capture.read()
+                    frame_readable = bool(ok)
+                except Exception as exc:
+                    error = str(exc)
+                width = _capture_int_property(capture, getattr(cv2, "CAP_PROP_FRAME_WIDTH", None))
+                height = _capture_int_property(capture, getattr(cv2, "CAP_PROP_FRAME_HEIGHT", None))
+                capture.release()
+            elif capture is not None:
+                capture.release()
+            if not opened and attempts:
+                error = attempts[-1].get("error") or "not_opened"
+            probes.append(
+                VisionCameraProbe(
+                    index=index,
+                    opened=opened,
+                    frame_readable=frame_readable,
+                    backend=backend,
+                    width=width,
+                    height=height,
+                    error=error,
+                )
+            )
+        with self._lock:
+            self._camera_scan = probes
+        return {
+            "selected_index": self.config.camera_index,
+            "running": self.running,
+            "cameras": [item.to_public_dict() for item in probes],
+        }
 
     def stop(self) -> dict[str, Any]:
         self._stop_event.set()
@@ -449,6 +543,8 @@ class VisionManager:
             "enter_frames": self.config.enter_frames,
             "last_error": self._error,
             "access_hint": _camera_access_hint(self._error, self.config.camera_index),
+            "camera_index": self.config.camera_index,
+            "camera_open_attempts": self._camera_open_attempts,
         }
 
     def _dependency_status(self) -> dict[str, Any]:
@@ -465,6 +561,42 @@ class VisionManager:
             "cv2": cv2_available,
             "ultralytics": ultralytics_available,
         }
+
+    def _open_capture(self, cv2: Any, camera_index: int) -> tuple[Any | None, list[dict[str, Any]]]:
+        attempts: list[dict[str, Any]] = []
+        for backend_name, backend_value in _camera_backend_candidates(cv2):
+            capture = None
+            try:
+                capture = (
+                    cv2.VideoCapture(camera_index)
+                    if backend_value is None
+                    else cv2.VideoCapture(camera_index, backend_value)
+                )
+                capture.set(cv2.CAP_PROP_FRAME_WIDTH, self.config.width)
+                capture.set(cv2.CAP_PROP_FRAME_HEIGHT, self.config.height)
+                capture.set(cv2.CAP_PROP_FPS, self.config.fps)
+                opened = bool(capture.isOpened())
+                attempts.append({
+                    "index": camera_index,
+                    "backend": backend_name,
+                    "opened": opened,
+                })
+                if opened:
+                    return capture, attempts
+                capture.release()
+            except Exception as exc:
+                if capture is not None:
+                    try:
+                        capture.release()
+                    except Exception:
+                        pass
+                attempts.append({
+                    "index": camera_index,
+                    "backend": backend_name,
+                    "opened": False,
+                    "error": str(exc),
+                })
+        return None, attempts
 
 
 def _box_scalar(value: Any) -> float:
@@ -511,6 +643,25 @@ def _import_yolo() -> Any:
     from ultralytics import YOLO
 
     return YOLO
+
+
+def _camera_backend_candidates(cv2: Any) -> list[tuple[str, Any | None]]:
+    candidates: list[tuple[str, Any | None]] = []
+    avfoundation = getattr(cv2, "CAP_AVFOUNDATION", None)
+    if avfoundation is not None:
+        candidates.append(("avfoundation", avfoundation))
+    candidates.append(("default", None))
+    return candidates
+
+
+def _capture_int_property(capture: Any, prop: Any | None) -> int | None:
+    if prop is None or not hasattr(capture, "get"):
+        return None
+    try:
+        value = int(round(float(capture.get(prop))))
+    except Exception:
+        return None
+    return value if value > 0 else None
 
 
 def _env_int(name: str, default: int, *, minimum: int, maximum: int | None = None) -> int:
