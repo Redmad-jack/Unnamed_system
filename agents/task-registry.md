@@ -45,6 +45,38 @@ Status values: `in_progress`, `done`
 
 | File | Agent | Status | Started |
 |------|-------|--------|---------|
+| src/conscious_entity/telemetry/latency.py | Codex | done | 2026-05-21 11:05 CST |
+| src/conscious_entity/llm/stats_tracker.py | Codex | done | 2026-05-21 11:05 CST |
+| src/conscious_entity/memory/retrieval.py | Codex | done | 2026-05-21 11:05 CST |
+| src/conscious_entity/expression/expression_engine.py | Codex | done | 2026-05-21 11:05 CST |
+| src/conscious_entity/interfaces/api_models.py | Codex | done | 2026-05-21 11:05 CST |
+| src/conscious_entity/interfaces/api_routes.py | Codex | done | 2026-05-21 11:05 CST |
+| src/conscious_entity/interfaces/api_audio.py | Codex | done | 2026-05-21 11:05 CST |
+| src/conscious_entity/interfaces/static/dashboard.js | Codex | done | 2026-05-21 11:05 CST |
+| src/conscious_entity/interfaces/static/visitor.html | Codex | done | 2026-05-21 11:05 CST |
+| tests/unit/test_latency_tracker.py | Codex | done | 2026-05-21 11:05 CST |
+| tests/unit/test_expression_engine.py | Codex | done | 2026-05-21 11:05 CST |
+| tests/unit/test_api_audio.py | Codex | done | 2026-05-21 11:05 CST |
+| tests/unit/test_api_latency.py | Codex | done | 2026-05-21 11:05 CST |
+| tests/unit/test_api_export.py | Codex | done | 2026-05-21 11:05 CST |
+| tests/conftest.py | Codex | done | 2026-05-21 11:05 CST |
+| docs/BACKEND_STRUCTURE.md | Codex | done | 2026-05-21 11:05 CST |
+| docs/progress.md | Codex | done | 2026-05-21 11:05 CST |
+| README.md | Codex | done | 2026-05-21 11:05 CST |
+| .gitignore | Codex | done | 2026-05-21 11:05 CST |
+| agents/task-registry.md | Codex | done | 2026-05-21 11:05 CST |
+| src/conscious_entity/identity/session_gating.py | Codex | done | 2026-05-21 10:26 CST |
+| src/conscious_entity/identity/__init__.py | Codex | done | 2026-05-21 10:26 CST |
+| src/conscious_entity/interfaces/api_models.py | Codex | done | 2026-05-21 10:26 CST |
+| src/conscious_entity/interfaces/api_runtime.py | Codex | done | 2026-05-21 10:26 CST |
+| src/conscious_entity/interfaces/api_routes.py | Codex | done | 2026-05-21 10:26 CST |
+| src/conscious_entity/interfaces/api.py | Codex | done | 2026-05-21 10:26 CST |
+| tests/unit/test_identity_session_gating.py | Codex | done | 2026-05-21 10:26 CST |
+| tests/unit/test_api_identity.py | Codex | done | 2026-05-21 10:26 CST |
+| docs/APP_FLOW.md | Codex | done | 2026-05-21 10:26 CST |
+| docs/BACKEND_STRUCTURE.md | Codex | done | 2026-05-21 10:26 CST |
+| docs/testlist.md | Codex | done | 2026-05-21 10:26 CST |
+| docs/progress.md | Codex | done | 2026-05-21 10:26 CST |
 | firmware/stranger_esp32s3/src/config.h | Codex | done | 2026-05-19 22:14 CST |
 | firmware/stranger_esp32s3/src/serial_protocol.cpp | Codex | done | 2026-05-19 22:14 CST |
 | firmware/stranger_esp32s3/README.md | Codex | done | 2026-05-19 22:14 CST |

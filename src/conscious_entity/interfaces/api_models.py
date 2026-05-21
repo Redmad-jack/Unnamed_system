@@ -18,6 +18,15 @@ class AudioDebugTTSRequest(BaseModel):
     text: str
 
 
+class PresentationLatencyRequest(BaseModel):
+    kind: str
+    duration_ms: float
+    latency_record_id: Optional[str] = None
+    success: bool = True
+    error: Optional[str] = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
 class LLMConfigRequest(BaseModel):
     mode: str
     model: Optional[str] = None
@@ -53,6 +62,34 @@ class VisitorCreateRequest(BaseModel):
 
 class VisitorSelectRequest(BaseModel):
     visitor_id: Optional[str] = None
+
+
+class IdentityConfigRequest(BaseModel):
+    auto_bind_high_confidence: Optional[bool] = None
+
+
+class IdentityMatchSignalRequest(BaseModel):
+    modality: Optional[str] = None
+    candidate_visitor_id: Optional[str] = None
+    score: Optional[float] = None
+    level: Optional[str] = None
+    quality_status: str = "unknown"
+    quality_summary: dict[str, Any] = Field(default_factory=dict)
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class IdentityMatchRequest(BaseModel):
+    candidate_visitor_id: Optional[str] = None
+    face: Optional[IdentityMatchSignalRequest] = None
+    voice: Optional[IdentityMatchSignalRequest] = None
+    combined_score: Optional[float] = None
+    combined_level: Optional[str] = None
+    decision_hint: Optional[str] = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class IdentityConfirmRequest(BaseModel):
+    accepted: bool
 
 
 class MemoryStatusRequest(BaseModel):

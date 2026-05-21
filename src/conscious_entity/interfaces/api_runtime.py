@@ -262,7 +262,7 @@ def _visitor_row_to_public(row: sqlite3.Row | None, *, active: bool = False) -> 
     if row is None:
         return None
     item = _row_to_dict(row)
-    item["metadata"] = _json_dict(item.get("metadata"))
+    item["metadata"] = _redact_biometric_metadata(_json_dict(item.get("metadata")))
     item["active"] = active
     return item
 
@@ -276,6 +276,16 @@ def _ensure_visitor_profile(
     metadata: dict[str, Any] | None = None,
 ) -> str:
     cleaned = _blank_to_none(visitor_id) or f"visitor-{uuid.uuid4().hex[:12]}"
+    existing = conn.execute(
+        "SELECT metadata FROM visitor_profiles WHERE id = ?",
+        (cleaned,),
+    ).fetchone()
+    existing_metadata = (
+        _json_dict(existing["metadata"] if isinstance(existing, sqlite3.Row) else existing[0])
+        if existing
+        else {}
+    )
+    merged_metadata = _deep_merge_dicts(existing_metadata, metadata or {})
     conn.execute(
         """
         INSERT INTO visitor_profiles (id, display_name, notes, last_seen_at, metadata)
@@ -284,19 +294,60 @@ def _ensure_visitor_profile(
             display_name = COALESCE(excluded.display_name, visitor_profiles.display_name),
             notes = COALESCE(excluded.notes, visitor_profiles.notes),
             last_seen_at = datetime('now'),
-            metadata = CASE
-                WHEN excluded.metadata != '{}' THEN excluded.metadata
-                ELSE visitor_profiles.metadata
-            END
+            metadata = excluded.metadata
         """,
         (
             cleaned,
             _blank_to_none(display_name),
             _blank_to_none(notes),
-            json.dumps(metadata or {}, ensure_ascii=False),
+            json.dumps(merged_metadata, ensure_ascii=False),
         ),
     )
     return cleaned
+
+
+def _update_visitor_identity_metadata(
+    conn: sqlite3.Connection,
+    visitor_id: str,
+    identity_patch: dict[str, Any],
+) -> None:
+    _ensure_visitor_profile(
+        conn,
+        visitor_id,
+        metadata={
+            "identity": {
+                "schema_version": 1,
+                **identity_patch,
+            }
+        },
+    )
+
+
+def _deep_merge_dicts(base: dict[str, Any], patch: dict[str, Any]) -> dict[str, Any]:
+    merged = dict(base)
+    for key, value in patch.items():
+        if (
+            isinstance(value, dict)
+            and isinstance(merged.get(key), dict)
+        ):
+            merged[key] = _deep_merge_dicts(merged[key], value)
+        else:
+            merged[key] = value
+    return merged
+
+
+def _redact_biometric_metadata(value: Any) -> Any:
+    if isinstance(value, dict):
+        redacted: dict[str, Any] = {}
+        for key, item in value.items():
+            if key in {"face_embedding", "voice_embedding", "raw_audio", "raw_image"}:
+                redacted[key] = "[redacted]"
+            else:
+                redacted[key] = _redact_biometric_metadata(item)
+        return redacted
+    if isinstance(value, list):
+        return [_redact_biometric_metadata(item) for item in value]
+    return value
 
 
 def _set_current_visitor(

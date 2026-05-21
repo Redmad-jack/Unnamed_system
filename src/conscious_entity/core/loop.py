@@ -209,6 +209,7 @@ class InteractionLoop:
         )
         success = False
         error: str | None = None
+        output: ExpressionOutput | None = None
         with activate_turn_recorder(recorder):
             try:
                 # Parse input into perception events.
@@ -444,9 +445,10 @@ class InteractionLoop:
                 get_harness_trace_store().record(
                     harness_recorder.finish(success=success, error=error)
                 )
-                get_latency_tracker().record_turn(
-                    recorder.finish(success=success, error=error)
-                )
+                latency_record = recorder.finish(success=success, error=error)
+                if output is not None:
+                    output.latency_record_id = latency_record.record_id
+                get_latency_tracker().record_turn(latency_record)
 
     def flush_background_tasks(self) -> None:
         """Wait for queued post-turn maintenance tasks; intended for tests and shutdown."""

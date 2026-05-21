@@ -11,6 +11,7 @@ from conscious_entity.memory.models import ShortTermEntry
 from conscious_entity.memory.short_term import ShortTermMemory
 from conscious_entity.policy.policy_types import PolicyAction, PolicyDecision
 from conscious_entity.state.state_core import EntityState
+from conscious_entity.telemetry.latency import TurnLatencyRecorder, activate_turn_recorder
 
 
 class _FakeStyleMapper:
@@ -168,3 +169,22 @@ def test_generation_and_output_harness_records_constitution_filter():
     assert layers["output"]["status"] == "filtered"
     assert layers["output"]["metadata"]["changed"] is True
     assert layers["output"]["metadata"]["forbidden_claim_detected"] is True
+
+
+def test_expression_engine_records_context_llm_and_filter_latency_steps():
+    engine, _ = _build_engine(
+        ClaudeCompletion(text="There is a reply.", stop_reason="end_turn")
+    )
+    recorder = TurnLatencyRecorder(source="dialog")
+
+    with activate_turn_recorder(recorder):
+        engine.generate(
+            policy=PolicyDecision(action=PolicyAction.RESPOND_OPENLY),
+            state=EntityState(),
+            short_term=ShortTermMemory(max_turns=10),
+        )
+
+    step_names = [step.name for step in recorder.finish().steps]
+    assert "expression.context_build" in step_names
+    assert "expression.llm" in step_names
+    assert "expression.constitution_filter" in step_names

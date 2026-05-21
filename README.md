@@ -41,7 +41,7 @@
 | Phase 12 | Runtime Harness System + Visitor Identity & Session Gating V1 | ✅ 完成 |
 | Phase 13 | 完整声纹识别、视觉识别与访客库 | ⏭ 下一优先级 |
 
-**现在可以运行：** 通过命令行或本地 Web 看板与 Stranger 交互，实体有状态记忆、行为规则、LLM 表达、文本关系姿态识别、可解释记忆召回、Memory Preview、可审计 managed memory 影响路径和 Runtime Harness Trace；可选视觉层能用本地 YOLO 模型和 Mac 摄像头产生 presence events；可选语音层能用火山 STT/TTS 把浏览器麦克风输入转成文本回合，并只朗读合法 `ExpressionOutput` 派生的 stream id；Identity & Session Gating V1 能记录 encounter / intent / interruption，但尚未自动做人脸或声纹识别。
+**现在可以运行：** 通过命令行或本地 Web 看板与 Stranger 交互，实体有状态记忆、行为规则、LLM 表达、文本关系姿态识别、可解释记忆召回、Memory Preview、可审计 managed memory 影响路径、Runtime Harness Trace 和自动持久化的端到端 latency 日志；可选视觉层能用本地 YOLO 模型和 Mac 摄像头产生 presence events；可选语音层能用火山 STT/TTS 把浏览器麦克风输入转成文本回合，并只朗读合法 `ExpressionOutput` 派生的 stream id；Identity & Session Gating V1 能记录 encounter / intent / interruption，但尚未自动做人脸或声纹识别。
 
 **下一优先级：** 先做完整声纹识别、视觉识别和访客库；然后做能力自我描述回归测试与优化；再做 `docs/testlist.md` 中的行为测试与调优。更完整空间感知、身体外观、多人并发、展期终止仪式、物理移动、循路和避障都排在后面。
 
@@ -321,7 +321,7 @@ PYTHONPATH=src python3 -m pytest -p no:debugging
 | 身体外观、材料、尺度和移动姿态 | 后续具身呈现 |
 | 展览视觉风格、设计语言 | 身体表面、投影、光或显示层 |
 | 访客端呈现方式（投影？屏幕？身体表面？） | 观众可见呈现，不是传统 UI |
-| 声音现场稳定性与音色 | 当前已接入火山 STT/TTS；后续重点是现场延迟、断线恢复、音色和 barge-in |
+| 声音现场稳定性与音色 | 当前已接入火山 STT/TTS；现场延迟可通过 `data/latency_logs/` 自动 JSONL 日志和 Runtime 面板观察，后续重点是断线恢复、音色和 barge-in |
 | 完整声纹识别、视觉识别与访客库 | 下一优先级；当前 V1 只有匿名 visitor profile 与手动绑定 |
 | 能力自我描述回归测试 | 防止 Stranger 错称自己能/不能看见、听见、识别、移动或记忆 |
 | 行为测试与调优 | 统一见 `docs/testlist.md` |

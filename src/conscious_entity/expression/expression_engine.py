@@ -147,14 +147,15 @@ class ExpressionEngine:
                 raw_prompt=_SILENT_OUTPUT_SENTINEL,
             )
 
-        ctx = self._context_builder.build(
-            state,
-            policy,
-            style,
-            short_term,
-            retrieved_memories,
-            harness_recorder=harness_recorder,
-        )
+        with turn_step("expression.context_build"):
+            ctx = self._context_builder.build(
+                state,
+                policy,
+                style,
+                short_term,
+                retrieved_memories,
+                harness_recorder=harness_recorder,
+            )
 
         completion = None
         with turn_step(
@@ -209,9 +210,9 @@ class ExpressionEngine:
                 metadata={"stop_reason": completion.stop_reason, "max_tokens": ctx.max_tokens},
             )
 
-        filtered_text = self._constitution.apply_expression_constraints(raw_text)
-
-        detected, claim_action = self._constitution.forbidden_claim_detected(filtered_text)
+        with turn_step("expression.constitution_filter"):
+            filtered_text = self._constitution.apply_expression_constraints(raw_text)
+            detected, claim_action = self._constitution.forbidden_claim_detected(filtered_text)
         if harness_recorder is not None:
             harness_recorder.record(
                 HarnessLayer.OUTPUT,

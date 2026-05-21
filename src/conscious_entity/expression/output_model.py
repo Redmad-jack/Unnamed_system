@@ -13,3 +13,4 @@ class ExpressionOutput:
     raw_prompt: str         # full prompt serialized for debugging / governance panel
     truncated: bool = False
     stop_reason: Optional[str] = None
+    latency_record_id: Optional[str] = None

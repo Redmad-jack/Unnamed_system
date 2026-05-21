@@ -30,6 +30,7 @@ async def audio_dialog(body: AudioDialogRequest, request: Request):
     if not transcript:
         raise HTTPException(status_code=400, detail="transcript is required")
 
+    turn_start = time.perf_counter()
     try:
         output = await _run_dialog_turn(
             request,
@@ -43,9 +44,31 @@ async def audio_dialog(body: AudioDialogRequest, request: Request):
             },
         )
     except HTTPException:
+        record_audio_latency(
+            "audio_dialog.turn_request",
+            (time.perf_counter() - turn_start) * 1000,
+            success=False,
+            error="http_exception",
+            metadata={"audio_session_id": body.audio_session_id},
+        )
         raise
     except Exception as exc:
+        record_audio_latency(
+            "audio_dialog.turn_request",
+            (time.perf_counter() - turn_start) * 1000,
+            success=False,
+            error=str(exc),
+            metadata={"audio_session_id": body.audio_session_id},
+        )
         raise HTTPException(status_code=500, detail=str(exc))
+    record_audio_latency(
+        "audio_dialog.turn_request",
+        (time.perf_counter() - turn_start) * 1000,
+        metadata={
+            "audio_session_id": body.audio_session_id,
+            "latency_record_id": output.latency_record_id,
+        },
+    )
 
     manager = _audio_manager(request)
     start = time.perf_counter()
@@ -67,6 +90,7 @@ async def audio_dialog(body: AudioDialogRequest, request: Request):
         "spoken_text": output.spoken_text,
         "delay_ms": output.delay_ms,
         "visual_mode": output.visual_mode,
+        "latency_record_id": output.latency_record_id,
         "should_speak": should_speak,
         "tts_stream_id": stream.stream_id if stream else None,
         "output_format": manager.config.output_format,

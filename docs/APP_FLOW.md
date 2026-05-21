@@ -128,7 +128,7 @@ Step 15  发送 turn_complete 到 EventBus，供调试或后续 instrumentation 
 
 **当前语音入口：** 可选 audio runtime 使用火山 STT/TTS。浏览器或未来身体节点只把 16k / 16bit / mono PCM chunk 发到 `/api/v1/audio/stt/stream`；只有 `transcript.final` 可以通过 `/api/v1/audio/dialog` 进入现有 `run_turn()`。TTS 只朗读最终已过滤的 `ExpressionOutput` 派生文本，并通过 `tts_stream_id` 播放，不允许 visitor/body 直接指定任意 TTS 文本。
 
-**当前身份/会话入口：** V1 不做自动人脸/声纹识别。已绑定 visitor 时本轮标记为 `continue_current`；未绑定 visitor 时标记为 `continue_unidentified`；显式插入信号只记录 interruption，默认不替换当前 primary visitor。下一优先级是在这个边界上补齐声纹识别、视觉识别、历史匹配、自然确认和访客库。
+**当前身份/会话入口：** V1 不接真实人脸/声纹模型，但已支持结构化识别结果接入：`/api/v1/identity/match` 可提交 face / voice / combined match result，high confidence 默认只设置 candidate 并等待非强制确认；开发者可临时开启 auto-bind，但只在没有 primary visitor 且非 active dialogue 时生效。已绑定 visitor 时本轮标记为 `continue_current`；未绑定 visitor 时标记为 `continue_unidentified`；显式插入信号只记录 interruption，默认不替换当前 primary visitor。
 
 **错误状态：**
 - LLM 调用失败 → 使用规则生成 fallback 回应（简短、中性）
@@ -175,7 +175,7 @@ python scripts/inspect_state.py
 
 **Harness 工作区：** 开发者 Web 看板 `Runtime` 区域显示最近一轮 Harness layer 状态、decision 和摘要。Prompt Harness 只显示 partial 名称与摘要，不显示完整 hidden prompt。
 
-**Identity & Session Gating 工作区：** 开发者 Web 看板 `Runtime` 区域显示当前 runtime state、session decision、primary visitor、candidate、encounter/intent、confidence level、是否等待确认和 interruption count。V1 不展示原始人脸、原始音频、embedding 向量或完整身份库。
+**Identity & Session Gating 工作区：** 开发者 Web 看板 `Runtime` 区域显示当前 runtime state、session decision、primary visitor、candidate、encounter/intent、confidence level、latest match summary、confirmation state、是否等待确认和 interruption count。V1 不展示原始人脸、原始音频、embedding 向量或完整身份库。
 
 **访客 surface：** `/visitor` 只读取最新 `ExpressionOutput` 与少量 state 映射为文字、扰动、沉默和延迟感；如已启用声音，也只播放后端已创建的 `tts_stream_id`，不显示 dashboard 控件、内部规则、memory、prompt 或调试指标。
 
@@ -270,7 +270,7 @@ HarnessTraceStore.record(...)
 ## 6. 待办与待确认
 
 **P0 交接优先级：**
-- 完整声纹识别、视觉识别与访客库：基于当前 V1 gating，完成 signature capture、质量门控、历史匹配、combined confidence、自然确认和 visitor profile metadata。
+- 完整声纹识别、视觉识别与访客库：基于当前 V1 gating 和结构化 match result，继续接入真实 signature capture、质量门控和历史匹配模块。
 - 能力自我描述回归测试与优化：确保 Stranger 对看见、听见、识别、记忆、身体、移动等能力的描述与 runtime 上下文一致。
 - 行为测试与调优：统一见 `docs/testlist.md`，本文件不展开测试清单。
 

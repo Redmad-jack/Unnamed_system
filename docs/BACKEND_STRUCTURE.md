@@ -167,7 +167,7 @@ CREATE TABLE visitor_profiles (
 );
 ```
 
-**说明：** 这是开发者/展陈路由用的匿名访客注册表，不是观众账户系统；不包含密码或登录态。V1 已可保存匿名 `visitor_id`、display name、notes 和 metadata，用于跨 session 记忆连续性。下一优先级是把 face signature / voice signature 的安全 reference、质量摘要、匹配置信度和自然确认状态纳入访客库设计；开发者面板不得暴露原始人脸、原始音频或 embedding 向量。
+**说明：** 这是开发者/展陈路由用的匿名访客注册表，不是观众账户系统；不包含密码或登录态。当前 `metadata.identity` 已预留识别结构：`schema_version`、face / voice signature reference、latest match summary 和 confirmation state。signature 只保存安全 reference、质量摘要和状态，不在开发者面板暴露原始人脸、原始音频或 embedding 向量。
 
 ---
 
@@ -337,7 +337,7 @@ CREATE TABLE schema_version (
 
 | 方法 | 路径 | 说明 | 认证 |
 |---|---|---|---|
-| `POST` | `/api/v1/dialog` | 提交一轮对话输入，返回 ExpressionOutput | 本地开发面板，当前无认证 |
+| `POST` | `/api/v1/dialog` | 提交一轮对话输入，返回 ExpressionOutput 与 `latency_record_id` | 本地开发面板，当前无认证 |
 | `GET` | `/api/v1/state` | 获取当前 EntityState | 本地开发面板，当前无认证 |
 | `GET` | `/api/v1/sessions` | 获取 session 列表 | 本地开发面板，当前无认证 |
 | `POST` | `/api/v1/sessions/reset` | 归档当前 session 并创建新 session | 本地开发面板，当前无认证 |
@@ -350,21 +350,32 @@ CREATE TABLE schema_version (
 | `POST` | `/api/v1/managed-memory/commit` | commit pending proposal 或手动 operation | 本地开发面板，当前无认证 |
 | `GET` | `/api/v1/curation/memories` | 查看可整理记忆 | 本地开发面板，当前无认证 |
 | `GET` | `/api/v1/conversation/export` | 导出当前或指定 session 对话 JSON | 本地开发面板，当前无认证 |
-| `GET` | `/api/v1/stats/latency` | 查看内存态 turn step latency summary 与最近记录，不写入 SQLite | 本地开发面板，当前无认证 |
-| `GET` | `/api/v1/stats/audio-latency` | 查看内存态 STT/TTS latency summary 与最近记录，不保存原始音频 | 本地开发面板，当前无认证 |
+| `GET` | `/api/v1/stats/latency` | 查看 JSONL 持久化 turn step latency summary 与最近 50 条记录，不写入 SQLite | 本地开发面板，当前无认证 |
+| `GET` | `/api/v1/stats/audio-latency` | 查看 JSONL 持久化 STT/TTS latency summary 与最近 50 条记录，不保存原始音频 | 本地开发面板，当前无认证 |
+| `POST` | `/api/v1/stats/presentation-latency` | 前端上报文字渲染、音频 `play()` / `playing` / `ended` 等用户可感知 presentation latency | 本地开发面板 / 访客 surface，当前无认证 |
+| `GET` | `/api/v1/stats/presentation-latency` | 查看 JSONL 持久化 presentation latency summary 与最近 50 条记录 | 本地开发面板，当前无认证 |
 | `GET` | `/api/v1/harness/status` | 查看 Runtime Harness 启用状态、layer 列表和最近一轮摘要 | 本地开发面板，当前无认证 |
 | `GET` | `/api/v1/harness/trace/recent` | 查看最近 N 轮 Harness trace，进程内 ring buffer，不写 SQLite | 本地开发面板，当前无认证 |
 | `GET` | `/api/v1/identity/status` | 查看 Visitor Identity & Session Gating V1 当前状态、约束和最近事件 | 本地开发面板，当前无认证 |
+| `POST` | `/api/v1/identity/config` | 设置运行期 identity gating 调试开关，例如 high-confidence auto-bind；重启后恢复默认 | 本地开发面板，当前无认证 |
+| `POST` | `/api/v1/identity/match` | 接收模拟或未来识别模块产生的 face / voice / combined match result | 本地开发面板，当前无认证 |
+| `POST` | `/api/v1/identity/confirm` | 确认或拒绝当前 candidate visitor | 本地开发面板，当前无认证 |
 | `GET` | `/api/v1/vision/status` | 查看可选视觉 runtime 状态、依赖、模型路径和最新 detections | 本地开发面板，当前无认证 |
 | `POST` | `/api/v1/vision/start` | 启动 Mac 摄像头和 YOLO worker | 本地开发面板，当前无认证 |
 | `POST` | `/api/v1/vision/stop` | 停止 vision worker 并释放摄像头 | 本地开发面板，当前无认证 |
 | `WS` | `/api/v1/vision/stream` | 推送 JSON metadata + binary JPEG frame | 本地开发面板，当前无认证 |
 | `GET` | `/api/v1/audio/status` | 查看可选语音 runtime 状态、disabled reason、STT/TTS 配置与最近 transcript/error | 本地开发面板，当前无认证 |
 | `WS` | `/api/v1/audio/stt/stream` | 接收 PCM chunks，代理火山 STT，返回 partial/final transcript metadata | 本地开发面板 / 后续身体节点，当前无认证 |
-| `POST` | `/api/v1/audio/dialog` | 将 STT final transcript 送入现有 `run_turn()`，并为合法输出创建 TTS stream id | 本地开发面板 / 后续身体节点，当前无认证 |
+| `POST` | `/api/v1/audio/dialog` | 将 STT final transcript 送入现有 `run_turn()`，返回 `latency_record_id`，并为合法输出创建 TTS stream id | 本地开发面板 / 后续身体节点，当前无认证 |
 | `GET` | `/api/v1/audio/tts/stream/{stream_id}` | 通过 HTTP streaming 播放合法 `ExpressionOutput` 派生的 TTS 音频 | 本地开发面板 / 访客 surface，当前无认证 |
 | `WS` | `/api/v1/audio/tts/stream` | 通过 WebSocket 播放 stream id；raw text 仅 debug flag 开启时可用 | 后续身体节点 / debug，当前无认证 |
 | `GET` | `/visitor` | 临时访客侧 body-facing surface，不展示内部调试信息 | 访客端，无认证 |
+
+**Latency 日志边界：**
+- `turn-latency.jsonl`、`audio-latency.jsonl`、`llm-latency.jsonl`、`presentation-latency.jsonl` 自动写入 `data/latency_logs/`，每个文件滚动保留最近 50 条。
+- API 启动时会从 JSONL 恢复最近记录；损坏 JSON 行会跳过，不阻断启动或 stats API。
+- 这些日志只记录 step 名称、耗时、成功/失败、错误摘要和少量 metadata；不保存原始音频、完整 prompt 或完整对话文本，也不写入 SQLite。
+- `/api/v1/dialog` 与 `/api/v1/audio/dialog` 返回的 `latency_record_id` 用于把后端 turn latency 和浏览器 presentation latency 关联起来。
 
 **Vision 事件边界：**
 - 当前视觉层只检测 YOLO `person` class，不做访客身份识别；下一优先级会在此基础上增加视觉身份 signature、质量门控和历史匹配。
@@ -376,7 +387,8 @@ CREATE TABLE schema_version (
 - V1 每个 session 只有一个 `primary_visitor_id`；未确认身份时继续使用当前 session 的 unidentified scope。
 - 当前正在对话时，不因为旁人出现或发声自动切换 active visitor；可记录 `interruption_event`，但不启用 group session。
 - 空闲 presence 不等于对话意图；只有文字或语音输入进入 turn loop 时才把 intent 标为 confirmed。
-- 开发者面板展示 runtime、decision、candidate、confidence level 和 interruption count；不展示原始人脸图、原始音频、embedding 向量或完整身份库。
+- 识别结果通过结构化 `IdentityMatchResult` 进入 gating：默认 high confidence 只设置 candidate 并等待非强制确认；开发者可临时开启 `auto_bind_high_confidence`，但只在没有 primary visitor 且非 active dialogue 时自动绑定。
+- 开发者面板展示 runtime、decision、candidate、confidence level、latest match summary、confirmation state 和 interruption count；不展示原始人脸图、原始音频、embedding 向量或完整身份库。
 - 后续完整身份识别必须继续保持“非强制输入”：可以询问确认，但 visitor 不回答时仍继续当前对话，不因未确认身份阻断 turn loop。
 - 摄像头/YOLO 留在上位机；STM32 后续只接收事件、动作、灯光或电机命令，不接收视频流。
 
@@ -410,8 +422,8 @@ OPERATOR_API_KEY=your_secret_here
 | 版本 | 身份策略 |
 |---|---|
 | 早期文本 MVP | 全部共用 `session_id="shared"`，无访客区分 |
-| 当前系统 | 开发者可创建匿名 `visitor_profiles`，把当前 session 绑定到 `visitor_id`；同一 visitor 的旧 session 可参与记忆召回；Identity & Session Gating V1 负责记录 encounter / intent / interruption，但不自动识别人脸或声纹 |
-| 下一优先级 | 完整声纹识别、视觉识别与访客库：face / voice signature capture、质量门控、历史匹配、combined confidence、自然确认、visitor profile metadata |
+| 当前系统 | 开发者可创建匿名 `visitor_profiles`，把当前 session 绑定到 `visitor_id`；同一 visitor 的旧 session 可参与记忆召回；Identity & Session Gating V1 已支持结构化 match result、candidate、confirmation 和运行期 auto-bind 调试开关 |
+| 下一优先级 | 接入真实 face / voice signature capture、质量门控和历史匹配模块 |
 | 后续展览阶段 | 多人 routing / 仲裁策略仍待现场测试；当前先收束为单 primary visitor session |
 
 **注：** 不引入账户注册或密码机制。匿名 `visitor_id` 是路由和连续性线索，不等于真实身份画像。

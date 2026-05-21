@@ -33,6 +33,28 @@
     return data;
   }
 
+  function nowMs() {
+    return window.performance && typeof window.performance.now === "function"
+      ? window.performance.now()
+      : Date.now();
+  }
+
+  function postPresentationLatency(kind, startedAt, options = {}) {
+    const duration = Math.max(0, nowMs() - startedAt);
+    fetchJSON("/api/v1/stats/presentation-latency", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        kind,
+        duration_ms: duration,
+        latency_record_id: options.latencyRecordId || null,
+        success: options.success !== false,
+        error: options.error || null,
+        metadata: options.metadata || {},
+      }),
+    }).catch(() => null);
+  }
+
   function useInterval(callback, delay) {
     const saved = useRef(callback);
     useEffect(() => { saved.current = callback; }, [callback]);
@@ -530,6 +552,7 @@
     const send = useCallback(async () => {
       const trimmed = text.trim();
       if (!trimmed || sending) return;
+      const submitStartedAt = nowMs();
       setText("");
       setSending(true);
       const optimistic = {
@@ -545,6 +568,11 @@
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ text: trimmed }),
         });
+        const responseAt = nowMs();
+        postPresentationLatency("dashboard.text_dialog.response", submitStartedAt, {
+          latencyRecordId: output.latency_record_id,
+          metadata: { input_chars: trimmed.length },
+        });
         setRows((current) => [...current, {
           id: `entity-${Date.now()}`,
           role: "entity",
@@ -553,6 +581,12 @@
           visual_mode: output.visual_mode,
           turn_at: new Date().toISOString(),
         }]);
+        window.requestAnimationFrame(() => {
+          postPresentationLatency("dashboard.text_dialog.render", responseAt, {
+            latencyRecordId: output.latency_record_id,
+            metadata: { text_chars: String(output.text || "").length },
+          });
+        });
         window.dispatchEvent(new CustomEvent("entity:turn-complete"));
       } catch (error) {
         setRows((current) => [...current, {
@@ -707,17 +741,19 @@
     const [stats, setStats] = useState(null);
     const [latency, setLatency] = useState(null);
     const [audioLatency, setAudioLatency] = useState(null);
+    const [presentationLatency, setPresentationLatency] = useState(null);
     const [harness, setHarness] = useState(null);
     const [visitor, setVisitor] = useState(null);
     const [identity, setIdentity] = useState(null);
 
     const load = useCallback(async () => {
-      const [llmConfig, embeddingConfig, llmStats, latencyStats, audioLatencyStats, harnessStatus, visitorStatus, identityStatus] = await Promise.all([
+      const [llmConfig, embeddingConfig, llmStats, latencyStats, audioLatencyStats, presentationLatencyStats, harnessStatus, visitorStatus, identityStatus] = await Promise.all([
         fetchJSON("/api/v1/config/llm").catch(() => null),
         fetchJSON("/api/v1/config/embedding").catch(() => null),
         fetchJSON("/api/v1/stats/llm").catch(() => null),
         fetchJSON("/api/v1/stats/latency?n=1").catch(() => null),
         fetchJSON("/api/v1/stats/audio-latency?n=8").catch(() => null),
+        fetchJSON("/api/v1/stats/presentation-latency?n=8").catch(() => null),
         fetchJSON("/api/v1/harness/status").catch(() => null),
         fetchJSON("/api/v1/visitors/current").catch(() => null),
         fetchJSON("/api/v1/identity/status").catch(() => null),
@@ -727,6 +763,7 @@
       setStats(llmStats && llmStats.summary);
       setLatency(latencyStats);
       setAudioLatency(audioLatencyStats);
+      setPresentationLatency(presentationLatencyStats);
       setHarness(harnessStatus);
       setVisitor(visitorStatus);
       setIdentity(identityStatus);
@@ -752,7 +789,7 @@
           h("tr", null, h("td", null, "Tokens"), h("td", null, `${stats.total_prompt_tokens} / ${stats.total_completion_tokens}`)),
         )) : h("div", { className: "dim" }, "Loading diagnostics…"),
       ),
-      h(LatencySection, { latency, audioLatency }),
+      h(LatencySection, { latency, audioLatency, presentationLatency }),
     );
   }
 
@@ -1113,12 +1150,15 @@
     );
   }
 
-  function LatencySection({ latency, audioLatency }) {
+  function LatencySection({ latency, audioLatency, presentationLatency }) {
     const latest = latency && latency.recent && latency.recent.length ? latency.recent[latency.recent.length - 1] : null;
     const turnSummary = latency && latency.summary;
     const steps = latest && latest.steps ? latest.steps.slice().sort((a, b) => b.duration_ms - a.duration_ms).slice(0, 8) : [];
     const audioKinds = audioLatency && audioLatency.summary && audioLatency.summary.kinds
       ? Object.entries(audioLatency.summary.kinds).sort((a, b) => b[1].avg_ms - a[1].avg_ms).slice(0, 6)
+      : [];
+    const presentationKinds = presentationLatency && presentationLatency.summary && presentationLatency.summary.kinds
+      ? Object.entries(presentationLatency.summary.kinds).sort((a, b) => b[1].avg_ms - a[1].avg_ms).slice(0, 6)
       : [];
     return h("div", { className: "section" },
       h("div", { className: "section-title" }, "Latency Breakdown"),
@@ -1136,6 +1176,12 @@
           h("td", null, `${data.avg_ms} ms · ${data.count}`),
         )),
       )) : h("div", { className: "dim" }, "No audio latency yet."),
+      presentationKinds.length ? h("table", null, h("tbody", null,
+        presentationKinds.map(([kind, data]) => h("tr", { key: kind },
+          h("td", null, kind),
+          h("td", null, `${data.avg_ms} ms · ${data.count}`),
+        )),
+      )) : h("div", { className: "dim" }, "No presentation latency yet."),
     );
   }
 
@@ -1170,6 +1216,7 @@
     const suppressMicRef = useRef(false);
     const playbackUnlockedRef = useRef(false);
     const playbackStreamRef = useRef("");
+    const playbackTimingRef = useRef(null);
     const bargeInFramesRef = useRef(0);
     const manualStopRef = useRef(false);
     const reconnectTimerRef = useRef(null);
@@ -1279,6 +1326,7 @@
         player.load();
       }
       playbackStreamRef.current = "";
+      playbackTimingRef.current = null;
       bargeInFramesRef.current = 0;
       suppressMicRef.current = false;
       setPlaybackBlocked(false);
@@ -1290,7 +1338,7 @@
       }
     }, []);
 
-    const playStream = useCallback(async (streamId) => {
+    const playStream = useCallback(async (streamId, timing = {}) => {
       if (!streamId || !playerRef.current) return false;
       suppressMicRef.current = true;
       bargeInFramesRef.current = 0;
@@ -1299,17 +1347,34 @@
       setBargeInDetail("armed while speaking");
       const player = playerRef.current;
       playbackStreamRef.current = streamId;
+      const streamReceivedAt = timing.streamReceivedAt || nowMs();
+      playbackTimingRef.current = {
+        streamId,
+        latencyRecordId: timing.latencyRecordId || null,
+        streamReceivedAt,
+      };
       player.muted = false;
       player.volume = 1;
       player.src = `/api/v1/audio/tts/stream/${encodeURIComponent(streamId)}?t=${Date.now()}`;
       player.load();
       try {
         await player.play();
+        postPresentationLatency("dashboard.audio.play_resolved", streamReceivedAt, {
+          latencyRecordId: timing.latencyRecordId,
+          metadata: { stream_id: streamId },
+        });
         playbackUnlockedRef.current = true;
         setPlaybackUnlocked(true);
         setPlaybackDetail(`playing ${compactId(streamId)}`);
         return true;
       } catch (err) {
+        postPresentationLatency("dashboard.audio.play_resolved", streamReceivedAt, {
+          latencyRecordId: timing.latencyRecordId,
+          success: false,
+          error: err && err.name ? err.name : "play_failed",
+          metadata: { stream_id: streamId },
+        });
+        playbackTimingRef.current = null;
         suppressMicRef.current = false;
         bargeInFramesRef.current = 0;
         setVoiceActivity(recordingRef.current ? "listening" : "idle");
@@ -1327,6 +1392,7 @@
     const submitTranscript = useCallback(async (value) => {
       const transcript = String(value || "").trim();
       if (!transcript || dialogPendingRef.current) return;
+      const finalStartedAt = nowMs();
       let playbackStarted = false;
       try {
         setError("");
@@ -1340,6 +1406,14 @@
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ transcript }),
         });
+        const responseAt = nowMs();
+        postPresentationLatency("dashboard.audio_dialog.response", finalStartedAt, {
+          latencyRecordId: result.latency_record_id,
+          metadata: {
+            audio_session_id: result.audio_session_id,
+            transcript_chars: transcript.length,
+          },
+        });
         setLatestDialog(result);
         window.dispatchEvent(new CustomEvent("entity:turn-complete", {
           detail: {
@@ -1350,7 +1424,10 @@
         }));
         loadStatus();
         if (result.tts_stream_id) {
-          playbackStarted = await playStream(result.tts_stream_id);
+          playbackStarted = await playStream(result.tts_stream_id, {
+            latencyRecordId: result.latency_record_id,
+            streamReceivedAt: responseAt,
+          });
         }
       } catch (err) {
         setError(err.message);
@@ -1559,8 +1636,25 @@
         className: "hidden-audio",
         preload: "auto",
         playsInline: true,
+        onPlaying: () => {
+          const timing = playbackTimingRef.current;
+          if (timing) {
+            postPresentationLatency("dashboard.audio.playing", timing.streamReceivedAt, {
+              latencyRecordId: timing.latencyRecordId,
+              metadata: { stream_id: timing.streamId },
+            });
+          }
+        },
         onEnded: () => {
+          const timing = playbackTimingRef.current;
+          if (timing) {
+            postPresentationLatency("dashboard.audio.ended", timing.streamReceivedAt, {
+              latencyRecordId: timing.latencyRecordId,
+              metadata: { stream_id: timing.streamId },
+            });
+          }
           playbackStreamRef.current = "";
+          playbackTimingRef.current = null;
           bargeInFramesRef.current = 0;
           suppressMicRef.current = false;
           setVoiceActivity(recordingRef.current ? "listening" : "idle");
@@ -1568,7 +1662,17 @@
           setBargeInDetail("idle");
         },
         onError: () => {
+          const timing = playbackTimingRef.current;
+          if (timing) {
+            postPresentationLatency("dashboard.audio.error", timing.streamReceivedAt, {
+              latencyRecordId: timing.latencyRecordId,
+              success: false,
+              error: "media_error",
+              metadata: { stream_id: timing.streamId },
+            });
+          }
           playbackStreamRef.current = "";
+          playbackTimingRef.current = null;
           bargeInFramesRef.current = 0;
           suppressMicRef.current = false;
           setVoiceActivity(recordingRef.current ? "listening" : "idle");

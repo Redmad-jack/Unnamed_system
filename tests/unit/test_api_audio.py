@@ -24,6 +24,7 @@ class FakeLoop:
             delay_ms=100,
             visual_mode="normal",
             raw_prompt="prompt",
+            latency_record_id="turn_fake",
         )
 
 
@@ -91,6 +92,7 @@ def test_audio_dialog_reuses_loop_and_creates_tts_stream():
     })]
     assert manager.created is True
     assert result["tts_stream_id"] == "tts_test"
+    assert result["latency_record_id"] == "turn_fake"
     assert result["should_speak"] is True
 
 

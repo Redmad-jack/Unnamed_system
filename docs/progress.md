@@ -8,8 +8,8 @@
 
 - 当前进行中：无
 - 当前可运行形态：CLI + 本地 FastAPI 开发者 API + Web 看板 + 可选 Vision 面板 + 可选 Audio Adapter + `/visitor` 临时身体表面；观众侧最终呈现方向是身体，不是传统 UI
-- 当前核心能力：Stranger 文本协议、状态机、短期/情节/反思记忆、匿名 visitor profile 与跨 session visitor 记忆召回、Visitor Identity & Session Gating V1、可解释/可选 embedding 召回、Memory Preview、managed memory proposal → commit、influence log / curation、Runtime Harness Trace、可选 YOLO person presence detection、可选火山 ASR 2.0 / TTS 2.0 双向流式 Audio Adapter
-- 当前验证基线：`PYTHONPATH=src python3 -m pytest -p no:debugging`，最近一次完整结果为 `364 passed`
+- 当前核心能力：Stranger 文本协议、状态机、短期/情节/反思记忆、匿名 visitor profile 与跨 session visitor 记忆召回、Visitor Identity & Session Gating V1（含结构化 match result、candidate confirmation 和运行期 auto-bind 调试开关）、可解释/可选 embedding 召回、Memory Preview、managed memory proposal → commit、influence log / curation、Runtime Harness Trace、JSONL 端到端 latency 日志、可选 YOLO person presence detection、可选火山 ASR 2.0 / TTS 2.0 双向流式 Audio Adapter
+- 当前验证基线：`PYTHONPATH=src python3 -m pytest -p no:debugging`，最近一次完整结果为 `381 passed`
 - 当前交接重点：下一步不再优先扩展 UI，而是先补齐完整声纹识别、视觉识别和访客库；随后做能力自我描述回归测试与行为测试调优
 - 当前硬件参考方案：`docs/references/hardware.md` 与 `docs/references/system_logic.md` 已更新为单 Stranger 移动身体：Mac mini 随身上位机 + 1 片 ESP32-S3 + TCA9548A + 4 个 VL53L1X + 四路有刷电机驱动 + 4 个 36JP555，并已补充推荐接线方案；`firmware/stranger_esp32s3` 已新增 PlatformIO 下位机固件，当前包含串口协议、VL53L1X 距离 telemetry、ToF obstacle gate、四路电机测试入口、4WD 差速底盘开环控制和 ESP32 本地低速 roam
 - 当前注意事项：`AGENTS.md` 与 `CLAUDE.md` 有用户侧未提交差异；除非明确要求，不应在常规任务中触碰
@@ -22,8 +22,8 @@
 
 - [ ] 完整声纹识别、视觉识别与访客库
   - 基于当前 Visitor Identity & Session Gating V1 继续做，不要求观众硬性输入身份
-  - 完成 voice signature / face signature 的采集、质量门控、历史匹配、combined confidence、自然确认和 visitor profile metadata
-  - 当前 V1 只支持开发者手动绑定匿名 `visitor_id`；不能把它误读为已完成自动识别
+  - 下一步接入真实 voice signature / face signature 的采集、质量门控和历史匹配
+  - 当前 V1 已支持结构化识别结果接入和候选确认，但不能误读为已完成自动识别
 - [ ] 能力自我描述回归测试与优化
   - 重点检查 Stranger 对“看见、听见、记得、识别、移动、身体、声音、记忆”的自我描述是否和 runtime 能力一致
   - 测试入口见 `docs/testlist.md` 的 capability consistency 相关条目
@@ -47,6 +47,50 @@
 ---
 
 ## Changelog
+
+### 2026-05-21：用户可感知端到端 latency 日志 v2
+
+- [x] latency tracker 从纯内存态扩展为 `data/latency_logs/` JSONL 自动持久化，每类日志滚动保留最近 50 条，不写 SQLite。
+- [x] 自动记录并恢复：
+  - `turn-latency.jsonl`
+  - `audio-latency.jsonl`
+  - `llm-latency.jsonl`
+  - `presentation-latency.jsonl`
+- [x] `/api/v1/dialog` 与 `/api/v1/audio/dialog` 返回 `latency_record_id`，用于关联后端 turn latency 与浏览器 presentation latency。
+- [x] 新增 presentation latency API：
+  - `POST /api/v1/stats/presentation-latency`
+  - `GET /api/v1/stats/presentation-latency?n=50`
+- [x] 细化 memory retrieval 与 expression step：
+  - `memory_retrieval.current_session_recent_dialog`
+  - `memory_retrieval.visitor_recent_dialog`
+  - `memory_retrieval.current_episodic`
+  - `memory_retrieval.visitor_episodic`
+  - `memory_retrieval.reflective`
+  - `memory_retrieval.visitor_reflective`
+  - `expression.context_build`
+  - `expression.constitution_filter`
+- [x] Dashboard 与 `/visitor` 会上报文字响应/渲染、audio dialog response、`play()` resolved、`playing`、`ended` 等用户可感知链路事件。
+- [x] 日志边界：不保存原始音频、完整 prompt 或完整对话文本；损坏 JSON 行会跳过，不阻断 API 启动。
+- [x] 验证：
+  - `python3 -m py_compile src/conscious_entity/telemetry/latency.py src/conscious_entity/llm/stats_tracker.py src/conscious_entity/core/loop.py src/conscious_entity/expression/expression_engine.py src/conscious_entity/memory/retrieval.py src/conscious_entity/interfaces/api_models.py src/conscious_entity/interfaces/api_routes.py src/conscious_entity/interfaces/api_audio.py src/conscious_entity/interfaces/api.py`
+  - `node --check src/conscious_entity/interfaces/static/dashboard.js`
+  - `node --check /tmp/visitor-check.js`
+  - `PYTHONPATH=src python3 -m pytest -p no:debugging tests/unit/test_latency_tracker.py tests/unit/test_api_latency.py tests/unit/test_api_audio.py tests/unit/test_expression_engine.py`
+  - `PYTHONPATH=src python3 -m pytest -p no:debugging tests/unit/test_api_export.py tests/unit/test_memory_retrieval.py tests/unit/test_audio_manager.py`
+  - `PYTHONPATH=src python3 -m pytest -p no:debugging tests/unit/test_api_identity.py tests/unit/test_identity_session_gating.py`
+  - `PYTHONPATH=src python3 -m pytest -p no:debugging`，`381 passed`
+
+### 2026-05-21：访客识别结构底座与 Gating 调试 API
+
+- [x] 在 Visitor Identity & Session Gating V1 中新增结构化 `IdentityMatchResult`、face / voice match signal、signature reference 和运行期 `auto_bind_high_confidence` 配置
+- [x] `visitor_profiles.metadata.identity` 作为 V1 访客识别结构容器，保存 `schema_version`、signature reference、latest match summary 和 confirmation state；公共输出继续脱敏原始音频、原始图像和 embedding
+- [x] 新增开发者 API：
+  - `POST /api/v1/identity/config`
+  - `POST /api/v1/identity/match`
+  - `POST /api/v1/identity/confirm`
+- [x] 默认 high confidence 只设置 candidate 并等待非强制确认；auto-bind 只作为运行期调试开关，且只在无 primary visitor、非 active dialogue 时生效
+- [x] 当前仍未接真实 face / voice 模型；下一步继续做 signature capture、质量门控和历史匹配
+- [x] 验证：`PYTHONPATH=src python3 -m pytest -p no:debugging`，`374 passed`
 
 ### 2026-05-19：电机信号长窗口诊断
 
@@ -370,11 +414,11 @@
   - `PYTHONPATH=src python3 -m pytest -p no:debugging`
   - `331 passed`
 
-### 2026-05-11：Latency snapshot 导出工具
+### 2026-05-11：Latency snapshot 导出工具（历史记录）
 
-- [x] 确认当前 latency tracker 仍是进程内存态：
+- [x] 当时确认 latency tracker 仍是进程内存态；该状态已在 2026-05-21 升级为 JSONL 自动持久化：
   - `/api/v1/stats/latency` 与 `/api/v1/stats/audio-latency` 可读 summary / recent
-  - API 进程停止后，dashboard 中看到的历史 latency 平均值不可恢复
+  - 当时 API 进程停止后，dashboard 中看到的历史 latency 平均值不可恢复
 - [x] 新增 `scripts/export_latency_snapshot.py`：
   - 从本地 API 抓取 health、turn latency、audio latency、LLM stats
   - 输出 JSON 原始快照与 Markdown 汇总到 `data/latency_logs/`
@@ -441,6 +485,7 @@
 - [x] 新增只读统计端点：
   - `GET /api/v1/stats/latency`
   - `GET /api/v1/stats/audio-latency`
+- [x] 该阶段的内存态统计已在 2026-05-21 升级为 JSONL 自动持久化并补充 presentation latency。
 - [x] 开发者面板 Runtime 区显示最近 turn latency 与 audio latency 摘要
 - [x] 当前确认：
   - state update 仍是规则驱动，不存在单独“状态层 LLM”

@@ -16,6 +16,7 @@ This file tracks tests that require real devices, supplier APIs, exhibition spac
 - [ ] Combined identity confidence test: verify face-only, voice-only, and combined face+voice matching, including disagreement cases.
 - [ ] Natural confirmation test: when confidence is high enough, ask a non-blocking confirmation such as whether the visitor is a known person; if there is no answer, continue without forcing identity input.
 - [ ] Visitor profile persistence test: store identity metadata and signature references in `visitor_profiles.metadata` or a documented companion structure without exposing raw biometric data in the developer panel.
+- [ ] Identity match API integration test: feed simulated face / voice / combined match result through `/api/v1/identity/match`, then confirm or reject candidate through `/api/v1/identity/confirm`.
 - [ ] Database pollution test: passing-by observers, distant onlookers, and non-responsive people should not create visitor profiles.
 
 ## Entity Self-Model And Capability Consistency
