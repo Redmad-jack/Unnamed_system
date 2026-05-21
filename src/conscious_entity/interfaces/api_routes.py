@@ -110,6 +110,14 @@ async def visitor_surface():
     return FileResponse(str(html_path), media_type="text/html")
 
 
+@router.get("/art", include_in_schema=False)
+async def art_surface():
+    html_path = _static_dir() / "art.html"
+    if not html_path.exists():
+        raise HTTPException(status_code=404, detail="Art surface not found")
+    return FileResponse(str(html_path), media_type="text/html")
+
+
 @router.get("/health")
 async def health(request: Request):
     db_ok = True

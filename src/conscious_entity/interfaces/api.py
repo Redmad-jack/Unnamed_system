@@ -42,6 +42,7 @@ from conscious_entity.interfaces.api_models import (
     VisitorSelectRequest,
 )
 from conscious_entity.interfaces.api_routes import (
+    art_surface,
     config_all,
     config_embedding,
     config_embedding_test,

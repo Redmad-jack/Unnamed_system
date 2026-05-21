@@ -445,6 +445,12 @@ class TestClaudeClientCustomEndpoint:
         assert completion.stop_reason == "end_turn"
         assert completion.prompt_tokens == 31
         assert completion.completion_tokens == 17
+        assert completion.metadata["used_sdk_stream"] is True
+        assert completion.metadata["used_http_sse"] is False
+        assert completion.metadata["fell_back_to_non_streaming"] is False
+        assert isinstance(completion.metadata["first_text_delta_ms"], int)
+        assert completion.metadata["delta_count"] == 2
+        assert completion.metadata["thinking_delta_count"] == 0
         assert deltas == ["part one", " + part two"]
         assert fake_anthropic.last_stream_kwargs == {
             "model": "claude-sonnet-4-6",
@@ -481,6 +487,8 @@ class TestClaudeClientCustomEndpoint:
 
         assert completion.text == "safe"
         assert completion.stop_reason == "end_turn"
+        assert completion.metadata["delta_count"] == 1
+        assert completion.metadata["fell_back_to_non_streaming"] is False
 
     def test_complete_streaming_keeps_collected_text_when_final_message_unavailable(
         self,
@@ -505,6 +513,8 @@ class TestClaudeClientCustomEndpoint:
         assert completion.stop_reason is None
         assert completion.prompt_tokens == 0
         assert completion.completion_tokens == 0
+        assert completion.metadata["used_sdk_stream"] is True
+        assert completion.metadata["delta_count"] == 1
 
     def test_complete_streaming_falls_back_for_custom_endpoint(
         self,
@@ -522,6 +532,12 @@ class TestClaudeClientCustomEndpoint:
         )
 
         assert completion.text == "endpoint response"
+        assert completion.metadata["used_sdk_stream"] is False
+        assert completion.metadata["used_http_sse"] is False
+        assert completion.metadata["fell_back_to_non_streaming"] is True
+        assert completion.metadata["first_text_delta_ms"] is None
+        assert completion.metadata["delta_count"] == 0
+        assert completion.metadata["thinking_delta_count"] == 0
         assert fake_http_client.calls[0]["url"] == "https://provider.example/custom/messages"
 
     def test_complete_streaming_custom_endpoint_reads_sse_deltas(
@@ -530,6 +546,9 @@ class TestClaudeClientCustomEndpoint:
         fake_http_client,
     ):
         fake_http_client.stream_response = _FakeHTTPStreamResponse([
+            "event: content_block_delta",
+            'data: {"type":"content_block_delta","delta":{"type":"thinking_delta","thinking":"hidden"}}',
+            "",
             "event: content_block_delta",
             'data: {"type":"content_block_delta","delta":{"type":"text_delta","text":"first "}}',
             "",
@@ -556,6 +575,12 @@ class TestClaudeClientCustomEndpoint:
         assert completion.text == "first second"
         assert completion.stop_reason == "end_turn"
         assert completion.completion_tokens == 9
+        assert completion.metadata["used_sdk_stream"] is False
+        assert completion.metadata["used_http_sse"] is True
+        assert completion.metadata["fell_back_to_non_streaming"] is False
+        assert isinstance(completion.metadata["first_text_delta_ms"], int)
+        assert completion.metadata["delta_count"] == 2
+        assert completion.metadata["thinking_delta_count"] == 1
         assert deltas == ["first ", "second"]
         assert fake_http_client.calls[0]["method"] == "POST"
         assert fake_http_client.calls[0]["url"] == "https://provider.example/custom/messages"
@@ -587,6 +612,10 @@ class TestClaudeClientCustomEndpoint:
         )
 
         assert completion.text == "raw stream"
+        assert completion.metadata["used_sdk_stream"] is False
+        assert completion.metadata["used_http_sse"] is True
+        assert completion.metadata["fell_back_to_non_streaming"] is False
+        assert completion.metadata["delta_count"] == 1
         assert fake_http_client.calls[0]["url"] == "https://provider.example/v1/messages"
         assert fake_http_client.calls[0]["headers"]["Authorization"] == "Bearer supplier-token"
 
@@ -613,6 +642,12 @@ class TestClaudeClientCustomEndpoint:
         assert completion.text == "fallback response"
         assert completion.prompt_tokens == 8
         assert completion.completion_tokens == 5
+        assert completion.metadata["used_sdk_stream"] is False
+        assert completion.metadata["used_http_sse"] is False
+        assert completion.metadata["fell_back_to_non_streaming"] is True
+        assert completion.metadata["first_text_delta_ms"] is None
+        assert completion.metadata["delta_count"] == 0
+        assert completion.metadata["thinking_delta_count"] == 0
 
     def test_complete_with_metadata_exposes_custom_endpoint_stop_reason(
         self,

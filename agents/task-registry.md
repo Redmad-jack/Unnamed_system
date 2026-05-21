@@ -45,6 +45,38 @@ Status values: `in_progress`, `done`
 
 | File | Agent | Status | Started |
 |------|-------|--------|---------|
+| src/conscious_entity/llm/claude_client.py | Codex | done | 2026-05-21 10:20 CST |
+| src/conscious_entity/expression/expression_engine.py | Codex | done | 2026-05-21 10:20 CST |
+| tests/unit/test_claude_client.py | Codex | done | 2026-05-21 10:20 CST |
+| docs/progress.md | Codex | done | 2026-05-21 10:20 CST |
+| agents/task-registry.md | Codex | done | 2026-05-21 10:20 CST |
+| src/conscious_entity/interfaces/static/art.js | Codex | done | 2026-05-20 09:23 CST |
+| docs/progress.md | Codex | done | 2026-05-20 09:23 CST |
+| agents/task-registry.md | Codex | done | 2026-05-20 09:23 CST |
+| src/conscious_entity/interfaces/static/art.js | Codex | done | 2026-05-20 00:25 CST |
+| docs/progress.md | Codex | done | 2026-05-20 00:25 CST |
+| agents/task-registry.md | Codex | done | 2026-05-20 00:25 CST |
+| src/conscious_entity/interfaces/static/art.js | Codex | done | 2026-05-20 00:18 CST |
+| docs/progress.md | Codex | done | 2026-05-20 00:18 CST |
+| agents/task-registry.md | Codex | done | 2026-05-20 00:18 CST |
+| src/conscious_entity/interfaces/static/art.js | Codex | done | 2026-05-19 23:53 CST |
+| docs/progress.md | Codex | done | 2026-05-19 23:53 CST |
+| agents/task-registry.md | Codex | done | 2026-05-19 23:53 CST |
+| src/conscious_entity/interfaces/static/art.js | Codex | done | 2026-05-19 23:43 CST |
+| docs/progress.md | Codex | done | 2026-05-19 23:43 CST |
+| agents/task-registry.md | Codex | done | 2026-05-19 23:43 CST |
+| src/conscious_entity/interfaces/static/art.js | Codex | done | 2026-05-19 23:25 CST |
+| docs/progress.md | Codex | done | 2026-05-19 23:25 CST |
+| agents/task-registry.md | Codex | done | 2026-05-19 23:25 CST |
+| src/conscious_entity/interfaces/api_routes.py | Codex | done | 2026-05-19 22:52 CST |
+| src/conscious_entity/interfaces/api.py | Codex | done | 2026-05-19 22:52 CST |
+| src/conscious_entity/interfaces/static/art.html | Codex | done | 2026-05-19 22:52 CST |
+| src/conscious_entity/interfaces/static/art.css | Codex | done | 2026-05-19 22:52 CST |
+| src/conscious_entity/interfaces/static/art.js | Codex | done | 2026-05-19 22:52 CST |
+| src/conscious_entity/interfaces/static/vendor/three.module.js | Codex | done | 2026-05-19 22:52 CST |
+| tests/unit/test_api_export.py | Codex | done | 2026-05-19 22:52 CST |
+| docs/progress.md | Codex | done | 2026-05-19 22:52 CST |
+| agents/task-registry.md | Codex | done | 2026-05-19 22:52 CST |
 | src/conscious_entity/llm/claude_client.py | Codex | done | 2026-05-18 21:05 CST |
 | src/conscious_entity/interfaces/api_audio.py | Codex | done | 2026-05-18 21:05 CST |
 | tests/unit/test_claude_client.py | Codex | done | 2026-05-18 21:05 CST |

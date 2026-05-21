@@ -7,7 +7,7 @@
 ## 当前状态
 
 - 当前进行中：无
-- 当前可运行形态：CLI + 本地 FastAPI 开发者 API + Web 看板 + progressive text/audio NDJSON + 可选 Vision 面板 + 可选 Audio Adapter + `/visitor` 临时身体表面；观众侧最终呈现方向是身体，不是传统 UI
+- 当前可运行形态：CLI + 本地 FastAPI 开发者 API + Web 看板 + progressive text/audio NDJSON + 可选 Vision 面板 + 可选 Audio Adapter + `/visitor` 临时身体表面 + `/art` 情绪粒子身体表面；观众侧最终呈现方向是身体，不是传统 UI
 - 当前核心能力：Stranger 文本协议、最高优先级艺术运行 context、热加载 prompt partial、本轮语言强制优先与错语言兜底、非否认式能力边界正向模板与输入通道防自我否认约束、含“恋旧” memory_gravity 的新心理状态机、带上一轮轻量 bridge 的 pre-memory 轻量 `first_unit` + 已说出口 first 去重续写的 memory-aware `second_unit` 按句文本/audio progressive 输出、main LLM 后端 streaming buffer、two-stage / sentence-queued TTS、短期/情节/反思记忆、匿名 visitor profile 与跨 session visitor 记忆召回、Visitor Identity & Session Gating V1、可解释/可选 embedding 召回、Memory Preview、managed memory proposal → commit、influence log / curation、Runtime Harness Trace、可选 YOLO person presence detection、可选火山 ASR 2.0 / TTS 2.0 双向流式 Audio Adapter
 - 当前验证基线：`.venv/bin/python -m pytest -p no:debugging`，最近一次完整结果为 `521 passed`
 - 当前交接重点：下一步不再优先扩展 UI，而是先补齐完整声纹识别、视觉识别和访客库；能力自我描述已改为非否认式边界，后续按该口径继续做行为测试调优
@@ -45,6 +45,47 @@
 ---
 
 ## Changelog
+
+### 2026-05-21：LLM Streaming 网关探针与诊断 metadata
+
+- [x] 使用当前 `.env` 配置对 `https://aihubmix.com/v1/messages` 做最小 SSE 探针：返回 `text/event-stream`；首个 `text_delta` 约 1076ms 到达，后续 21 个 `text_delta` 持续到约 1613ms；本次探针未显示网关把整段回答缓存到结束后才返回
+- [x] 使用项目内 `ClaudeClient.complete_streaming_with_metadata()` 做真实链路验证：当前配置实际走 `used_sdk_stream=True`，没有 fallback；首个文本 delta 约 1384ms，`delta_count=18`，`thinking_delta_count=0`
+- [x] `ClaudeCompletion` 新增 `metadata`，`ClaudeClient.complete_streaming_with_metadata()` 记录 streaming 诊断字段：`used_sdk_stream`、`used_http_sse`、`fell_back_to_non_streaming`、`first_text_delta_ms`、`delta_count`、`thinking_delta_count`
+- [x] HTTP SSE 路径现在识别 `thinking_delta` 计数；当前运行代码仍未启用 Claude thinking，只用于诊断供应商/未来模型事件形态
+- [x] `ExpressionEngine` 将 `ClaudeCompletion.metadata` 透传到 Harness generation metadata 的 `llm_streaming_diagnostics`，方便后续从 trace 判断实际是否真流
+- [x] 验证：
+  - `.venv/bin/python -m py_compile src/conscious_entity/llm/claude_client.py src/conscious_entity/expression/expression_engine.py tests/unit/test_claude_client.py`
+  - `.venv/bin/python -m pytest -p no:debugging tests/unit/test_claude_client.py`（`23 passed`）
+  - `.venv/bin/python -m pytest -p no:debugging tests/unit/test_expression_engine.py`（`43 passed`）
+
+### 2026-05-19：`/art` 情绪粒子身体表面
+
+- [x] 新增观众侧 `/art` 页面，保留既有 `/visitor` 不变；页面不显示 dashboard、内部规则、状态数字、memory 或 prompt
+- [x] `/art` 使用本地 vendored Three.js `0.164.1`（来自官方 npm package）+ 当前本地 React；运行时不依赖 CDN、不新增 Python 依赖、不引入前端构建链
+- [x] 前端只读取现有 `/api/v1/state` 与 `/api/v1/interaction-log?limit=8`，以最新 `visual_mode` 和当前 state 字段驱动中心球体、环绕粒子、颜色、震动、轨道速度、扰动、亮度和呼吸节奏
+- [x] 根据 `jeromepl/3D-audio-sphere` 的球面粒子思路重做中心体：中心不再是实体 mesh，而是约 4200 个螺旋离散球面粒子；保留原有 root 震动与外层环绕粒子，并新增约 1800 个贴近球面外轮廓的高密度流动粒子带
+- [x] 中心粒子球形变改为伪说话频谱驱动：按参考项目的“赤道低频 → 两极高频”对称映射为每个核心粒子分配 `speechBand`，每帧生成 synthetic spectrum，让赤道厚重鼓动、两极尖刺闪动，并保持永不归零的刺状 baseline
+- [x] 2026-05-20 现场调参：降低均匀频谱权重，新增 signed random burst layer；局部频段会偶发向外炸出或向圆心塌陷，快速衰减，避免中心球变成平均波纹；随后按现场反馈回滚单粒子 pin jab，去掉细碎小刺
+- [x] 2026-05-20 新增前端趋势偏色层：保留原 1.3 秒 `/api/v1/state` + `/api/v1/interaction-log` 主机制，额外每 0.9 秒只读 `/api/v1/state`，根据状态上升趋势累积最多 28% 的同色系偏移；未过旧 `visual_mode` 阈值时不会直接切成新主色
+- [x] 情绪主色映射：`desperate` 深品红、`angry` 红、`confused` 紫、`tired` 冷灰、`ashamed/exposure` 暗橙、`curious` 琥珀、`caring` 青绿、`open` 冷蓝、`normal` 暖白；`memory_gravity` 只影响外层粒子密度/拖尾感，`happiness` 只给轻微暖色辉光
+- [x] 已确认当前代码实际状态字段为 `desperation_pressure`、`confusion`、`anger`、`fatigue_level`、`exposure_pressure`、`inquiry`、`care_response`、`positive_opening`、`memory_gravity`、`happiness`；高优先级 docs 中仍存在旧 Stranger 关系状态描述，后续文档同步时需修正，不应让新 `/art` 读取旧字段
+- [x] WebGL / Three.js 加载失败时页面保留 CSS 静态球体和环形 fallback，不中断页面
+- [x] 按现场截图调整光晕：移除半透明几何球壳造成的硬边，改为程序生成的径向渐变 `CanvasTexture` + `SpriteMaterial` additive glow，让光环在外缘自然衰减到透明
+- [x] 验证：
+  - `node --check src/conscious_entity/interfaces/static/art.js`
+  - `node --check src/conscious_entity/interfaces/static/vendor/three.module.js`
+  - `.venv/bin/python -m py_compile src/conscious_entity/interfaces/api.py src/conscious_entity/interfaces/api_routes.py`
+  - `.venv/bin/python -m pytest -p no:debugging tests/unit/test_api_export.py`
+  - `18 passed`
+  - `git diff --check src/conscious_entity/interfaces/api.py src/conscious_entity/interfaces/api_routes.py src/conscious_entity/interfaces/static/art.html src/conscious_entity/interfaces/static/art.css src/conscious_entity/interfaces/static/art.js tests/unit/test_api_export.py docs/progress.md agents/task-registry.md`
+  - 本地 API 验证：`/health`、`/art`、`/visitor`、`/static/art.js`、`/static/vendor/three.module.js` 均可返回
+  - 二次粒子球修改后复验：`node --check src/conscious_entity/interfaces/static/art.js`、`.venv/bin/python -m pytest -p no:debugging tests/unit/test_api_export.py`（`18 passed`）、本地 `/health` / `/art` / `/static/art.js` 返回正常
+  - 光晕衰减调整后复验：`node --check src/conscious_entity/interfaces/static/art.js`、`git diff --check src/conscious_entity/interfaces/static/art.js docs/progress.md agents/task-registry.md`，本地 `/static/art.js` 返回正常
+  - 说话刺化调整后复验：`node --check src/conscious_entity/interfaces/static/art.js`、`.venv/bin/python -m py_compile src/conscious_entity/interfaces/api.py src/conscious_entity/interfaces/api_routes.py`、`.venv/bin/python -m pytest -p no:debugging tests/unit/test_api_export.py`（`18 passed`）、`git diff --check`；本地 `/art`、`/visitor`、`/static/art.js` 均返回 `200`
+  - 随机剧烈尖刺调整后复验：`node --check src/conscious_entity/interfaces/static/art.js`、`.venv/bin/python -m py_compile src/conscious_entity/interfaces/api.py src/conscious_entity/interfaces/api_routes.py`、`.venv/bin/python -m pytest -p no:debugging tests/unit/test_api_export.py`（`18 passed`）、`git diff --check`
+  - 回滚单粒子小刺后复验：`node --check src/conscious_entity/interfaces/static/art.js`、`git diff --check`
+  - 趋势偏色层新增后复验：`node --check src/conscious_entity/interfaces/static/art.js`、`.venv/bin/python -m py_compile src/conscious_entity/interfaces/api.py src/conscious_entity/interfaces/api_routes.py`、`.venv/bin/python -m pytest -p no:debugging tests/unit/test_api_export.py`（`18 passed`）、`git diff --check`
+  - 注意：浏览器自动截图验证尝试时 browser connector 两次超时，未完成自动视觉截图；本轮已完成代码级、测试级和本地 HTTP 验证，视觉细调仍建议现场打开 `/art` 观察
 
 ### 2026-05-18：Step 17.3 Audio Progressive 按句 TTS Queue
 

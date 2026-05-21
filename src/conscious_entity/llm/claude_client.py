@@ -4,9 +4,9 @@ import json
 import logging
 import os
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Callable, Optional
+from typing import Any, Callable, Optional
 
 import httpx
 
@@ -36,6 +36,7 @@ class ClaudeCompletion:
     stop_reason: str | None = None
     prompt_tokens: int = 0
     completion_tokens: int = 0
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 class ClaudeClient:
@@ -294,7 +295,15 @@ class ClaudeClient:
                 endpoint=self._messages_endpoint,
             )
         if self._client is None:
-            return self.complete_with_metadata(system, messages, max_tokens)
+            return self._with_streaming_diagnostics(
+                self.complete_with_metadata(system, messages, max_tokens),
+                used_sdk_stream=False,
+                used_http_sse=False,
+                fell_back_to_non_streaming=True,
+                first_text_delta_ms=None,
+                delta_count=0,
+                thinking_delta_count=0,
+            )
 
         messages_client = getattr(self._client, "messages", None)
         stream_factory = getattr(messages_client, "stream", None)
@@ -308,7 +317,15 @@ class ClaudeClient:
                     on_text_delta=on_text_delta,
                     endpoint=endpoint,
                 )
-            return self.complete_with_metadata(system, messages, max_tokens)
+            return self._with_streaming_diagnostics(
+                self.complete_with_metadata(system, messages, max_tokens),
+                used_sdk_stream=False,
+                used_http_sse=False,
+                fell_back_to_non_streaming=True,
+                first_text_delta_ms=None,
+                delta_count=0,
+                thinking_delta_count=0,
+            )
 
         start = time.monotonic()
         completion = ClaudeCompletion(text="")
@@ -316,6 +333,8 @@ class ClaudeClient:
         try:
             collected: list[str] = []
             final_message = None
+            first_text_delta_ms: int | None = None
+            delta_count = 0
             with stream_factory(
                 model=self._model,
                 max_tokens=max_tokens,
@@ -331,6 +350,9 @@ class ClaudeClient:
                     text_delta = delta if isinstance(delta, str) else str(delta)
                     if not text_delta:
                         continue
+                    delta_count += 1
+                    if first_text_delta_ms is None:
+                        first_text_delta_ms = int((time.monotonic() - start) * 1000)
                     collected.append(text_delta)
                     if on_text_delta is not None:
                         try:
@@ -360,6 +382,14 @@ class ClaudeClient:
                 ),
                 prompt_tokens=prompt_tokens,
                 completion_tokens=completion_tokens,
+                metadata=self._streaming_diagnostics(
+                    used_sdk_stream=True,
+                    used_http_sse=False,
+                    fell_back_to_non_streaming=False,
+                    first_text_delta_ms=first_text_delta_ms,
+                    delta_count=delta_count,
+                    thinking_delta_count=0,
+                ),
             )
         except Exception as exc:
             logger.warning(
@@ -377,7 +407,15 @@ class ClaudeClient:
                     on_text_delta=on_text_delta,
                     endpoint=endpoint,
                 )
-            return self.complete_with_metadata(system, messages, max_tokens)
+            return self._with_streaming_diagnostics(
+                self.complete_with_metadata(system, messages, max_tokens),
+                used_sdk_stream=False,
+                used_http_sse=False,
+                fell_back_to_non_streaming=True,
+                first_text_delta_ms=None,
+                delta_count=0,
+                thinking_delta_count=0,
+            )
 
         self._record_completion_stats(start, completion, None)
         return completion
@@ -409,7 +447,15 @@ class ClaudeClient:
                 max_tokens,
                 exc,
             )
-            return self.complete_with_metadata(system, messages, max_tokens)
+            return self._with_streaming_diagnostics(
+                self.complete_with_metadata(system, messages, max_tokens),
+                used_sdk_stream=False,
+                used_http_sse=False,
+                fell_back_to_non_streaming=True,
+                first_text_delta_ms=None,
+                delta_count=0,
+                thinking_delta_count=0,
+            )
         self._record_completion_stats(start, completion, None)
         return completion
 
@@ -430,6 +476,10 @@ class ClaudeClient:
         prompt_tokens = 0
         completion_tokens = 0
         final_payload: object | None = None
+        start = time.monotonic()
+        first_text_delta_ms: int | None = None
+        delta_count = 0
+        thinking_delta_count = 0
 
         with self._http_client.stream(
             "POST",
@@ -455,12 +505,17 @@ class ClaudeClient:
                 event_stop_reason = self._stream_stop_reason(event)
                 if event_stop_reason:
                     stop_reason = event_stop_reason
+                if self._stream_is_thinking_delta(event):
+                    thinking_delta_count += 1
                 usage_prompt, usage_completion = self._stream_usage(event)
                 prompt_tokens = usage_prompt or prompt_tokens
                 completion_tokens = usage_completion or completion_tokens
                 text_delta = self._stream_text_delta(event)
                 if not text_delta:
                     continue
+                delta_count += 1
+                if first_text_delta_ms is None:
+                    first_text_delta_ms = int((time.monotonic() - start) * 1000)
                 collected.append(text_delta)
                 if on_text_delta is not None:
                     try:
@@ -482,6 +537,63 @@ class ClaudeClient:
             stop_reason=stop_reason,
             prompt_tokens=prompt_tokens,
             completion_tokens=completion_tokens,
+            metadata=self._streaming_diagnostics(
+                used_sdk_stream=False,
+                used_http_sse=True,
+                fell_back_to_non_streaming=False,
+                first_text_delta_ms=first_text_delta_ms,
+                delta_count=delta_count,
+                thinking_delta_count=thinking_delta_count,
+            ),
+        )
+
+    @staticmethod
+    def _streaming_diagnostics(
+        *,
+        used_sdk_stream: bool,
+        used_http_sse: bool,
+        fell_back_to_non_streaming: bool,
+        first_text_delta_ms: int | None,
+        delta_count: int,
+        thinking_delta_count: int,
+    ) -> dict[str, Any]:
+        return {
+            "used_sdk_stream": used_sdk_stream,
+            "used_http_sse": used_http_sse,
+            "fell_back_to_non_streaming": fell_back_to_non_streaming,
+            "first_text_delta_ms": first_text_delta_ms,
+            "delta_count": delta_count,
+            "thinking_delta_count": thinking_delta_count,
+        }
+
+    @classmethod
+    def _with_streaming_diagnostics(
+        cls,
+        completion: ClaudeCompletion,
+        *,
+        used_sdk_stream: bool,
+        used_http_sse: bool,
+        fell_back_to_non_streaming: bool,
+        first_text_delta_ms: int | None,
+        delta_count: int,
+        thinking_delta_count: int,
+    ) -> ClaudeCompletion:
+        return ClaudeCompletion(
+            text=completion.text,
+            stop_reason=completion.stop_reason,
+            prompt_tokens=completion.prompt_tokens,
+            completion_tokens=completion.completion_tokens,
+            metadata={
+                **completion.metadata,
+                **cls._streaming_diagnostics(
+                    used_sdk_stream=used_sdk_stream,
+                    used_http_sse=used_http_sse,
+                    fell_back_to_non_streaming=fell_back_to_non_streaming,
+                    first_text_delta_ms=first_text_delta_ms,
+                    delta_count=delta_count,
+                    thinking_delta_count=thinking_delta_count,
+                ),
+            },
         )
 
     def _derived_messages_endpoint(self) -> str | None:
@@ -542,6 +654,18 @@ class ClaudeClient:
                 if isinstance(text, str):
                     return text
         return ""
+
+    @classmethod
+    def _stream_is_thinking_delta(cls, payload: object) -> bool:
+        if not isinstance(payload, dict):
+            return False
+        event_type = payload.get("type")
+        if event_type == "thinking_delta":
+            return True
+        if event_type == "content_block_delta":
+            delta = payload.get("delta")
+            return isinstance(delta, dict) and delta.get("type") == "thinking_delta"
+        return False
 
     @classmethod
     def _stream_stop_reason(cls, payload: object) -> str | None:

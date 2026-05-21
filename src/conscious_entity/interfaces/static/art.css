@@ -1,0 +1,148 @@
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --bg: #030304;
+  --orb: rgba(230, 225, 216, 0.46);
+  --glow: rgba(230, 225, 216, 0.18);
+}
+
+html,
+body,
+#art-root {
+  background: var(--bg);
+  height: 100%;
+  overflow: hidden;
+  width: 100%;
+}
+
+body {
+  color: #e6e1d8;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.art-shell {
+  background:
+    radial-gradient(circle at 50% 48%, rgba(230, 225, 216, 0.09), transparent 18%),
+    radial-gradient(circle at 50% 50%, rgba(55, 68, 86, 0.14), transparent 43%),
+    #030304;
+  height: 100%;
+  isolation: isolate;
+  overflow: hidden;
+  position: relative;
+  width: 100%;
+}
+
+.art-canvas-host {
+  height: 100%;
+  inset: 0;
+  position: absolute;
+  width: 100%;
+  z-index: 2;
+}
+
+.art-canvas-host canvas {
+  display: block;
+  height: 100%;
+  width: 100%;
+}
+
+.ambient-field {
+  inset: 0;
+  opacity: 0.78;
+  pointer-events: none;
+  position: absolute;
+  z-index: 1;
+}
+
+.fallback-orb,
+.fallback-ring,
+.fallback-noise {
+  left: 50%;
+  position: absolute;
+  top: 50%;
+  transform: translate(-50%, -50%);
+}
+
+.fallback-orb {
+  aspect-ratio: 1;
+  background:
+    radial-gradient(circle at 38% 34%, rgba(255, 255, 255, 0.34), transparent 8%),
+    radial-gradient(circle at 44% 38%, var(--orb), rgba(12, 13, 15, 0.92) 68%);
+  border: 1px solid rgba(230, 225, 216, 0.16);
+  border-radius: 50%;
+  box-shadow:
+    0 0 34px var(--glow),
+    0 0 120px rgba(230, 225, 216, 0.08);
+  filter: blur(0.2px);
+  max-width: 430px;
+  min-width: 220px;
+  width: min(30vw, 44vh);
+}
+
+.fallback-ring {
+  aspect-ratio: 1;
+  border: 1px solid rgba(230, 225, 216, 0.12);
+  border-radius: 50%;
+  filter: blur(0.5px);
+  max-width: 760px;
+  min-width: 320px;
+  width: min(62vw, 74vh);
+}
+
+.fallback-ring:nth-child(2) {
+  opacity: 0.46;
+  transform: translate(-50%, -50%) rotateX(64deg) rotateZ(-9deg);
+}
+
+.fallback-ring:nth-child(3) {
+  opacity: 0.34;
+  transform: translate(-50%, -50%) rotateX(73deg) rotateZ(28deg);
+  width: min(74vw, 86vh);
+}
+
+.fallback-noise {
+  aspect-ratio: 1;
+  background:
+    radial-gradient(circle at 20% 34%, rgba(230, 225, 216, 0.2) 0 1px, transparent 2px),
+    radial-gradient(circle at 70% 62%, rgba(230, 225, 216, 0.14) 0 1px, transparent 2px),
+    radial-gradient(circle at 44% 80%, rgba(230, 225, 216, 0.18) 0 1px, transparent 2px);
+  background-size: 57px 61px, 83px 79px, 109px 107px;
+  border-radius: 50%;
+  filter: blur(0.2px);
+  max-width: 980px;
+  min-width: 500px;
+  opacity: 0.28;
+  width: min(82vw, 96vh);
+}
+
+.art-shell.webgl-ready .ambient-field {
+  opacity: 0.24;
+}
+
+.art-shell.webgl-failed .ambient-field {
+  animation: fallback-breathe 5.6s ease-in-out infinite;
+  opacity: 0.92;
+}
+
+@keyframes fallback-breathe {
+  0%, 100% {
+    filter: blur(0);
+    transform: scale(0.992);
+  }
+  50% {
+    filter: blur(0.8px);
+    transform: scale(1.012);
+  }
+}
+
+@media (max-width: 720px) {
+  .fallback-orb {
+    min-width: 170px;
+    width: min(48vw, 35vh);
+  }
+
+  .fallback-ring {
+    min-width: 260px;
+    width: min(92vw, 62vh);
+  }
+}

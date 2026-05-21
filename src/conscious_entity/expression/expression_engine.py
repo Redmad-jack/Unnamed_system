@@ -646,6 +646,8 @@ class ExpressionEngine:
             "stop_reason": completion.stop_reason,
             "max_tokens": ctx.max_tokens,
         }
+        if getattr(completion, "metadata", None):
+            generation_metadata["llm_streaming_diagnostics"] = dict(completion.metadata)
         if streaming_attempted:
             generation_metadata.update({
                 "streaming_buffered": True,

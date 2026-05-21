@@ -68,6 +68,23 @@ def test_conversation_export_payload_contains_user_and_entity_text(tmp_path):
     assert payload["turns"][0]["event_types"] == ["user_spoke", "self_definition_query"]
 
 
+def test_art_surface_file_exists_and_keeps_local_vendor():
+    response = asyncio.run(api.art_surface())
+    html_path = api._static_dir() / "art.html"
+    css_path = api._static_dir() / "art.css"
+    js_path = api._static_dir() / "art.js"
+    three_path = api._static_dir() / "vendor" / "three.module.js"
+
+    assert response.path == str(html_path)
+    assert html_path.exists()
+    assert css_path.exists()
+    assert js_path.exists()
+    assert three_path.exists()
+    assert "/static/vendor/three.module.js" in js_path.read_text(encoding="utf-8")
+    assert "https://" not in html_path.read_text(encoding="utf-8")
+    assert "https://" not in js_path.read_text(encoding="utf-8")
+
+
 def test_conversation_export_payload_can_select_session(tmp_path):
     db_path = tmp_path / "memory.db"
     conn = sqlite3.connect(db_path)
