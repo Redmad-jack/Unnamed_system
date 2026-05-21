@@ -63,6 +63,47 @@
     if (trimmed) onEvent(JSON.parse(trimmed));
   }
 
+  function nowMs() {
+    return window.performance && typeof window.performance.now === "function"
+      ? window.performance.now()
+      : Date.now();
+  }
+
+  function postPresentationLatency(kind, startedAt, options = {}) {
+    const duration = Math.max(0, nowMs() - startedAt);
+    fetchJSON("/api/v1/stats/presentation-latency", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        kind,
+        duration_ms: duration,
+        latency_record_id: options.latencyRecordId || null,
+        success: options.success !== false,
+        error: options.error || null,
+        metadata: options.metadata || {},
+      }),
+    }).catch(() => null);
+  }
+
+  function browserCameraCapability() {
+    const mediaDevices = Boolean(navigator.mediaDevices);
+    return {
+      secure_context: Boolean(window.isSecureContext),
+      media_devices: mediaDevices,
+      get_user_media: Boolean(mediaDevices && navigator.mediaDevices.getUserMedia),
+      enumerate_devices: Boolean(mediaDevices && navigator.mediaDevices.enumerateDevices),
+      protocol: window.location.protocol,
+      user_agent: navigator.userAgent,
+    };
+  }
+
+  function errorSummary(error) {
+    if (!error) return "unknown error";
+    const name = error.name || "Error";
+    const message = error.message || String(error);
+    return `${name}: ${message}`;
+  }
+
   function useInterval(callback, delay) {
     const saved = useRef(callback);
     useEffect(() => { saved.current = callback; }, [callback]);
@@ -196,8 +237,15 @@
     const [health, setHealth] = useState(null);
     const [sessionType, setSessionType] = useState("test");
     const [configOpen, setConfigOpen] = useState(false);
+    const [armState, setArmState] = useState({ status: "idle", detail: "not armed" });
+    const armStreamsRef = useRef([]);
 
     useEffect(() => { writeLayout(layout); }, [layout]);
+    useEffect(() => () => {
+      armStreamsRef.current.forEach((stream) => {
+        stream.getTracks().forEach((track) => track.stop());
+      });
+    }, []);
 
     const pollHealth = useCallback(async () => {
       try {
@@ -289,6 +337,79 @@
       }
     }, []);
 
+    const armExhibition = useCallback(async () => {
+      setArmState({ status: "arming", detail: "requesting camera, mic, playback" });
+      armStreamsRef.current.forEach((stream) => {
+        stream.getTracks().forEach((track) => track.stop());
+      });
+      armStreamsRef.current = [];
+
+      const results = [];
+      const requestMedia = async (kind, constraints) => {
+        try {
+          const stream = await navigator.mediaDevices.getUserMedia(constraints);
+          armStreamsRef.current.push(stream);
+          const track = stream.getTracks()[0];
+          results.push({ kind, ok: true, label: track ? track.label : kind });
+        } catch (error) {
+          results.push({ kind, ok: false, error: errorSummary(error) });
+        }
+      };
+
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        const detail = "browser media API unavailable";
+        setArmState({ status: "error", detail });
+        fetchJSON("/api/v1/vision/client-log", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            event: "exhibition_arm_unavailable",
+            detail: { summary: detail, capability: browserCameraCapability() },
+            at: new Date().toISOString(),
+          }),
+        }).catch(() => null);
+        return;
+      }
+
+      await requestMedia("camera", { audio: false, video: true });
+      await requestMedia("mic", { audio: true, video: false });
+
+      let playbackOk = false;
+      let playbackError = null;
+      try {
+        const player = new Audio(SILENT_WAV);
+        player.volume = 0.01;
+        await player.play();
+        player.pause();
+        playbackOk = true;
+      } catch (error) {
+        playbackError = errorSummary(error);
+      }
+
+      const failed = results.filter((item) => !item.ok);
+      if (!playbackOk) {
+        failed.push({ kind: "playback", ok: false, error: playbackError || "playback unlock failed" });
+      }
+      const detail = failed.length
+        ? failed.map((item) => `${item.kind}: ${item.error}`).join(" | ")
+        : `camera, mic, playback ready`;
+      setArmState({ status: failed.length ? "error" : "ready", detail });
+      fetchJSON("/api/v1/vision/client-log", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          event: failed.length ? "exhibition_arm_error" : "exhibition_arm_ready",
+          detail: {
+            summary: detail,
+            results,
+            playback: { ok: playbackOk, error: playbackError },
+            capability: browserCameraCapability(),
+          },
+          at: new Date().toISOString(),
+        }),
+      }).catch(() => null);
+    }, []);
+
     const gridStyle = {
       gridTemplateColumns: `${layout.left}px minmax(360px, 1fr) ${layout.right}px`,
       gridTemplateRows: `minmax(220px, 1fr) ${layout.bottom}px`,
@@ -301,15 +422,18 @@
         health,
         sessionType,
         onSessionTypeChange: applySessionType,
-        onSave: saveConversation,
-        onReset: resetMemory,
+        armState,
+        onArm: armExhibition,
         onConfig: () => setConfigOpen(true),
       }),
       h("main", { className, style: gridStyle },
         h(Panel, { title: "Entity State", className: "state-panel" }, h(EntityState)),
         h(Panel, { title: "Vision", className: "vision-panel", bodyClassName: "vision-body" }, h(VisionPanel)),
         h(Panel, { title: "Dialog", className: "dialog-panel", bodyClassName: "dialog-panel" }, h(DialogPanel)),
-        h(Panel, { title: "Memory System", className: "memory-panel" }, h(MemorySummary)),
+        h(Panel, { title: "Memory System", className: "memory-panel" }, h(MemorySummary, {
+          onSave: saveConversation,
+          onReset: resetMemory,
+        })),
         h(Panel, { title: "Right Sidebar", className: "runtime-panel", bodyClassName: "sidebar-body" }, h(RuntimeSidebar)),
         h("div", {
           className: `resize-handle vertical ${resizeMode === "left" ? "active" : ""}`,
@@ -334,8 +458,10 @@
     );
   }
 
-  function Header({ health, sessionType, onSessionTypeChange, onSave, onReset, onConfig }) {
+  function Header({ health, sessionType, onSessionTypeChange, armState, onArm, onConfig }) {
     const status = health && health.status ? health.status : "connecting";
+    const armStatus = armState && armState.status ? armState.status : "idle";
+    const armLabel = armStatus === "arming" ? "ARMING" : `ARM: ${armStatus.toUpperCase()}`;
     return h("header", { className: "app-header" },
       h("h1", { className: "app-title" }, "CONSCIOUS ENTITY — DEV PANEL"),
       h("span", { className: `badge ${status === "ok" ? "ok" : status === "connecting" ? "" : "err"}` }, status.toUpperCase()),
@@ -348,9 +474,13 @@
         h("option", { value: "test" }, "test"),
         h("option", { value: "exhibition" }, "exhibition"),
       ),
-      h("button", { className: "btn-sm", onClick: onSave }, "Save Dialog"),
-      h("button", { className: "btn-sm", onClick: onReset }, "Reset Memory / New Session"),
       h("button", { className: "btn-sm", onClick: onConfig }, "YAML Config"),
+      h("button", {
+        className: armStatus === "ready" ? "btn-sm active arm-button" : `btn-sm arm-button ${armStatus === "error" ? "err-action" : ""}`,
+        onClick: onArm,
+        disabled: armStatus === "arming",
+        title: armState ? armState.detail : "",
+      }, armLabel),
       h("div", { className: "header-spacer" }),
       h("span", { className: "session-label" }, health && health.session_id ? `session: ${compactId(health.session_id)} · ${sessionType} · visitor: ${health.visitor_id ? compactId(health.visitor_id) : "none"}` : "session: —"),
     );
@@ -401,12 +531,46 @@
     const [identityStatus, setIdentityStatus] = useState(null);
     const [metadata, setMetadata] = useState(null);
     const [error, setError] = useState("");
+    const [selectedCameraId, setSelectedCameraId] = useState("");
+    const [cameraOptions, setCameraOptions] = useState(() => [{ deviceId: "", label: "Default Camera" }]);
+    const [scanning, setScanning] = useState(false);
+    const [browserCameraActive, setBrowserCameraActive] = useState(false);
+    const [browserCameraError, setBrowserCameraError] = useState("");
+    const [cameraDebug, setCameraDebug] = useState({
+      action: "idle",
+      detail: "Default Camera is available before scanning.",
+    });
     const [frameUrl, setFrameUrl] = useState("");
     const socketRef = useRef(null);
     const frameUrlRef = useRef("");
+    const browserVideoRef = useRef(null);
+    const browserCanvasRef = useRef(null);
+    const browserStreamRef = useRef(null);
+    const browserIntervalRef = useRef(null);
+    const browserBusyRef = useRef(false);
 
     const detections = (metadata && metadata.detections) || (status && status.latest && status.latest.detections) || [];
     const events = (metadata && metadata.events) || (status && status.recent_events) || [];
+
+    const reportCameraDebug = useCallback((event, detail = {}) => {
+      const payload = {
+        event,
+        detail: {
+          ...detail,
+          capability: browserCameraCapability(),
+        },
+        at: new Date().toISOString(),
+      };
+      setCameraDebug({
+        action: event,
+        detail: detail.summary || JSON.stringify(payload.detail),
+      });
+      fetchJSON("/api/v1/vision/client-log", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      }).catch(() => null);
+    }, []);
 
     const disconnectStream = useCallback(() => {
       if (socketRef.current) {
@@ -451,36 +615,215 @@
       }
     }, [connectStream]);
 
-    const start = useCallback(async () => {
+    const scanCameras = useCallback(async () => {
+      setScanning(true);
+      setBrowserCameraError("");
+      reportCameraDebug("scan_start", { summary: "Scan requested." });
       try {
-        const data = await fetchJSON("/api/v1/vision/start", { method: "POST" });
+        const capability = browserCameraCapability();
+        if (!capability.get_user_media) {
+          const cameras = [{ deviceId: "", label: "Default Camera" }];
+          setCameraOptions(cameras);
+          setSelectedCameraId("");
+          const message = "Browser camera API is not available in this webview/browser.";
+          setError(message);
+          reportCameraDebug("scan_unavailable", { summary: message, capability });
+          return;
+        }
+        let devices = navigator.mediaDevices.enumerateDevices
+          ? await navigator.mediaDevices.enumerateDevices()
+          : [];
+        let permissionStream = null;
+        let permissionError = null;
+        const hasNamedCamera = devices.some((device) => device.kind === "videoinput" && device.label);
+        if (!hasNamedCamera && !browserStreamRef.current) {
+          try {
+            permissionStream = await navigator.mediaDevices.getUserMedia({ audio: false, video: true });
+            devices = navigator.mediaDevices.enumerateDevices
+              ? await navigator.mediaDevices.enumerateDevices()
+              : [];
+          } catch (err) {
+            permissionError = errorSummary(err);
+          }
+        }
+        if (permissionStream) {
+          permissionStream.getTracks().forEach((track) => track.stop());
+        }
+        const scannedCameras = devices
+          .filter((device) => device.kind === "videoinput")
+          .map((device, index) => ({
+            deviceId: device.deviceId,
+            label: device.label || `Camera ${index + 1}`,
+          }));
+        const cameras = scannedCameras.length
+          ? scannedCameras
+          : [{ deviceId: "", label: "Default Camera" }];
+        setCameraOptions(cameras);
+        if (cameras.length && !cameras.some((item) => item.deviceId === selectedCameraId)) {
+          setSelectedCameraId(cameras[0].deviceId);
+        }
+        if (permissionError) {
+          setError(`Camera permission check failed: ${permissionError}`);
+        } else {
+          setError("");
+        }
+        reportCameraDebug("scan_done", {
+          summary: `Scan finished: ${cameras.length} option(s).${permissionError ? " Permission check failed." : ""}`,
+          device_count: devices.filter((device) => device.kind === "videoinput").length,
+          options: cameras.map((camera) => camera.label),
+          permission_error: permissionError,
+        });
+      } catch (err) {
+        const message = errorSummary(err);
+        setCameraOptions([{ deviceId: "", label: "Default Camera" }]);
+        setSelectedCameraId("");
+        setError(message);
+        reportCameraDebug("scan_error", { summary: message });
+      } finally {
+        setScanning(false);
+      }
+    }, [reportCameraDebug, selectedCameraId]);
+
+    const sendBrowserFrame = useCallback(async () => {
+      const video = browserVideoRef.current;
+      if (!video || video.readyState < 2 || browserBusyRef.current) return;
+      const canvas = browserCanvasRef.current || document.createElement("canvas");
+      browserCanvasRef.current = canvas;
+      const targetWidth = Number((status && status.config && status.config.width) || video.videoWidth || 1280);
+      const targetHeight = Number((status && status.config && status.config.height) || video.videoHeight || 720);
+      canvas.width = targetWidth;
+      canvas.height = targetHeight;
+      const context = canvas.getContext("2d");
+      if (!context) return;
+      context.drawImage(video, 0, 0, targetWidth, targetHeight);
+      const blob = await new Promise((resolve) => canvas.toBlob(resolve, "image/jpeg", 0.76));
+      if (!blob) return;
+      browserBusyRef.current = true;
+      try {
+        const response = await fetch("/api/v1/vision/frame", {
+          method: "POST",
+          headers: { "Content-Type": "image/jpeg" },
+          body: blob,
+        });
+        if (!response.ok) {
+          const text = await response.text();
+          throw new Error(text || `HTTP ${response.status}`);
+        }
+        const data = await response.json();
         setStatus(data);
-        setError("");
+        setError(data.error || "");
         connectStream();
       } catch (err) {
-        setError(err.message);
-        await loadStatus();
+        setBrowserCameraError(err.message);
+      } finally {
+        browserBusyRef.current = false;
       }
-    }, [connectStream, loadStatus]);
+    }, [connectStream, status]);
 
-    const stop = useCallback(async () => {
+    const stopBrowserCamera = useCallback(() => {
+      if (browserIntervalRef.current) {
+        window.clearInterval(browserIntervalRef.current);
+        browserIntervalRef.current = null;
+      }
+      if (browserStreamRef.current) {
+        browserStreamRef.current.getTracks().forEach((track) => track.stop());
+        browserStreamRef.current = null;
+      }
+      if (browserVideoRef.current) {
+        browserVideoRef.current.pause();
+        browserVideoRef.current.srcObject = null;
+      }
+      setBrowserCameraActive(false);
+      setBrowserCameraError("");
+    }, []);
+
+    const startBrowserCamera = useCallback(async () => {
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        const message = "Browser camera capture is not available.";
+        setBrowserCameraError(message);
+        reportCameraDebug("connect_unavailable", { summary: message });
+        return;
+      }
+      try {
+        stopBrowserCamera();
+        setBrowserCameraError("");
+        setError("");
+        const targetWidth = Number((status && status.config && status.config.width) || 1280);
+        const targetHeight = Number((status && status.config && status.config.height) || 720);
+        const selected = cameraOptions.find((item) => item.deviceId === selectedCameraId);
+        reportCameraDebug("connect_start", {
+          summary: `Connect requested: ${selected ? selected.label : "Default Camera"}.`,
+          selected_camera: selected ? selected.label : "Default Camera",
+          selected_camera_id_present: Boolean(selectedCameraId),
+        });
+        const stream = await navigator.mediaDevices.getUserMedia({
+          audio: false,
+          video: {
+            ...(selectedCameraId ? { deviceId: { exact: selectedCameraId } } : {}),
+            width: { ideal: targetWidth },
+            height: { ideal: targetHeight },
+          },
+        });
+        const video = browserVideoRef.current || document.createElement("video");
+        browserVideoRef.current = video;
+        video.muted = true;
+        video.playsInline = true;
+        video.srcObject = stream;
+        browserStreamRef.current = stream;
+        await video.play();
+        setBrowserCameraActive(true);
+        setBrowserCameraError("");
+        const track = stream.getVideoTracks()[0] || null;
+        if (track && !selectedCameraId) {
+          const label = track.label || "Default Camera";
+          setCameraOptions([{ deviceId: "", label }]);
+        }
+        reportCameraDebug("connect_done", {
+          summary: `Connected: ${(track && track.label) || "Default Camera"}.`,
+          track_label: track && track.label,
+          track_settings: track && track.getSettings ? track.getSettings() : null,
+        });
+        connectStream();
+        await sendBrowserFrame();
+        const targetFps = Math.min(5, Number((status && status.config && status.config.fps) || 5));
+        const intervalMs = Math.max(200, Math.round(1000 / Math.max(1, targetFps)));
+        browserIntervalRef.current = window.setInterval(sendBrowserFrame, intervalMs);
+      } catch (err) {
+        stopBrowserCamera();
+        const message = errorSummary(err);
+        setBrowserCameraError(message);
+        reportCameraDebug("connect_error", { summary: message });
+      }
+    }, [
+      cameraOptions,
+      connectStream,
+      reportCameraDebug,
+      selectedCameraId,
+      sendBrowserFrame,
+      status,
+      stopBrowserCamera,
+    ]);
+
+    const stopVision = useCallback(async () => {
+      stopBrowserCamera();
+      disconnectStream();
+      setMetadata(null);
       try {
         const data = await fetchJSON("/api/v1/vision/stop", { method: "POST" });
-        disconnectStream();
         setStatus(data);
-        setMetadata(null);
       } catch (err) {
         setError(err.message);
       }
-    }, [disconnectStream]);
+    }, [disconnectStream, stopBrowserCamera]);
 
     useEffect(() => {
       loadStatus();
       return () => {
+        stopBrowserCamera();
         disconnectStream();
         if (frameUrlRef.current) URL.revokeObjectURL(frameUrlRef.current);
       };
-    }, [disconnectStream, loadStatus]);
+    }, [disconnectStream, loadStatus, stopBrowserCamera]);
     useInterval(loadStatus, 5000);
 
     const cfg = (metadata && metadata.camera) || (status && status.config) || {};
@@ -492,13 +835,29 @@
     const identity = identityStatus && identityStatus.status ? identityStatus.status : null;
     const statusText = recognition.pipeline_status || (running ? "running" : status && status.enabled ? "ready" : "disabled");
     const statusClass = statusText === "running" ? "ok" : statusText === "error" || statusText === "disabled" ? "err" : "dim";
+    const source = recognition.source || (metadata && metadata.source) || "opencv";
+    const selectedOption = cameraOptions.find((item) => item.deviceId === selectedCameraId);
+    const cameraDetail = selectedOption
+      ? selectedOption.label
+      : cameraOptions.length ? "select a camera" : "scan cameras first";
 
     return h(React.Fragment, null,
       h("div", { className: "toolbar" },
-        h("button", { className: "btn-sm", onClick: start }, "Start"),
-        h("button", { className: "btn-sm", onClick: stop }, "Stop"),
-        h("button", { className: "btn-sm", onClick: () => { disconnectStream(); connectStream(); } }, "Reconnect"),
+        h("button", { className: "btn-sm", onClick: scanCameras, disabled: scanning }, scanning ? "Scanning…" : "Scan Cameras"),
+        h("select", {
+          value: selectedCameraId,
+          onChange: (event) => setSelectedCameraId(event.target.value),
+          title: "Camera",
+        },
+          cameraOptions.length
+            ? cameraOptions.map((item) => h("option", { key: item.deviceId, value: item.deviceId }, item.label))
+            : h("option", { value: "" }, "No camera scanned"),
+        ),
+        h("button", { className: browserCameraActive ? "btn-sm active" : "btn-sm", onClick: startBrowserCamera, disabled: browserCameraActive }, browserCameraActive ? "Connected" : "Connect"),
+        h("button", { className: "btn-sm", onClick: stopVision, disabled: !browserCameraActive && !running }, "Stop"),
       ),
+      h("div", { className: "item-meta", style: { marginTop: "4px" } }, cameraDetail),
+      h("div", { className: "item-meta" }, `Camera debug: ${cameraDebug.action} · ${cameraDebug.detail}`),
       h("div", { className: "vision-preview" }, frameUrl
         ? h("img", { src: frameUrl, alt: "Vision stream" })
         : h("div", { className: "dim", style: { padding: "12px" } }, "No frame yet.")),
@@ -507,11 +866,13 @@
         h("span", null, "Frame"), h("span", null, frameId ?? "—"),
         h("span", null, "People"), h("span", null, detections.length),
         h("span", null, "Camera"), h("span", null, `${cfg.index ?? cfg.camera_index ?? "—"} · ${cfg.width ?? "—"}x${cfg.height ?? "—"} · ${cfg.fps ?? "—"}fps`),
+        h("span", null, "Input"), h("span", null, source),
         h("span", null, "Model"), h("span", { title: model }, String(model).split("/").pop()),
         h("span", null, "Updated"), h("span", null, formatTime(updated)),
       ),
       h(RealtimeRecognitionStatus, { recognition, identity, detections }),
       error ? h("div", { className: "err" }, error) : null,
+      browserCameraError ? h("div", { className: "err" }, browserCameraError) : null,
       h(DetectionList, { detections }),
       h(EventList, { events }),
     );
@@ -526,6 +887,7 @@
       h("div", { className: "kv-grid" },
         h("span", null, "Pipeline"), h("span", { className: recognition.pipeline_status === "running" ? "ok" : recognition.pipeline_status === "error" ? "err" : "dim" }, recognition.pipeline_status || "—"),
         h("span", null, "Camera"), h("span", null, recognition.camera_status || "—"),
+        h("span", null, "Source"), h("span", null, recognition.source || "—"),
         h("span", null, "Detector"), h("span", null, recognition.detector_status || "—"),
         h("span", null, "Frame age"), h("span", null, age),
         h("span", null, "Presence"), h("span", null, `${presence} · ${personCount} people`),
@@ -732,10 +1094,12 @@
     const send = useCallback(async () => {
       const trimmed = text.trim();
       if (!trimmed || sending) return;
+      const submitStartedAt = nowMs();
       setText("");
       setSending(true);
       let secondRowId = null;
       let sawSecondDelta = false;
+      let finalPayload = null;
       const optimistic = {
         id: `pending-${Date.now()}`,
         role: "user",
@@ -793,6 +1157,7 @@
               )));
             }
           } else if (event.phase === "final") {
+            finalPayload = event;
             const secondText = finalSecondUnitText(event);
             if (sawSecondDelta && secondRowId) {
               setRows((current) => {
@@ -832,6 +1197,21 @@
             throw new Error(event.error || "Progressive dialog failed");
           }
         });
+        const responseAt = nowMs();
+        postPresentationLatency("dashboard.text_dialog.response", submitStartedAt, {
+          latencyRecordId: finalPayload && finalPayload.latency_record_id,
+          metadata: { input_chars: trimmed.length },
+        });
+        window.requestAnimationFrame(() => {
+          const renderedText = finalPayload
+            ? (finalSecondUnitText(finalPayload) || finalPayload.text || "")
+            : "";
+          postPresentationLatency("dashboard.text_dialog.render", responseAt, {
+            latencyRecordId: finalPayload && finalPayload.latency_record_id,
+            metadata: { text_chars: String(renderedText || "").length },
+          });
+        });
+        window.dispatchEvent(new CustomEvent("entity:turn-complete"));
       } catch (error) {
         setRows((current) => [...current, {
           id: `error-${Date.now()}`,
@@ -888,7 +1268,7 @@
     );
   }
 
-  function MemorySummary() {
+  function MemorySummary({ onSave, onReset }) {
     const [summary, setSummary] = useState(null);
     const [previewQuery, setPreviewQuery] = useState("");
     const [preview, setPreview] = useState(null);
@@ -933,6 +1313,10 @@
     }, [previewQuery]);
 
     return h(React.Fragment, null,
+      h("div", { className: "toolbar memory-actions" },
+        h("button", { className: "btn-sm", onClick: onSave }, "Save Dialog"),
+        h("button", { className: "btn-sm", onClick: onReset }, "Reset Memory / New Session"),
+      ),
       summary ? h("table", null, h("tbody", null,
         h("tr", null, h("td", null, "Episodic events"), h("td", null, summary.episodic)),
         h("tr", null, h("td", null, "Unreflected"), h("td", null, summary.unreflected)),
@@ -987,17 +1371,19 @@
     const [stats, setStats] = useState(null);
     const [latency, setLatency] = useState(null);
     const [audioLatency, setAudioLatency] = useState(null);
+    const [presentationLatency, setPresentationLatency] = useState(null);
     const [harness, setHarness] = useState(null);
     const [visitor, setVisitor] = useState(null);
     const [identity, setIdentity] = useState(null);
 
     const load = useCallback(async () => {
-      const [llmConfig, embeddingConfig, llmStats, latencyStats, audioLatencyStats, harnessStatus, visitorStatus, identityStatus] = await Promise.all([
+      const [llmConfig, embeddingConfig, llmStats, latencyStats, audioLatencyStats, presentationLatencyStats, harnessStatus, visitorStatus, identityStatus] = await Promise.all([
         fetchJSON("/api/v1/config/llm").catch(() => null),
         fetchJSON("/api/v1/config/embedding").catch(() => null),
         fetchJSON("/api/v1/stats/llm").catch(() => null),
         fetchJSON("/api/v1/stats/latency?n=1").catch(() => null),
         fetchJSON("/api/v1/stats/audio-latency?n=8").catch(() => null),
+        fetchJSON("/api/v1/stats/presentation-latency?n=8").catch(() => null),
         fetchJSON("/api/v1/harness/status").catch(() => null),
         fetchJSON("/api/v1/visitors/current").catch(() => null),
         fetchJSON("/api/v1/identity/status").catch(() => null),
@@ -1007,6 +1393,7 @@
       setStats(llmStats && llmStats.summary);
       setLatency(latencyStats);
       setAudioLatency(audioLatencyStats);
+      setPresentationLatency(presentationLatencyStats);
       setHarness(harnessStatus);
       setVisitor(visitorStatus);
       setIdentity(identityStatus);
@@ -1032,7 +1419,7 @@
           h("tr", null, h("td", null, "Tokens"), h("td", null, `${stats.total_prompt_tokens} / ${stats.total_completion_tokens}`)),
         )) : h("div", { className: "dim" }, "Loading diagnostics…"),
       ),
-      h(LatencySection, { latency, audioLatency }),
+      h(LatencySection, { latency, audioLatency, presentationLatency }),
     );
   }
 
@@ -1393,12 +1780,15 @@
     );
   }
 
-  function LatencySection({ latency, audioLatency }) {
+  function LatencySection({ latency, audioLatency, presentationLatency }) {
     const latest = latency && latency.recent && latency.recent.length ? latency.recent[latency.recent.length - 1] : null;
     const turnSummary = latency && latency.summary;
     const steps = latest && latest.steps ? latest.steps.slice().sort((a, b) => b.duration_ms - a.duration_ms).slice(0, 8) : [];
     const audioKinds = audioLatency && audioLatency.summary && audioLatency.summary.kinds
       ? Object.entries(audioLatency.summary.kinds).sort((a, b) => b[1].avg_ms - a[1].avg_ms).slice(0, 6)
+      : [];
+    const presentationKinds = presentationLatency && presentationLatency.summary && presentationLatency.summary.kinds
+      ? Object.entries(presentationLatency.summary.kinds).sort((a, b) => b[1].avg_ms - a[1].avg_ms).slice(0, 6)
       : [];
     return h("div", { className: "section" },
       h("div", { className: "section-title" }, "Latency Breakdown"),
@@ -1416,6 +1806,12 @@
           h("td", null, `${data.avg_ms} ms · ${data.count}`),
         )),
       )) : h("div", { className: "dim" }, "No audio latency yet."),
+      presentationKinds.length ? h("table", null, h("tbody", null,
+        presentationKinds.map(([kind, data]) => h("tr", { key: kind },
+          h("td", null, kind),
+          h("td", null, `${data.avg_ms} ms · ${data.count}`),
+        )),
+      )) : h("div", { className: "dim" }, "No presentation latency yet."),
     );
   }
 
@@ -1452,6 +1848,7 @@
     const playbackStreamRef = useRef("");
     const playbackQueueRef = useRef([]);
     const playbackPlayingRef = useRef(false);
+    const playbackTimingRef = useRef(null);
     const bargeInFramesRef = useRef(0);
     const activeAudioTurnRef = useRef(0);
     const manualStopRef = useRef(false);
@@ -1565,6 +1962,7 @@
       playbackQueueRef.current = [];
       playbackPlayingRef.current = false;
       playbackStreamRef.current = "";
+      playbackTimingRef.current = null;
       bargeInFramesRef.current = 0;
       suppressMicRef.current = false;
       setPlaybackBlocked(false);
@@ -1576,7 +1974,7 @@
       }
     }, []);
 
-    const startPlaybackStream = useCallback(async (streamId) => {
+    const startPlaybackStream = useCallback(async (streamId, timing = {}) => {
       if (!streamId || !playerRef.current) return false;
       suppressMicRef.current = true;
       playbackPlayingRef.current = true;
@@ -1586,18 +1984,35 @@
       setBargeInDetail("armed while speaking");
       const player = playerRef.current;
       playbackStreamRef.current = streamId;
+      const streamReceivedAt = timing.streamReceivedAt || nowMs();
+      playbackTimingRef.current = {
+        streamId,
+        latencyRecordId: timing.latencyRecordId || null,
+        streamReceivedAt,
+      };
       player.muted = false;
       player.volume = 1;
       player.src = `/api/v1/audio/tts/stream/${encodeURIComponent(streamId)}?t=${Date.now()}`;
       player.load();
       try {
         await player.play();
+        postPresentationLatency("dashboard.audio.play_resolved", streamReceivedAt, {
+          latencyRecordId: timing.latencyRecordId,
+          metadata: { stream_id: streamId },
+        });
         playbackUnlockedRef.current = true;
         setPlaybackUnlocked(true);
         setPlaybackDetail(`playing ${compactId(streamId)}`);
         return true;
       } catch (err) {
         playbackPlayingRef.current = false;
+        postPresentationLatency("dashboard.audio.play_resolved", streamReceivedAt, {
+          latencyRecordId: timing.latencyRecordId,
+          success: false,
+          error: err && err.name ? err.name : "play_failed",
+          metadata: { stream_id: streamId },
+        });
+        playbackTimingRef.current = null;
         suppressMicRef.current = false;
         bargeInFramesRef.current = 0;
         setVoiceActivity(recordingRef.current ? "listening" : "idle");
@@ -1613,10 +2028,11 @@
     }, []);
 
     const playNextQueuedStream = useCallback(() => {
-      const nextStreamId = playbackQueueRef.current.shift();
-      if (!nextStreamId) {
+      const next = playbackQueueRef.current.shift();
+      if (!next) {
         playbackPlayingRef.current = false;
         playbackStreamRef.current = "";
+        playbackTimingRef.current = null;
         bargeInFramesRef.current = 0;
         suppressMicRef.current = false;
         setVoiceActivity(recordingRef.current ? "listening" : "idle");
@@ -1624,13 +2040,13 @@
         setBargeInDetail("idle");
         return false;
       }
-      startPlaybackStream(nextStreamId);
+      startPlaybackStream(next.streamId, next.timing);
       return true;
     }, [startPlaybackStream]);
 
-    const enqueueTtsStream = useCallback((streamId) => {
+    const enqueueTtsStream = useCallback((streamId, timing = {}) => {
       if (!streamId) return false;
-      playbackQueueRef.current.push(streamId);
+      playbackQueueRef.current.push({ streamId, timing });
       if (!playbackPlayingRef.current) {
         playNextQueuedStream();
       }
@@ -1640,6 +2056,7 @@
     const submitTranscript = useCallback(async (value) => {
       const transcript = String(value || "").trim();
       if (!transcript || dialogPendingRef.current) return;
+      const finalStartedAt = nowMs();
       let playbackStarted = false;
       let finalPayload = null;
       const turnToken = activeAudioTurnRef.current + 1;
@@ -1683,11 +2100,21 @@
             finalPayload = payload;
           }
           if (event.tts_stream_id) {
-            playbackStarted = enqueueTtsStream(event.tts_stream_id) || playbackStarted;
+            playbackStarted = enqueueTtsStream(event.tts_stream_id, {
+              latencyRecordId: event.latency_record_id || null,
+              streamReceivedAt: nowMs(),
+            }) || playbackStarted;
           }
         });
         if (turnToken === activeAudioTurnRef.current && finalPayload) {
           setLatestDialog(finalPayload);
+          postPresentationLatency("dashboard.audio_dialog.response", finalStartedAt, {
+            latencyRecordId: finalPayload.latency_record_id,
+            metadata: {
+              audio_session_id: finalPayload.audio_session_id,
+              transcript_chars: transcript.length,
+            },
+          });
         }
         loadStatus();
       } catch (err) {
@@ -1901,13 +2328,40 @@
         className: "hidden-audio",
         preload: "auto",
         playsInline: true,
+        onPlaying: () => {
+          const timing = playbackTimingRef.current;
+          if (timing) {
+            postPresentationLatency("dashboard.audio.playing", timing.streamReceivedAt, {
+              latencyRecordId: timing.latencyRecordId,
+              metadata: { stream_id: timing.streamId },
+            });
+          }
+        },
         onEnded: () => {
+          const timing = playbackTimingRef.current;
+          if (timing) {
+            postPresentationLatency("dashboard.audio.ended", timing.streamReceivedAt, {
+              latencyRecordId: timing.latencyRecordId,
+              metadata: { stream_id: timing.streamId },
+            });
+          }
+          playbackTimingRef.current = null;
           playNextQueuedStream();
         },
         onError: () => {
           playbackQueueRef.current = [];
           playbackPlayingRef.current = false;
+          const timing = playbackTimingRef.current;
+          if (timing) {
+            postPresentationLatency("dashboard.audio.error", timing.streamReceivedAt, {
+              latencyRecordId: timing.latencyRecordId,
+              success: false,
+              error: "media_error",
+              metadata: { stream_id: timing.streamId },
+            });
+          }
           playbackStreamRef.current = "";
+          playbackTimingRef.current = null;
           bargeInFramesRef.current = 0;
           suppressMicRef.current = false;
           setVoiceActivity(recordingRef.current ? "listening" : "idle");

@@ -562,15 +562,16 @@ class ExpressionEngine:
                 response_plan=response_plan,
             )
 
-        ctx = self._context_builder.build(
-            state,
-            policy,
-            style,
-            short_term,
-            retrieved_memories,
-            harness_recorder=harness_recorder,
-            already_spoken_first_unit=first_unit,
-        )
+        with turn_step("expression.context_build"):
+            ctx = self._context_builder.build(
+                state,
+                policy,
+                style,
+                short_term,
+                retrieved_memories,
+                harness_recorder=harness_recorder,
+                already_spoken_first_unit=first_unit,
+            )
 
         completion = None
         sentence_buffer = _SentenceBuffer()
@@ -696,26 +697,27 @@ class ExpressionEngine:
                 metadata=generation_metadata,
             )
 
-        filtered_text = self._constitution.apply_expression_constraints(raw_text)
-        if truncated:
-            cleaned_text = _trim_truncated_second_unit(filtered_text)
-            truncation_trimmed = cleaned_text != filtered_text
-            filtered_text = cleaned_text
-        else:
-            truncation_trimmed = False
+        with turn_step("expression.constitution_filter"):
+            filtered_text = self._constitution.apply_expression_constraints(raw_text)
+            if truncated:
+                cleaned_text = _trim_truncated_second_unit(filtered_text)
+                truncation_trimmed = cleaned_text != filtered_text
+                filtered_text = cleaned_text
+            else:
+                truncation_trimmed = False
 
-        detected, claim_action = self._constitution.forbidden_claim_detected(filtered_text)
-        if filtered_text and not _matches_recent_user_language(filtered_text, short_term):
-            logger.warning("ExpressionEngine: second-unit language mismatch; using local fallback.")
-            filtered_text = _fallback_text(policy.action, short_term)
-            truncated = False
-            truncation_trimmed = False
-        repaired_text = _repair_capability_contradiction(first_unit, filtered_text, short_term)
-        capability_contradiction_repaired = repaired_text != filtered_text
-        filtered_text = repaired_text
-        deduped_text = _dedupe_second_unit_against_first_unit(first_unit, filtered_text)
-        second_unit_deduped = deduped_text != filtered_text
-        filtered_text = deduped_text
+            detected, claim_action = self._constitution.forbidden_claim_detected(filtered_text)
+            if filtered_text and not _matches_recent_user_language(filtered_text, short_term):
+                logger.warning("ExpressionEngine: second-unit language mismatch; using local fallback.")
+                filtered_text = _fallback_text(policy.action, short_term)
+                truncated = False
+                truncation_trimmed = False
+            repaired_text = _repair_capability_contradiction(first_unit, filtered_text, short_term)
+            capability_contradiction_repaired = repaired_text != filtered_text
+            filtered_text = repaired_text
+            deduped_text = _dedupe_second_unit_against_first_unit(first_unit, filtered_text)
+            second_unit_deduped = deduped_text != filtered_text
+            filtered_text = deduped_text
         if harness_recorder is not None:
             harness_recorder.record(
                 HarnessLayer.OUTPUT,

@@ -76,6 +76,7 @@
 |---|---|---|---|
 | `api` | fastapi | 本地开发者 API 与 Web 看板 | 已实现，按需安装 |
 | `api` | uvicorn | FastAPI ASGI 服务器 | 已实现，按需安装 |
+| `vision` | numpy | 浏览器上传图像帧解码为 OpenCV ndarray | 已实现，按需安装 |
 | `vision` | opencv-python | Mac 摄像头采集、JPEG 编码、标注帧绘制 | 已实现，按需安装 |
 | `vision` | ultralytics | 本地 YOLO person detection | 已实现，按需安装 |
 | `audio` | websockets | 后端代理火山 STT/TTS WebSocket 流式接口 | 已实现，按需安装 |

@@ -12,17 +12,24 @@ from fastapi.responses import FileResponse, Response, StreamingResponse
 
 from conscious_entity.core.config_loader import load_all_configs
 from conscious_entity.harness import get_harness_trace_store
+from conscious_entity.identity import IdentityMatchResult, IdentityMatchSignal, SessionDecision
 from conscious_entity.interfaces.api_models import (
     DialogRequest,
     EmbeddingConfigRequest,
     EmbeddingTestRequest,
+    IdentityConfirmRequest,
+    IdentityConfigRequest,
+    IdentityMatchRequest,
+    IdentityMatchSignalRequest,
     LLMConfigRequest,
     ManagedMemoryCommitRequest,
     ManagedMemoryProposeRequest,
     ManagedMemoryUpdateRequest,
     MemoryInfluencePreviewRequest,
     MemoryStatusRequest,
+    PresentationLatencyRequest,
     SessionTypeRequest,
+    VisionRuntimeConfigRequest,
     VisitorCreateRequest,
     VisitorSelectRequest,
 )
@@ -55,6 +62,7 @@ from conscious_entity.interfaces.api_runtime import (
     _set_current_visitor,
     _session_type,
     _static_dir,
+    _update_visitor_identity_metadata,
     _validate_memory_status,
     _validate_memory_type,
     _visitor_row_to_public,
@@ -65,11 +73,17 @@ from conscious_entity.llm.stats_tracker import get_tracker
 from conscious_entity.memory.models import MemoryOperationProposal
 from conscious_entity.memory.retrieval import MemoryRetriever
 from conscious_entity.memory.vector import encode_embedding
-from conscious_entity.telemetry.latency import get_latency_tracker
+from conscious_entity.telemetry.latency import get_latency_tracker, record_presentation_latency
 from conscious_entity.vision import VisionConfigurationError
 
 
 router = APIRouter()
+
+_NO_CACHE_HEADERS = {
+    "Cache-Control": "no-store, max-age=0",
+    "Pragma": "no-cache",
+    "Expires": "0",
+}
 
 
 def _ndjson(payload: dict[str, Any]) -> str:
@@ -94,12 +108,70 @@ def _current_visitor_payload(request: Request, visitor_id: str | None) -> dict[s
     }
 
 
+def _identity_controller(request: Request):
+    controller = getattr(request.app.state, "identity_gating", None)
+    if controller is None:
+        raise HTTPException(status_code=503, detail="Identity/session gating not initialised")
+    return controller
+
+
+def _identity_signal_from_request(
+    body: IdentityMatchSignalRequest | None,
+    *,
+    modality: str,
+) -> IdentityMatchSignal | None:
+    if body is None:
+        return None
+    return IdentityMatchSignal.build(
+        modality=body.modality or modality,
+        candidate_visitor_id=body.candidate_visitor_id,
+        score=body.score,
+        level=body.level,
+        quality_status=body.quality_status,
+        quality_summary=body.quality_summary,
+        metadata=body.metadata,
+    )
+
+
+def _identity_match_result_from_request(body: IdentityMatchRequest) -> IdentityMatchResult:
+    face = _identity_signal_from_request(body.face, modality="face")
+    voice = _identity_signal_from_request(body.voice, modality="voice")
+    return IdentityMatchResult.build(
+        candidate_visitor_id=body.candidate_visitor_id,
+        face=face,
+        voice=voice,
+        combined_score=body.combined_score,
+        combined_level=body.combined_level,
+        decision_hint=body.decision_hint,
+        metadata=body.metadata,
+    )
+
+
+async def _bind_current_visitor_from_identity(request: Request, visitor_id: str | None) -> None:
+    if not visitor_id:
+        return
+    async with request.app.state.loop_lock:
+        try:
+            llm_client = _active_llm_client(request)
+            embedding_client = _active_embedding_client(request)
+        except ClaudeConfigurationError as exc:
+            request.app.state.llm_error = str(exc)
+            raise HTTPException(status_code=400, detail=str(exc))
+        request.app.state.conn.execute(
+            "UPDATE sessions SET visitor_id = ? WHERE id = ?",
+            (visitor_id, request.app.state.session_id),
+        )
+        request.app.state.conn.commit()
+        request.app.state.visitor_id = visitor_id
+        _rebuild_loop(request, llm_client, embedding_client)
+
+
 @router.get("/", include_in_schema=False)
 async def dashboard():
     html_path = _static_dir() / "index.html"
     if not html_path.exists():
         raise HTTPException(status_code=404, detail="Dashboard not found")
-    return FileResponse(str(html_path), media_type="text/html")
+    return FileResponse(str(html_path), media_type="text/html", headers=_NO_CACHE_HEADERS)
 
 
 @router.get("/visitor", include_in_schema=False)
@@ -107,7 +179,7 @@ async def visitor_surface():
     html_path = _static_dir() / "visitor.html"
     if not html_path.exists():
         raise HTTPException(status_code=404, detail="Visitor surface not found")
-    return FileResponse(str(html_path), media_type="text/html")
+    return FileResponse(str(html_path), media_type="text/html", headers=_NO_CACHE_HEADERS)
 
 
 @router.get("/art", include_in_schema=False)
@@ -163,6 +235,7 @@ async def dialog(body: DialogRequest, request: Request):
         ),
         "truncated": output.truncated,
         "stop_reason": output.stop_reason,
+        "latency_record_id": output.latency_record_id,
     }
 
 
@@ -207,12 +280,116 @@ async def identity_status(request: Request):
     return controller.status()
 
 
+@router.post("/api/v1/identity/config")
+async def identity_config_update(body: IdentityConfigRequest, request: Request):
+    controller = _identity_controller(request)
+    return controller.configure_identity(
+        auto_bind_high_confidence=body.auto_bind_high_confidence,
+    )
+
+
+@router.post("/api/v1/identity/match")
+async def identity_match(body: IdentityMatchRequest, request: Request):
+    controller = _identity_controller(request)
+    result = _identity_match_result_from_request(body)
+    context = controller.apply_identity_match(result)
+    if result.candidate_visitor_id:
+        _update_visitor_identity_metadata(
+            request.app.state.conn,
+            result.candidate_visitor_id,
+            {
+                "latest_match": result.to_public_dict(),
+                "confirmation_state": context.get("confirmation_state", {}),
+            },
+        )
+        request.app.state.conn.commit()
+    if context.get("session_decision") == SessionDecision.VISITOR_BOUND.value:
+        await _bind_current_visitor_from_identity(request, context["primary_visitor_id"])
+    return controller.status()
+
+
+@router.post("/api/v1/identity/confirm")
+async def identity_confirm(body: IdentityConfirmRequest, request: Request):
+    controller = _identity_controller(request)
+    context = controller.confirm_candidate(body.accepted)
+    confirmation = context.get("confirmation_state") or {}
+    visitor_id = context.get("primary_visitor_id") or confirmation.get("candidate_visitor_id")
+    if visitor_id:
+        _update_visitor_identity_metadata(
+            request.app.state.conn,
+            visitor_id,
+            {"confirmation_state": confirmation},
+        )
+        request.app.state.conn.commit()
+    if context.get("session_decision") == SessionDecision.VISITOR_BOUND.value:
+        await _bind_current_visitor_from_identity(request, context["primary_visitor_id"])
+    return controller.status()
+
+
 @router.get("/api/v1/vision/status")
 async def vision_status(request: Request):
     manager = getattr(request.app.state, "vision_manager", None)
     if manager is None:
         return {"enabled": False, "running": False, "error": "Vision runtime not initialised"}
     return manager.status()
+
+
+@router.get("/api/v1/vision/cameras")
+async def vision_cameras(request: Request, max_index: int = 5):
+    manager = getattr(request.app.state, "vision_manager", None)
+    if manager is None:
+        raise HTTPException(status_code=503, detail="Vision runtime not initialised")
+    try:
+        return manager.scan_cameras(max_index=max_index)
+    except VisionConfigurationError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@router.post("/api/v1/vision/config")
+async def vision_config_update(body: VisionRuntimeConfigRequest, request: Request):
+    manager = getattr(request.app.state, "vision_manager", None)
+    if manager is None:
+        raise HTTPException(status_code=503, detail="Vision runtime not initialised")
+    try:
+        return manager.set_camera_index(body.camera_index)
+    except VisionConfigurationError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@router.post("/api/v1/vision/frame")
+async def vision_frame(request: Request):
+    manager = getattr(request.app.state, "vision_manager", None)
+    if manager is None:
+        raise HTTPException(status_code=503, detail="Vision runtime not initialised")
+    content_type = request.headers.get("content-type", "").split(";")[0].lower()
+    if content_type not in {"image/jpeg", "image/png", "application/octet-stream"}:
+        raise HTTPException(status_code=415, detail="Vision frame must be JPEG or PNG bytes")
+    payload = await request.body()
+    try:
+        return manager.process_image_frame(payload, source="browser")
+    except VisionConfigurationError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@router.post("/api/v1/vision/client-log")
+async def vision_client_log(request: Request):
+    try:
+        payload = await request.json()
+    except Exception:
+        payload = {"event": "invalid_json"}
+    event = str(payload.get("event", "unknown"))[:80]
+    detail = payload.get("detail", {})
+    log_payload = {
+        "event": event,
+        "detail": detail,
+        "at": payload.get("at"),
+    }
+    print(
+        "[vision-client] "
+        + json.dumps(log_payload, ensure_ascii=False, default=str)[:2000],
+        flush=True,
+    )
+    return {"ok": True}
 
 
 @router.post("/api/v1/vision/start")
@@ -1174,4 +1351,28 @@ async def stats_audio_latency(n: int = 50):
     return {
         "summary": tracker.audio_summary(),
         "recent": [record.to_public_dict() for record in tracker.recent_audio(n)],
+    }
+
+
+@router.post("/api/v1/stats/presentation-latency")
+async def stats_presentation_latency_record(body: PresentationLatencyRequest):
+    if not body.kind.strip():
+        raise HTTPException(status_code=400, detail="kind is required")
+    record = record_presentation_latency(
+        body.kind.strip(),
+        body.duration_ms,
+        latency_record_id=body.latency_record_id,
+        success=body.success,
+        error=body.error,
+        metadata=body.metadata,
+    )
+    return record.to_public_dict()
+
+
+@router.get("/api/v1/stats/presentation-latency")
+async def stats_presentation_latency(n: int = 50):
+    tracker = get_latency_tracker()
+    return {
+        "summary": tracker.presentation_summary(),
+        "recent": [record.to_public_dict() for record in tracker.recent_presentation(n)],
     }

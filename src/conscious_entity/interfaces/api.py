@@ -31,13 +31,19 @@ from conscious_entity.interfaces.api_models import (
     DialogRequest,
     EmbeddingConfigRequest,
     EmbeddingTestRequest,
+    IdentityConfirmRequest,
+    IdentityConfigRequest,
+    IdentityMatchRequest,
+    IdentityMatchSignalRequest,
     LLMConfigRequest,
     ManagedMemoryCommitRequest,
     ManagedMemoryProposeRequest,
     ManagedMemoryUpdateRequest,
     MemoryInfluencePreviewRequest,
     MemoryStatusRequest,
+    PresentationLatencyRequest,
     SessionTypeRequest,
+    VisionRuntimeConfigRequest,
     VisitorCreateRequest,
     VisitorSelectRequest,
 )
@@ -62,6 +68,9 @@ from conscious_entity.interfaces.api_routes import (
     health,
     harness_status,
     harness_trace_recent,
+    identity_config_update,
+    identity_confirm,
+    identity_match,
     identity_status,
     interaction_log,
     managed_memory_archive,
@@ -91,11 +100,17 @@ from conscious_entity.interfaces.api_routes import (
     stats_audio_latency,
     stats_latency,
     stats_llm,
+    stats_presentation_latency,
+    stats_presentation_latency_record,
     visitor_create,
     visitor_current,
     visitor_current_update,
     visitors,
     visitor_surface,
+    vision_cameras,
+    vision_client_log,
+    vision_config_update,
+    vision_frame,
     vision_start,
     vision_status,
     vision_stop,
@@ -143,6 +158,15 @@ from conscious_entity.interfaces.api_runtime import (
 )
 
 
+class DevStaticFiles(StaticFiles):
+    async def get_response(self, path, scope):
+        response = await super().get_response(path, scope)
+        response.headers["Cache-Control"] = "no-store, max-age=0"
+        response.headers["Pragma"] = "no-cache"
+        response.headers["Expires"] = "0"
+        return response
+
+
 app = FastAPI(
     title="Conscious Entity — Developer API",
     version="0.1.0",
@@ -150,4 +174,4 @@ app = FastAPI(
 )
 app.include_router(router)
 app.include_router(audio_router)
-app.mount("/static", StaticFiles(directory=str(_static_dir())), name="static")
+app.mount("/static", DevStaticFiles(directory=str(_static_dir())), name="static")

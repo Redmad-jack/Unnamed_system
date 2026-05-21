@@ -1,0 +1,18 @@
+{
+  "folders": [
+    {
+      "name": "stranger_esp32s3",
+      "path": "firmware/stranger_esp32s3"
+    }
+  ],
+  "settings": {
+    "platformio-ide.autoRebuildAutocompleteIndex": true,
+    "C_Cpp.default.configurationProvider": "platformio.platformio-ide"
+  },
+  "extensions": {
+    "recommendations": [
+      "platformio.platformio-ide",
+      "ms-vscode.cpptools"
+    ]
+  }
+}

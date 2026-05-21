@@ -42,9 +42,9 @@ Identity & Session Gating 记录 encounter_candidate，但不创建 session / �
 **成功状态：** 系统就绪，等待访客输入
 **错误状态：** 数据库连接失败 → fallback 到默认初始状态，记录错误日志
 
-**当前视觉入口：** 可选 vision runtime 使用 Mac 摄像头 + 本地 YOLO 模型，只检测 `person` class。稳定检测到人会触发 `USER_ENTERED`，人离开超过阈值会触发 `USER_LEFT`，持续存在但长时间没有文字交互会触发 `LONG_SILENCE_DETECTED`。这些事件同时进入 `loop.handle_system_event(...)` 和 Identity & Session Gating：前者更新状态，后者只记录 encounter / intent 状态。presence 不等于对话意图，不会自动创建新 session 或切换 visitor。
+**当前视觉入口：** 可选 vision runtime 使用 Mac 摄像头或开发者面板 Browser Camera + 本地 YOLO 模型，只检测 `person` class。开发者面板可扫描本机 OpenCV 可打开的 camera index，并运行期切换通道；如果 macOS 拒绝 Python/OpenCV 摄像头权限，可改用已授权浏览器采集画面并上传帧给后端识别。稳定检测到人会触发 `USER_ENTERED`，人离开超过阈值会触发 `USER_LEFT`，持续存在但长时间没有文字交互会触发 `LONG_SILENCE_DETECTED`。这些事件同时进入 `loop.handle_system_event(...)` 和 Identity & Session Gating：前者更新状态，后者只记录 encounter / intent 状态。presence 不等于对话意图，不会自动创建新 session 或切换 visitor。
 
-**macOS 摄像头权限注意：** 摄像头授权绑定启动 API 的宿主进程。Codex 启动的 Python 可能无法获得 Camera 权限；若出现 `Could not open camera index N`，优先从已授权的 Terminal / VS Code 启动同一 API 进程。
+**macOS 摄像头权限注意：** 摄像头授权绑定启动 API 的宿主进程。Codex 启动的 Python 可能无法获得 Camera 权限；若出现 `Could not open camera index N`，可从已授权的 Terminal / VS Code 启动同一 API 进程，或在开发者面板使用 Browser Camera fallback。
 
 **后续身体阶段：** 进入不一定来自文字输入，也可以来自靠近、停留、被观察、被呼唤或空间位置变化。当前不实现移动、循路或避障。
 
@@ -135,7 +135,7 @@ Step 16  发送 turn_complete 到 EventBus，供调试或后续 instrumentation 
 
 **当前语音入口：** 可选 audio runtime 使用火山 STT/TTS。浏览器或未来身体节点只把 16k / 16bit / mono PCM chunk 发到 `/api/v1/audio/stt/stream`；只有 `transcript.final` 可以通过 `/api/v1/audio/dialog` 进入现有 `run_turn()`。TTS 只朗读最终已过滤的 `ExpressionOutput` 派生文本，并通过 `tts_stream_id` 播放，不允许 visitor/body 直接指定任意 TTS 文本。
 
-**当前身份/会话入口：** V1 不做自动人脸/声纹识别。已绑定 visitor 时本轮标记为 `continue_current`；未绑定 visitor 时标记为 `continue_unidentified`；显式插入信号只记录 interruption，默认不替换当前 primary visitor。下一优先级是在这个边界上补齐声纹识别、视觉识别、历史匹配、自然确认和访客库。
+**当前身份/会话入口：** V1 不接真实人脸/声纹模型，但已支持结构化识别结果接入：`/api/v1/identity/match` 可提交 face / voice / combined match result，high confidence 默认只设置 candidate 并等待非强制确认；开发者可临时开启 auto-bind，但只在没有 primary visitor 且非 active dialogue 时生效。已绑定 visitor 时本轮标记为 `continue_current`；未绑定 visitor 时标记为 `continue_unidentified`；显式插入信号只记录 interruption，默认不替换当前 primary visitor。
 
 **错误状态：**
 - LLM 调用失败 → 使用规则生成 fallback 回应（简短、中性）
@@ -176,13 +176,17 @@ python scripts/inspect_state.py
 
 **当前 API 方式：** FastAPI `/api/v1/state` 端点 → 本地开发者 Web 看板（观众不可见）
 
-**Vision 工作区：** 开发者 Web 看板左侧 `Entity State` 下方显示 Vision 面板，可启动/停止摄像头与 YOLO worker，查看 runtime status、模型路径状态、camera index、FPS、detections、最近 vision events，并通过 WebSocket JPEG frames 显示后端标注后的实时画面。
+**Exhibition Arm：** 开发者 Web 看板顶栏提供紧凑的 `ARM: IDLE / ARMING / ARM: READY / ARM: ERROR` 按钮。开展前由操作员在 Safari / Chrome 中点击一次，用浏览器手势统一请求 camera、microphone，并播放静音音频解锁 playback。这个按钮只处理浏览器权限和播放解锁，不创建 visitor、不切换 session、不替代 Vision / Audio 面板的运行状态。
+
+**Vision 工作区：** 开发者 Web 看板左侧 `Entity State` 下方显示 Vision 面板，主操作流收束为 `Scan Cameras -> Select Camera -> Connect -> Stop`。面板默认使用浏览器摄像头采集并上传帧给后端 YOLO 识别，避免 Python/OpenCV 在 macOS 下没有摄像头权限时阻塞现场联调；OpenCV camera index / open attempts 仅作为状态诊断信息保留。面板显示 runtime status、模型路径状态、输入来源、FPS、detections、最近 vision events，并通过 WebSocket JPEG frames 显示后端标注后的实时画面。
 
 **Audio 工作区：** 开发者 Web 看板 `Runtime` 区域显示 Audio Adapter，可启动/停止浏览器麦克风，查看 provider、disabled reason、STT partial/final transcript、TTS stream id 和错误，并将 final transcript 送入现有对话回合。
 
+**Memory System 工作区：** `Save Dialog` 与 `Reset Memory / New Session` 放在 Memory System 面板顶部，避免顶栏拥挤，并让 session / memory 操作靠近 memory 状态摘要。
+
 **Harness 工作区：** 开发者 Web 看板 `Runtime` 区域显示最近一轮 Harness layer 状态、decision 和摘要。Prompt Harness 只显示 partial 名称与摘要，不显示完整 hidden prompt。
 
-**Identity & Session Gating 工作区：** 开发者 Web 看板 `Runtime` 区域显示当前 runtime state、session decision、primary visitor、candidate、encounter/intent、confidence level、是否等待确认和 interruption count。V1 不展示原始人脸、原始音频、embedding 向量或完整身份库。
+**Identity & Session Gating 工作区：** 开发者 Web 看板 `Runtime` 区域显示当前 runtime state、session decision、primary visitor、candidate、encounter/intent、confidence level、latest match summary、confirmation state、是否等待确认和 interruption count。V1 不展示原始人脸、原始音频、embedding 向量或完整身份库。
 
 **访客 surface：** `/visitor` 只读取最新 `ExpressionOutput` 与少量 state 映射为文字、扰动、沉默和延迟感；如已启用声音，也只播放后端已创建的 `tts_stream_id`，不显示 dashboard 控件、内部规则、memory、prompt 或调试指标。
 
@@ -270,7 +274,7 @@ HarnessTraceStore.record(...)
 | Embedding 计算失败 | 跳过向量写入或语义召回，退回可解释召回 |
 | Managed memory proposal / commit 失败 | 记录错误，不影响本轮 ExpressionOutput |
 | Vision optional deps 未安装或模型路径缺失 | `/api/v1/vision/status` 返回 disabled reason；启动 worker 时返回明确 400，不影响文本系统 |
-| 摄像头无法打开或帧读取失败 | vision worker 记录 runtime error，释放摄像头；主 loop 继续运行 |
+| 摄像头无法打开或帧读取失败 | vision worker 记录 runtime error 和 camera open attempts，释放摄像头；可在开发者面板扫描并切换 camera index，或改用 Browser Camera fallback；主 loop 继续运行 |
 | Audio optional deps / 火山凭证 / 音色缺失 | `/api/v1/audio/status` 返回 disabled reason；文本系统继续运行 |
 | STT / TTS 流式连接失败 | 记录 sanitized error 与 logid，不保存原始音频，不影响现有文本 dialog |
 | Identity/session gating 状态异常 | 降级为未确认 visitor 的当前 session，不自动创建新 session，不影响主 turn loop |
@@ -280,7 +284,7 @@ HarnessTraceStore.record(...)
 ## 6. 待办与待确认
 
 **P0 交接优先级：**
-- 完整声纹识别、视觉识别与访客库：基于当前 V1 gating，完成 signature capture、质量门控、历史匹配、combined confidence、自然确认和 visitor profile metadata。
+- 完整声纹识别、视觉识别与访客库：基于当前 V1 gating 和结构化 match result，继续接入真实 signature capture、质量门控和历史匹配模块。
 - 能力自我描述回归测试与优化：确保 Stranger 对看见、听见、识别、记忆、身体、移动等能力的描述与 runtime 上下文一致。
 - 行为测试与调优：统一见 `docs/testlist.md`，本文件不展开测试清单。
 

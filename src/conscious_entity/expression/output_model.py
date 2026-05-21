@@ -81,6 +81,7 @@ class ExpressionOutput:
     response_plan: Optional[ResponsePlan] = None
     truncated: bool = False
     stop_reason: Optional[str] = None
+    latency_record_id: Optional[str] = None
 
 
 def _clean_unit(text: str | None) -> str:

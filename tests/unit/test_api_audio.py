@@ -71,6 +71,7 @@ class FakeLoop:
             vocal_marker="sigh",
             body_action="pause",
             response_plan=plan,
+            latency_record_id="turn_fake",
         )
 
 
@@ -237,6 +238,7 @@ def test_audio_dialog_reuses_loop_and_creates_tts_stream():
     })]
     assert manager.created is True
     assert result["tts_stream_id"] == "tts_test"
+    assert result["latency_record_id"] == "turn_fake"
     assert result["should_speak"] is True
     assert result["delay_ms"] == 0
     assert result["vocal_marker"] == "sigh"

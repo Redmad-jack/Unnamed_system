@@ -2,6 +2,7 @@
 
 from conscious_entity.vision.runtime import (
     VisionConfigurationError,
+    VisionCameraProbe,
     VisionConfig,
     VisionManager,
     VisionPresenceTracker,
@@ -9,6 +10,7 @@ from conscious_entity.vision.runtime import (
 
 __all__ = [
     "VisionConfigurationError",
+    "VisionCameraProbe",
     "VisionConfig",
     "VisionManager",
     "VisionPresenceTracker",

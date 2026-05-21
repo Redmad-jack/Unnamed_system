@@ -7,6 +7,7 @@ import pytest
 from fastapi import HTTPException
 
 from conscious_entity.interfaces import api
+from conscious_entity.interfaces.api_models import VisionRuntimeConfigRequest
 from conscious_entity.vision import VisionConfigurationError
 
 
@@ -15,6 +16,7 @@ class _FakeVisionManager:
         self.start_error = start_error
         self.started = False
         self.stopped = False
+        self.camera_index = 0
 
     def status(self):
         return {
@@ -34,9 +36,44 @@ class _FakeVisionManager:
         self.stopped = True
         return self.status()
 
+    def scan_cameras(self, *, max_index=5):
+        return {
+            "selected_index": self.camera_index,
+            "running": self.started and not self.stopped,
+            "cameras": [
+                {"index": index, "opened": index == 1, "frame_readable": index == 1}
+                for index in range(max_index + 1)
+            ],
+        }
+
+    def set_camera_index(self, camera_index):
+        self.camera_index = camera_index
+        return {"config": {"camera_index": camera_index}, "running": False}
+
+    def process_image_frame(self, payload, *, source):
+        return {"frame_id": 1, "payload_size": len(payload), "source": source}
+
 
 def _request(manager):
     return SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(vision_manager=manager)))
+
+
+def _frame_request(manager, payload=b"jpeg"):
+    async def body():
+        return payload
+
+    return SimpleNamespace(
+        app=SimpleNamespace(state=SimpleNamespace(vision_manager=manager)),
+        headers={"content-type": "image/jpeg"},
+        body=body,
+    )
+
+
+def _json_request(payload):
+    async def json_body():
+        return payload
+
+    return SimpleNamespace(json=json_body)
 
 
 def test_vision_status_returns_disabled_state():
@@ -67,6 +104,47 @@ def test_vision_stop_delegates_to_manager():
 
     assert manager.stopped is True
     assert result["running"] is False
+
+
+def test_vision_cameras_lists_probe_results():
+    manager = _FakeVisionManager()
+
+    result = asyncio.run(api.vision_cameras(_request(manager), max_index=2))
+
+    assert result["selected_index"] == 0
+    assert len(result["cameras"]) == 3
+    assert result["cameras"][1]["opened"] is True
+
+
+def test_vision_config_update_changes_camera_index():
+    manager = _FakeVisionManager()
+
+    result = asyncio.run(api.vision_config_update(
+        VisionRuntimeConfigRequest(camera_index=2),
+        _request(manager),
+    ))
+
+    assert manager.camera_index == 2
+    assert result["config"]["camera_index"] == 2
+
+
+def test_vision_frame_accepts_browser_jpeg_payload():
+    manager = _FakeVisionManager()
+
+    result = asyncio.run(api.vision_frame(_frame_request(manager, b"jpeg-bytes")))
+
+    assert result["frame_id"] == 1
+    assert result["payload_size"] == len(b"jpeg-bytes")
+    assert result["source"] == "browser"
+
+
+def test_vision_client_log_accepts_debug_payload():
+    result = asyncio.run(api.vision_client_log(_json_request({
+        "event": "scan_done",
+        "detail": {"device_count": 1},
+    })))
+
+    assert result == {"ok": True}
 
 
 def test_identity_status_reports_controller_state():

@@ -72,12 +72,18 @@ class MemoryRetriever:
         event_types, protocol_keys = _event_keys(events)
 
         results: list[RetrievedMemory] = []
-        results.extend(self._recent_dialog(query_tokens, limit=4))
-        results.extend(self._visitor_recent_dialog(query_tokens, limit=4))
-        results.extend(self._episodic_memories(query_tokens, event_types, protocol_keys, limit=5))
-        results.extend(self._visitor_episodic_memories(query_tokens, event_types, protocol_keys, limit=5))
-        results.extend(self._reflective_summaries(query_tokens, limit=3))
-        results.extend(self._visitor_reflective_summaries(query_tokens, limit=3))
+        with turn_step("memory_retrieval.current_session_recent_dialog"):
+            results.extend(self._recent_dialog(query_tokens, limit=4))
+        with turn_step("memory_retrieval.visitor_recent_dialog"):
+            results.extend(self._visitor_recent_dialog(query_tokens, limit=4))
+        with turn_step("memory_retrieval.current_episodic"):
+            results.extend(self._episodic_memories(query_tokens, event_types, protocol_keys, limit=5))
+        with turn_step("memory_retrieval.visitor_episodic"):
+            results.extend(self._visitor_episodic_memories(query_tokens, event_types, protocol_keys, limit=5))
+        with turn_step("memory_retrieval.reflective"):
+            results.extend(self._reflective_summaries(query_tokens, limit=3))
+        with turn_step("memory_retrieval.visitor_reflective"):
+            results.extend(self._visitor_reflective_summaries(query_tokens, limit=3))
 
         results.sort(key=lambda item: item.score, reverse=True)
         return results[:limit]

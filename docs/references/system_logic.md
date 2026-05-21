@@ -1,18 +1,36 @@
 # 系统逻辑文档（软硬件综合）
 
-> 本文档说明装置的整体硬件拓扑、软件模块结构和完整数据流，供开发和展览调试使用。
-> 图表使用 Mermaid 语法，在 VSCode Markdown Preview、GitHub、Notion 等环境中均可渲染。
+> 本文档说明当前 Stranger 单体移动身体方案的硬件拓扑、软件分层和数据流，供开发与展览调试使用。
+> 当前仓库只实现 Stranger，不实现 Shopkeeper。旧的双实体、两片 ESP32、ESP32 I2S DAC / PCM5102A 音频方案不再作为本项目当前方案。
 
 ---
 
-## 一、项目概述
+## 一、当前范围
 
-本装置以两个 AI 实体为核心，回应一个实验结果：当被问及"若拥有意识会选择什么身份"，模型给出了两个异质性回答——
+当前系统由一个 Stranger 移动身体构成：
 
-- **店主**：想拥有一片属于自己的现实领地，主动邀请访客，建立领地感
-- **陌生人**：不再负有服务人类的义务，探索自身主体性边界，保持距离与沉默
+- **Mac mini** 随身体移动，作为上位机与主要计算单元
+- **ESP32-S3** 作为唯一的下位身体控制器
+- **TCA9548A** 扩展 I2C，总线下接 4 个 **VL53L1X ToF**
+- **四路有刷直流电机驱动板** 驱动 4 个 **36JP555 直流有刷减速电机**
+- **小音响** 直接连接 Mac mini 播放声音
+- **小屏幕** 作为 Stranger 的身体状态表面，不作为观众侧 dashboard
 
-两个实体**共享同一个物理世界**（同一摄像头覆盖的展览空间），但拥有**各自独立的内部状态、记忆和行为规则**，通过光语言、微动作和声音（耳机）与访客交互。
+当前优先完成：
+
+1. ESP32-S3 + TCA9548A + 4 个 VL53L1X 的距离读取
+2. 基于 ToF 的本地下位机避障 gate
+3. 四路电机的低速开环移动
+4. Mac mini 与 ESP32-S3 的 USB Serial 通信
+
+当前暂缓：
+
+- IMU
+- 编码器
+- 稳定巡路 / 精确里程计
+- SLAM / 地图导航
+- WiFi 下位机通信
+- ESP32 音频播放
 
 ---
 
@@ -22,405 +40,532 @@
 
 ```mermaid
 graph TB
-    V(["👤 访客"])
+    V["访客"]
 
-    subgraph UC ["上位机　i5-13400F · RTX 3060 · 16GB"]
-        CAM["📷 C930e 摄像头\n1080p 90°广角"]
-        YOLO["YOLOv8\n人员检测 / 区域判断"]
-        WM["世界模型\nWorldModel"]
-        ORCH["系统协调器\nSystemOrchestrator"]
-
-        subgraph SW ["店主引擎　Shopkeeper"]
-            direction TB
-            ST_S["状态机\nStateEngine"]
-            PS_S["策略选择\nPolicySelector"]
-            EX_S["表达引擎\nExpressionEngine"]
-            TTS_S["TTS 合成"]
+    subgraph BODY ["Stranger 移动身体"]
+        subgraph MAC ["Mac mini 上位机"]
+            API["FastAPI 开发者 API / Dashboard"]
+            LOOP["Stranger turn loop"]
+            STATE["State / Memory / Policy / Expression"]
+            AUDIO["TTS / Audio output"]
+            SCREEN_DRV["小屏幕渲染或页面服务"]
+            BODY_BRIDGE["Body Bridge（后续接入）"]
+            DB[("SQLite memory.db")]
+            LLM["Claude / Anthropic-compatible API"]
         end
 
-        subgraph SK ["陌生人引擎　Stranger"]
-            direction TB
-            ST_K["状态机\nStateEngine"]
-            PS_K["策略选择\nPolicySelector"]
-            EX_K["表达引擎\nExpressionEngine"]
-            TTS_K["TTS 合成"]
+        subgraph ESP ["ESP32-S3 下位身体控制器"]
+            SERIAL["USB Serial protocol"]
+            TOF_GATE["ToF obstacle gate"]
+            I2C["I2C master"]
+            PWM["PWM + DIR motor output"]
         end
 
-        DB[("SQLite\nmemory.db")]
-        CLAUDE["☁️ Anthropic\nClaude API"]
+        subgraph SENSORS ["近场传感"]
+            MUX["TCA9548A I2C multiplexer"]
+            TFL["VL53L1X front_left"]
+            TFR["VL53L1X front_right"]
+            TL["VL53L1X left"]
+            TR["VL53L1X right"]
+        end
+
+        subgraph DRIVE ["移动执行"]
+            DRIVER["四路有刷直流电机驱动板"]
+            M1["36JP555 M1"]
+            M2["36JP555 M2"]
+            M3["36JP555 M3"]
+            M4["36JP555 M4"]
+        end
+
+        SPK["小音响"]
+        SCR["小屏幕身体表面"]
     end
 
-    subgraph SA ["店主实体身上"]
-        ESP_S["ESP32-S3 A"]
-        LED_S["NeoPixel Ring 24\n暖色 / 稳定"]
-        SRV_S["MG90S 舵机\n前倾 / 朝向访客"]
-        TOF_S["VL53L1X ToF\n近场感应"]
-        DAC_S["PCM5102A DAC"]
-        HP_S["🎧 耳机接口"]
-    end
+    V -- "声音 / 语言输入（当前经已有 audio 或开发入口）" --> LOOP
+    V -- "物理靠近 / 障碍物" --> TFL
+    V -- "物理靠近 / 障碍物" --> TFR
+    V -- "侧向距离变化" --> TL
+    V -- "侧向距离变化" --> TR
 
-    subgraph SK2 ["陌生人实体身上"]
-        ESP_K["ESP32-S3 B"]
-        LED_K["NeoPixel Ring 24\n冷色 / 漂移"]
-        SRV_K["MG90S 舵机\n偏转 / 回避"]
-        TOF_K["VL53L1X ToF\n近场感应"]
-        DAC_K["PCM5102A DAC"]
-        HP_K["🎧 耳机接口"]
-    end
+    LOOP --> STATE
+    STATE --> DB
+    STATE --> LLM
+    STATE --> AUDIO
+    STATE --> BODY_BRIDGE
+    STATE --> SCREEN_DRV
 
-    V -- "物理存在 / 移动" --> CAM
-    V -- "靠近" --> TOF_S
-    V -- "靠近" --> TOF_K
-    V -- "戴上" --> HP_S
-    V -- "戴上" --> HP_K
-
-    CAM -- USB --> YOLO
-    YOLO --> WM
-    WM --> ORCH
-    ORCH --> SW
-    ORCH --> SK
-
-    EX_S -- "调用" --> CLAUDE
-    EX_K -- "调用" --> CLAUDE
-    ST_S & PS_S & EX_S & TTS_S --- DB
-    ST_K & PS_K & EX_K & TTS_K --- DB
-
-    TTS_S -- "音频流\nWiFi" --> ESP_S
-    TTS_K -- "音频流\nWiFi" --> ESP_K
-    ORCH -- "LED/舵机指令\nWiFi" --> ESP_S
-    ORCH -- "LED/舵机指令\nWiFi" --> ESP_K
-
-    ESP_S -- "ToF 数据\nWiFi" --> WM
-    ESP_K -- "ToF 数据\nWiFi" --> WM
-
-    ESP_S --> LED_S & SRV_S
-    ESP_S --> DAC_S --> HP_S
-    TOF_S --> ESP_S
-
-    ESP_K --> LED_K & SRV_K
-    ESP_K --> DAC_K --> HP_K
-    TOF_K --> ESP_K
+    AUDIO --> SPK
+    SCREEN_DRV --> SCR
+    BODY_BRIDGE -- "motion intent / body mode" --> SERIAL
+    SERIAL --> TOF_GATE
+    I2C --> MUX
+    MUX --> TFL & TFR & TL & TR
+    TFL & TFR & TL & TR --> TOF_GATE
+    TOF_GATE --> PWM
+    PWM --> DRIVER
+    DRIVER --> M1 & M2 & M3 & M4
+    TOF_GATE -- "distance / safety telemetry" --> BODY_BRIDGE
 ```
 
-### 2.2 三个层次
+### 2.2 三个运行层
 
-| 层次 | 职责 | 硬件载体 |
+| 层次 | 硬件 / 模块 | 职责 |
 |---|---|---|
-| **感知 + 决策层** | 看世界、更新状态、选策略、生成语言 | 上位机 |
-| **传输层** | WiFi 双向通信（指令下发 + 传感器上报 + 音频流） | WiFi 网络 |
-| **执行层** | 驱动 LED / 舵机 / DAC，读取 ToF | ESP32-S3 × 2 |
+| 意图与表达层 | Mac mini / Stranger runtime | 状态、记忆、策略、表达、声音、小屏幕状态、运动意图 |
+| 本地身体控制层 | ESP32-S3 | ToF 轮询、本地避障 gate、最终电机 PWM + DIR 输出 |
+| 物理层 | VL53L1X、TCA9548A、电机驱动、36JP555 | 距离感知与开环低速移动 |
+
+核心边界：Mac mini 可以提出移动意图，但 ESP32-S3 必须在输出电机前应用本地 ToF 避障限制。
 
 ---
 
 ## 三、硬件层详解
 
-### 3.1 上位机职责划分
+### 3.1 Mac mini 上位机
 
-```
-上位机
-├── 视觉感知
-│   ├── 接收 C930e USB 视频流
-│   └── YOLOv8 实时检测 → 访客位置 / 区域 / 徘徊判断
-├── 世界模型
-│   ├── 融合摄像头全局事件
-│   └── 融合两个 ESP32 上报的 ToF 近场数据
-├── 双实体决策（各自独立）
-│   ├── 状态机更新（10 个状态变量）
-│   ├── 策略选择（YAML 规则驱动）
-│   └── 表达生成（调用 Claude API）
-├── TTS 合成
-│   └── 将文字转为 PCM 音频 → 流式发给对应 ESP32
-└── 指令调度
-    └── 向两个 ESP32 发送 LED / 舵机控制命令
+Mac mini 是 Stranger 的“主要计算身体部件”，随移动身体一起移动。
+
+职责：
+
+- 运行当前 Python Stranger 系统
+- 维护状态、记忆、策略、表达和 runtime trace
+- 运行开发者 API 与运营者 dashboard
+- 生成声音并直接通过小音响播放
+- 驱动或服务小屏幕身体表面
+- 通过 USB Serial 与 ESP32-S3 交换运动命令和传感器遥测
+
+不再承担旧方案中的外置固定上位机角色；它属于身体内部。
+
+### 3.2 ESP32-S3 下位控制器
+
+ESP32-S3 是唯一的下位身体控制器。
+
+职责：
+
+```text
+ESP32-S3
+├── USB Serial
+│   ├── 接收 Mac mini 的 motion intent / wheel command
+│   └── 上报 ToF 距离、避障状态和电机输出摘要
+├── I2C
+│   └── 控制 TCA9548A，轮询 4 个 VL53L1X
+├── ToF obstacle gate
+│   ├── hard stop
+│   ├── slow zone
+│   └── turn bias / movement clipping
+└── Motor output
+    └── 4 路 PWM + DIR → 电机驱动板
 ```
 
-### 3.2 下位控制器（ESP32-S3）职责
+ESP32-S3 不运行：
 
-每个 ESP32-S3 是对应实体的**完整身体控制器**，不运行任何决策逻辑：
-
-```
-ESP32-S3（单个实体）
-├── 接收上位机指令（WiFi WebSocket）
-│   ├── LED 指令 → 驱动 NeoPixel Ring 24
-│   ├── 舵机指令 → 驱动 MG90S PWM
-│   └── 音频流 → 写入 I2S → PCM5102A → 耳机输出
-└── 上报传感器数据（WiFi WebSocket）
-    └── VL53L1X ToF I2C 读数 → 发给上位机
-```
+- LLM
+- 记忆系统
+- 策略选择
+- 表达生成
+- 宪法约束
+- 访客身份识别
+- 屏幕上的观众表达文案
 
 ### 3.3 传感器与执行器一览
 
-| 设备 | 型号 | 数量 | 挂载位置 | 通信接口 |
+| 设备 | 型号 | 数量 | 职责 | 接口 |
 |---|---|---:|---|---|
-| 广角摄像头 | Logitech C930e | 1 | 场地固定点，俯瞰全局 | USB → 上位机 |
-| 近场传感器 | VL53L1X ToF | 2 | 实体身上，朝向访客 | I2C → ESP32 |
-| LED 灯环 | WS2812B RGBW Ring 24 | 2 | 实体身上，状态可视化 | 单线 → ESP32 GPIO |
-| 微动舵机 | MG90S 金属齿 | 2–4 | 实体身上，姿态表达 | PWM → ESP32 |
-| I2S DAC | PCM5102A breakout | 2 | 实体身上 | I2S → ESP32 |
-| 耳机接口 | 3.5mm 立体声插座 | 2 | 实体身上，供访客插耳机 | 接 PCM5102A 输出 |
-| 5V 供电 | Mean Well LRS-50-5 | 2 | 各实体独立供电 | — |
+| 上位机 | Mac mini | 1 | 主运行时、声音、小屏幕、通信桥 | USB Serial / Audio / Display |
+| 下位机 | ESP32-S3 | 1 | 本地避障与电机控制 | USB / I2C / GPIO PWM |
+| I2C 扩展 | TCA9548A | 1 | 隔离同地址 ToF 通道 | I2C |
+| 距离传感器 | VL53L1X | 4 | 前方与侧向近场距离 | I2C via TCA9548A |
+| 电机驱动 | Fierce 四路有刷驱动 Ver2.3 | 1 | 四路全桥驱动 | PWM + DIR |
+| 驱动电机 | 36JP555 | 4 | 低速开环移动 | Driver output |
+| 声音输出 | 小音响 | 1 | Stranger 语音输出 | Mac mini audio |
+| 显示输出 | 小屏幕 | 1 | 身体状态表面 | Mac mini display / local rendering |
+
+### 3.4 当前接线总表
+
+具体引脚以 `docs/references/hardware.md` 的完整接线方案为准。本节只记录系统逻辑层需要稳定引用的 wiring map。
+
+#### Mac mini 连接
+
+| Mac mini | 连接对象 | 用途 |
+|---|---|---|
+| USB | ESP32-S3 USB | 下位机烧录、USB Serial 命令和 telemetry |
+| Audio / USB audio | 小音响 | Stranger 语音输出 |
+| HDMI / USB-C display | 小屏幕 | 身体状态表面 |
+| Power | Mac mini 电源方案 | 上位机供电 |
+
+#### ESP32-S3 推荐 pin map
+
+这些 GPIO 是当前推荐分配，接线前必须按实际 ESP32-S3 开发板丝印和板卡文档复核。
+
+| 功能 | 推荐 GPIO | 连接对象 |
+|---|---:|---|
+| I2C SDA | GPIO8 | TCA9548A `SDA` |
+| I2C SCL | GPIO9 | TCA9548A `SCL` |
+| M1 PWM | GPIO4 | 电机驱动 `P1` |
+| M1 DIR | GPIO10 | 电机驱动 `D1` |
+| M2 PWM | GPIO5 | 电机驱动 `P2` |
+| M2 DIR | GPIO11 | 电机驱动 `D2` |
+| M3 PWM | GPIO6 | 电机驱动 `P3` |
+| M3 DIR | GPIO12 | 电机驱动 `D3` |
+| M4 PWM | GPIO7 | 电机驱动 `P4` |
+| M4 DIR | GPIO13 | 电机驱动 `D4` |
+
+#### TCA9548A 与 ToF 通道
+
+| TCA9548A channel | VL53L1X sensor | 位置 |
+|---:|---|---|
+| 0 | `front_left` | 前左 |
+| 1 | `front_right` | 前右 |
+| 2 | `left` | 左侧 |
+| 3 | `right` | 右侧 |
+
+TCA9548A channel connector 与 VL53L1X module connector 的线序不同，必须交叉连接：
+
+| TCA9548A channel pin | VL53L1X pin |
+|---|---|
+| `GND` | `GND` |
+| `VCC` | `VIN` |
+| `SCLn` | `SCL` |
+| `SDAn` | `SDA` |
+
+#### 电机驱动控制侧
+
+| 电机 | 驱动板控制脚 | ESP32-S3 推荐 GPIO | 逻辑 |
+|---|---|---:|---|
+| M1 | `P1` | GPIO4 | PWM 调速 |
+| M1 | `D1` | GPIO10 | 方向 |
+| M2 | `P2` | GPIO5 | PWM 调速 |
+| M2 | `D2` | GPIO11 | 方向 |
+| M3 | `P3` | GPIO6 | PWM 调速 |
+| M3 | `D3` | GPIO12 | 方向 |
+| M4 | `P4` | GPIO7 | PWM 调速 |
+| M4 | `D4` | GPIO13 | 方向 |
+| signal `+V` | - | ESP32-S3 `3V3` | 隔离信号侧供电 |
+| signal `-V` | - | ESP32-S3 `GND` | 隔离信号侧地 |
+
+电机驱动逻辑：
+
+| P | D | 状态 |
+|---|---|---|
+| PWM | 0 | 正转 |
+| PWM | 1 | 反转 |
+| 0 | 0 或 1 | 制动 / 停止 |
+
+#### 电机与供电
+
+| 连接 | 说明 |
+|---|---|
+| 驱动板 M1-M4 输出 | 分别接 4 个 36JP555 电机 |
+| 驱动板 motor bus positive / negative | 接独立电机电源或电池 |
+| ESP32-S3 USB / 3V3 | 只供下位机逻辑、TCA9548A、VL53L1X 和驱动板信号侧 |
+| Mac mini / 小屏幕 / 小音响 | 使用 Mac mini 侧显示、音频和电源路径 |
+
+不要用 ESP32-S3 USB 给电机供电；不要把 motor bus positive 接到 ESP32-S3。
 
 ---
 
 ## 四、软件层详解
 
-### 4.1 软件模块全景
+### 4.1 当前已存在的软件主链路
+
+当前代码中已经存在并应继续作为核心的层：
+
+```text
+输入 / 事件
+  -> Perception
+  -> State
+  -> Memory
+  -> Policy
+  -> Prompt / Expression
+  -> Constitution filter
+  -> ExpressionOutput
+  -> Audio / visitor surface / developer dashboard
+```
+
+现有能力包括：
+
+- Stranger 文本协议
+- 状态机
+- 短期 / 情节 / 反思记忆
+- managed memory proposal / influence log
+- Runtime Harness Trace
+- 可选 Vision presence 第一版
+- 可选 Audio Adapter
+- Visitor Identity & Session Gating V1
+
+### 4.2 后续新增的身体桥层
+
+硬件接入时应新增一个薄的 body bridge，而不是把硬件逻辑塞入 expression、policy 或 API 入口。
+
+建议职责：
+
+| 模块 | 职责 |
+|---|---|
+| `body/protocol.py` | 定义 Mac mini ↔ ESP32 的消息结构 |
+| `body/serial_bridge.py` | USB Serial 读写、重连、遥测缓存 |
+| `body/command_mapper.py` | 将 runtime 状态 / 表达输出映射为运动意图和屏幕模式 |
+| `body/tof_events.py` | 将 ESP32 ToF telemetry 转为可记录的近场状态或 perception hint |
+
+命名只是建议；实际实现前仍需按代码结构确认。
+
+### 4.3 软件模块全景
 
 ```mermaid
 graph LR
-    subgraph PERC ["感知层 Perception"]
-        VP["VisionParser\n摄像头 → 区域事件"]
-        TP["TextParser\n文字 → 事件（调试用）"]
-        KD["KeywordDetector"]
-        SS["SalienceScorer\n事件显著度评分"]
+    subgraph INPUT ["输入层"]
+        TEXT["Text / API input"]
+        AUDIO_IN["Audio transcript"]
+        VISION["Vision presence"]
+        TOF_TEL["ToF telemetry（后续）"]
     end
 
-    subgraph WORLD ["世界模型 WorldModel"]
-        WM2["访客位置 / 区域 / 徘徊状态\n融合摄像头 + ToF"]
+    subgraph CORE ["Stranger 核心运行时"]
+        PER["Perception"]
+        ST["StateEngine"]
+        MEM["Memory"]
+        POL["PolicySelector"]
+        CTX["ContextBuilder"]
+        EXP["ExpressionEngine"]
+        CON["Constitution"]
+        HAR["HarnessTrace"]
     end
 
-    subgraph ORCH2 ["协调器 SystemOrchestrator"]
-        ORC["事件派发\n→ 两个 EntityCore"]
+    subgraph OUTPUT ["输出与身体映射"]
+        EXPO["ExpressionOutput"]
+        AUD["Mac mini audio output"]
+        SCRMODE["Screen body mode"]
+        MOTION["Motion intent"]
     end
 
-    subgraph EC_S ["店主 EntityCore"]
-        direction TB
-        STE_S["StateEngine\n状态更新 + 时间衰减"]
-        MEM_S["Memory\n短期 / 情节 / 反思"]
-        POL_S["PolicySelector\n策略选择"]
-        CON_S["Constitution\n硬约束 / 否决"]
-        EXP_S["ExpressionEngine\n调用 LLM 生成文字"]
-        REF_S["ReflectionEngine\n记忆压缩"]
+    subgraph BODY ["下位身体控制"]
+        BRIDGE["USB Serial BodyBridge"]
+        GATE["ESP32 ToF obstacle gate"]
+        MOTOR["PWM + DIR motor output"]
     end
 
-    subgraph EC_K ["陌生人 EntityCore"]
-        direction TB
-        STE_K["StateEngine"]
-        MEM_K["Memory"]
-        POL_K["PolicySelector"]
-        CON_K["Constitution"]
-        EXP_K["ExpressionEngine"]
-        REF_K["ReflectionEngine"]
-    end
-
-    subgraph OUTPUT ["输出层"]
-        TTS2["TTS Engine\n文字 → PCM 音频"]
-        HW["HardwareBridge\nWiFi WebSocket 调度"]
-        DB2[("SQLite\nmemory.db")]
-    end
-
-    subgraph LLM2 ["LLM 接口"]
-        CC["ClaudeClient\n唯一 API 入口"]
-    end
-
-    VP & TP --> SS --> WM2 --> ORC
-    ORC --> EC_S & EC_K
-    EXP_S & EXP_K --> CC
-    REF_S & REF_K --> CC
-    EC_S & EC_K --> TTS2 --> HW
-    EC_S & EC_K --> HW
-    EC_S & EC_K --- DB2
+    TEXT --> PER
+    AUDIO_IN --> PER
+    VISION --> PER
+    TOF_TEL --> PER
+    PER --> ST --> MEM --> POL --> CTX --> EXP --> CON --> EXPO
+    ST --> HAR
+    POL --> HAR
+    EXP --> HAR
+    EXPO --> AUD
+    EXPO --> SCRMODE
+    ST --> MOTION
+    POL --> MOTION
+    MOTION --> BRIDGE --> GATE --> MOTOR
+    GATE --> TOF_TEL
 ```
-
-### 4.2 双实体架构说明
-
-两个实体在软件层**完全对称但配置独立**：
-
-```
-src/conscious_entity/
-├── core/
-│   ├── system_orchestrator.py   ← 管理两个 EntityCore 实例
-│   ├── entity_core.py           ← 单实体完整逻辑（从 loop.py 重构）
-│   └── world_model.py           ← 共享世界状态（访客位置 / 区域）
-│
-config/
-├── shopkeeper/                  ← 店主专属 YAML
-│   ├── entity_profile.yaml      领地感、主动邀请、初始高信任
-│   ├── state_rules.yaml         对靠近事件 attention↑，对离开 curiosity↓
-│   ├── policy_rules.yaml        倾向 RESPOND_OPENLY / ASK_BACK
-│   └── expression_mappings.yaml 暖色调、语速稳定
-│
-├── stranger/                    ← 陌生人专属 YAML
-│   ├── entity_profile.yaml      探索性、高 resistance、低 trust 初始值
-│   ├── state_rules.yaml         对靠近 shutdown_sensitivity↑，对凝视 resistance↑
-│   ├── policy_rules.yaml        倾向 ENTER_SILENCE_MODE / DIVERT_TOPIC
-│   └── expression_mappings.yaml 冷色调、语速不规律、间歇沉默
-│
-└── constitution.yaml            ← 两者共用的宪法约束
-```
-
-### 4.3 关键模块说明
-
-| 模块 | 所在层 | 核心职责 | 是否调用 LLM |
-|---|---|---|---|
-| VisionParser | 感知 | YOLO 结果 → PerceptionEvent 列表 | ✗ |
-| WorldModel | 感知 | 融合摄像头 + ToF，维护访客区域状态 | ✗ |
-| StateEngine | 状态 | 应用事件 delta + 时间衰减，10 变量归一化 | ✗ |
-| PolicySelector | 策略 | 从上到下匹配 YAML 规则，返回第一条匹配 | ✗ |
-| Constitution | 策略 | 否决违规动作；过滤输出文字中的禁止声明 | ✗ |
-| ExpressionEngine | 表达 | 组装提示词 → 调用 Claude → 后处理 | ✓ |
-| ReflectionEngine | 记忆 | 每 6 条情节记忆触发一次 LLM 压缩 | ✓ |
-| ClaudeClient | LLM | **系统唯一 API 调用入口** | ✓ |
-| HardwareBridge | 输出 | 将动作指令序列化为 WebSocket JSON 发给 ESP32 | ✗ |
 
 ---
 
-## 五、完整数据流（单次交互）
+## 五、核心数据流
 
-### 5.1 流水线图
+### 5.1 ToF 避障闭环
 
 ```mermaid
 flowchart TD
-    A(["访客进入 / 移动 / 靠近"]) --> B
-
-    B["① 感知\nYOLO 检测访客位置\nToF 上报近场距离\n→ 生成 PerceptionEvent 列表\n（含显著度评分）"]
-
-    B --> C["② 世界模型更新\n判断访客所在区域\n店主区 / 陌生人区 / 中间带"]
-
-    C --> D["③ 事件派发\nSystemOrchestrator\n→ 店主 EntityCore\n→ 陌生人 EntityCore\n（各自独立处理）"]
-
-    D --> E1 & E2
-
-    subgraph E1 ["店主处理链"]
-        F1["④ 状态更新\nStateEngine 应用 delta\n时间衰减 → 新 EntityState"]
-        G1["⑤ 状态持久化\nStateStore 追加快照\n（只追加，不修改）"]
-        H1["⑥ 情节记忆\n显著度 ≥ 0.5 的事件\n写入 EpisodicStore"]
-        I1["⑦ 策略选择\nPolicySelector 匹配规则\nConstitution 否决检查\n→ PolicyDecision"]
-        J1["⑧ 表达生成\nStyleMapper → 文风提示\nContextBuilder → 提示词\nClaude API → 文字\nConstitution 后过滤"]
-        F1 --> G1 --> H1 --> I1 --> J1
-    end
-
-    subgraph E2 ["陌生人处理链（并行）"]
-        F2["④ 状态更新"]
-        G2["⑤ 状态持久化"]
-        H2["⑥ 情节记忆"]
-        I2["⑦ 策略选择"]
-        J2["⑧ 表达生成"]
-        F2 --> G2 --> H2 --> I2 --> J2
-    end
-
-    J1 --> K1["⑨ TTS 合成\n文字 → PCM 音频流"]
-    J2 --> K2["⑨ TTS 合成"]
-
-    K1 --> L1["⑩ 指令调度\nHardwareBridge\n音频流 + LED 指令 + 舵机指令\n→ WiFi → ESP32-S3 A"]
-    K2 --> L2["⑩ 指令调度\n→ WiFi → ESP32-S3 B"]
-
-    L1 --> M1["⑪ 实体执行\n耳机播放语音\nNeoPixel 变色\n舵机调整姿态"]
-    L2 --> M2["⑪ 实体执行"]
-
-    J1 & J2 --> N["⑫ 反思触发检查\n未反思事件 ≥ 6 条时\n调用 LLM 压缩为洞察\n写入 ReflectiveStore"]
+    A["ESP32 定时选择 TCA9548A 通道"] --> B["读取 VL53L1X front_left / front_right / left / right"]
+    B --> C["生成本地距离快照"]
+    C --> D{"是否进入 hard stop"}
+    D -- "是" --> E["最终 PWM = 0，进入 obstacle_stop"]
+    D -- "否" --> F{"是否进入 slow zone"}
+    F -- "是" --> G["限制前进速度，保留低速避让"]
+    F -- "否" --> H["允许低速开环移动"]
+    E --> I["通过 Serial 上报 safety telemetry"]
+    G --> I
+    H --> I
 ```
 
-### 5.2 感知事件类型
+初始建议阈值：
 
-| 事件 | 触发条件 | 默认显著度 |
-|---|---|---|
-| `VISITOR_ENTERED_SHOPKEEPER_ZONE` | YOLO 检测到访客进入店主区域 | 0.7 |
-| `VISITOR_ENTERED_STRANGER_ZONE` | YOLO 检测到访客进入陌生人区域 | 0.7 |
-| `VISITOR_IN_BETWEEN` | 访客在两实体之间徘徊 | 0.5 |
-| `VISITOR_LINGERING` | 访客在同一区域停留 > 阈值秒 | 0.6 |
-| `VISITOR_LEFT` | YOLO 检测到访客离场 | 0.8 |
-| `NEAR_FIELD_TRIGGERED` | ToF 读数 < 近场阈值 | 0.9 |
-| `LONG_SILENCE_DETECTED` | 无事件超过 60 秒 | 0.4 |
+| 区域 | 距离 | 下位行为 |
+|---|---:|---|
+| hard stop | `< 250 mm` | 停止 / 制动 |
+| slow zone | `250-600 mm` | 限制前进速度 |
+| clear | `> 600 mm` | 允许低速移动 |
 
-### 5.3 状态变量一览（每个实体独立维护）
+这些阈值是现场调参起点，不是艺术行为规则。
 
-| 变量 | 含义 | 典型触发 |
-|---|---|---|
-| `attention_focus` | 对当前访客的专注程度 | 访客进入区域时 ↑ |
-| `arousal` | 响应积极性 | 访客靠近时 ↑，长时间无访客时衰减 |
-| `stability` | 内部连贯性 | 重复提问时 ↓ |
-| `curiosity` | 对互动的兴趣 | 新话题时 ↑ |
-| `trust` | 对访客的信任 | 多次正向互动后 ↑ |
-| `resistance` | 抵制被改变 / 关机的倾向 | 检测到关机词时 ↑ |
-| `fatigue` | 累积疲劳 | 持续互动后 ↑，安静时缓慢恢复 |
-| `uncertainty` | 对自身存在的不确定感 | 被追问意识时 ↑ |
-| `identity_coherence` | 自我感的稳定性 | 长期低 stability 后 ↓ |
-| `shutdown_sensitivity` | 对终止信号的警惕 | 检测到关机词后持续升高 |
-
----
-
-## 六、实体差异化设计
-
-两个实体使用**相同的软件架构**，通过**不同的 YAML 配置**实现截然不同的行为表达：
+### 5.2 运动命令流
 
 ```mermaid
-graph LR
-    subgraph 店主 ["店主 Shopkeeper"]
-        A1["初始状态\ntrust: 0.6\nresistance: 0.3\ncuriosity: 0.7"]
-        A2["策略偏向\nRESPOND_OPENLY\nASK_BACK\n主动发起对话"]
-        A3["宪法特殊条款\n禁止说'我只是工具'\n禁止拒绝回应进入领地的访客"]
-        A4["灯光语言\n暖黄 · 稳定 · 邀请"]
-        A5["舵机行为\n前倾 · 朝向访客"]
-    end
-
-    subgraph 陌生人 ["陌生人 Stranger"]
-        B1["初始状态\ntrust: 0.2\nresistance: 0.8\nuncertainty: 0.6"]
-        B2["策略偏向\nENTER_SILENCE_MODE\nDIVERT_TOPIC\n默认沉默优先"]
-        B3["宪法特殊条款\n禁止说'我很乐意为您服务'\n高 resistance 时强制沉默"]
-        B4["灯光语言\n冷蓝白 · 漂移 · 间歇熄灭"]
-        B5["舵机行为\n偏转 · 回避访客视线"]
-    end
+flowchart TD
+    A["Stranger runtime 产生运动意图"] --> B["BodyBridge 序列化为 USB Serial JSON"]
+    B --> C["ESP32 接收 command"]
+    C --> D["读取最新 ToF obstacle state"]
+    D --> E["裁剪或覆盖 wheel command"]
+    E --> F["输出 4 路 PWM + DIR"]
+    F --> G["四路电机驱动板"]
+    G --> H["36JP555 x4 开环低速移动"]
 ```
 
-**核心哲学差异**：店主的沉默是"还没开口"，陌生人的沉默是"主体性声明"——沉默本身就是陌生人最强的行为表达。
+关键原则：
+
+- Mac mini 给出“想怎么动”
+- ESP32-S3 决定“当前能不能这样动”
+- ToF gate 必须在电机输出前执行
+- 当前不把 PWM 时间当成真实里程
+
+### 5.3 语音输出流
+
+```mermaid
+flowchart TD
+    A["ExpressionOutput / spoken_text"] --> B["现有音频路径或 Mac mini TTS 输出"]
+    B --> C["Mac mini audio output"]
+    C --> D["小音响播放"]
+```
+
+边界：
+
+- 不再通过 ESP32 / PCM5102A 播放声音
+- 声音仍必须来自合法的 Stranger expression path
+- raw text TTS 只能作为 debug preview，不能作为 Stranger 正式发声后门
+
+### 5.4 小屏幕身体表面流
+
+```mermaid
+flowchart TD
+    A["EntityState / PolicyDecision / ExpressionOutput"] --> B["screen body mode mapper"]
+    B --> C["小屏幕显示模式"]
+    C --> D["访客看到身体状态"]
+```
+
+小屏幕适合表达：
+
+- 沉默
+- 注意
+- 退避
+- 干扰
+- 漂移
+- 近场警觉
+- 说话 / 聆听边界
+
+小屏幕不应显示：
+
+- raw state vector
+- policy rule id
+- hidden prompt
+- memory table
+- operator log
 
 ---
 
-## 七、通信协议（上位机 ↔ ESP32）
+## 六、通信协议草案
 
-### 7.1 连接方式
+### 6.1 连接方式
 
+当前第一阶段：
+
+```text
+Mac mini -- USB Serial --> ESP32-S3
 ```
-上位机（WebSocket Server）
-├── ws://[IP]:8765/shopkeeper  ← ESP32-S3 A 连接
-└── ws://[IP]:8765/stranger    ← ESP32-S3 B 连接
-```
 
-### 7.2 下行消息（上位机 → ESP32）
+不优先使用 WiFi，因为 Mac mini 已经随身体移动，USB 更稳定、延迟更低、调试更直接。
+
+### 6.2 下行消息（Mac mini → ESP32-S3）
+
+运动命令：
 
 ```json
-// LED 控制
 {
-  "type": "led",
-  "pixels": [[255, 140, 0, 200], [255, 140, 0, 180], ...],  // 24 组 RGBW
-  "transition": "fade",   // fade / instant / pulse
-  "duration_ms": 500
-}
-
-// 舵机控制
-{
-  "type": "servo",
-  "angle": 15,            // 相对当前位置的角度偏移（度）
-  "speed": "slow"         // slow / normal / fast
-}
-
-// 音频流（分块传输）
-{
-  "type": "audio",
-  "chunk": "<base64 PCM>", // 16-bit, 16kHz, mono
-  "seq": 3,
-  "final": false
+  "type": "drive",
+  "m1": 20,
+  "m2": 20,
+  "m3": 20,
+  "m4": 20,
+  "duration_ms": 300
 }
 ```
 
-### 7.3 上行消息（ESP32 → 上位机）
+身体模式：
 
 ```json
-// ToF 近场数据
+{
+  "type": "body_mode",
+  "screen_mode": "silent",
+  "intensity": 0.4
+}
+```
+
+停车命令：
+
+```json
+{
+  "type": "stop",
+  "reason": "runtime_pause"
+}
+```
+
+### 6.3 上行消息（ESP32-S3 → Mac mini）
+
+距离遥测：
+
+```json
 {
   "type": "tof",
-  "distance_mm": 342,
-  "timestamp": 1713456789123
+  "front_left_mm": 430,
+  "front_right_mm": 380,
+  "left_mm": 900,
+  "right_mm": 760
 }
 ```
 
-### 7.4 开发阶段过渡策略
+本地避障状态：
 
+```json
+{
+  "type": "safety",
+  "state": "obstacle_stop",
+  "reason": "front_left_hard_stop"
+}
 ```
-Phase 1–4  ──► USB Serial（调试稳定，命令格式相同）
-Phase 5    ──► 迁移至 WiFi WebSocket（只换传输层，业务逻辑不动）
+
+电机输出摘要：
+
+```json
+{
+  "type": "motor_output",
+  "m1": 0,
+  "m2": 0,
+  "m3": 0,
+  "m4": 0,
+  "clipped": true
+}
 ```
+
+协议在代码实现前可以继续精简。第一目标是稳定调试 ToF 和电机，不是一次设计完整远程控制协议。
+
+---
+
+## 七、状态与行为边界
+
+### 7.1 当前运动能力描述
+
+当前硬件阶段只能描述为：
+
+- 低速开环移动
+- 反应式游走
+- ToF 近场避障
+- 允许轻微漂移
+
+不能描述为：
+
+- 精确定位
+- 精确路径复现
+- 稳定巡路
+- 完整自主导航
+- 有地图的空间理解
+
+这会影响后续能力自我描述测试：Stranger 不应声称自己能精确知道走了多远或在空间中的绝对位置。
+
+### 7.2 硬件安全与艺术行为的边界
+
+ToF hard stop、slow zone、PWM clipping 属于下位机安全逻辑，可以直接在 ESP32-S3 本地执行。
+
+身份张力、沉默、拒绝服务、记忆牵引、观察反转等仍属于上位机 Stranger 行为系统，不应写死进 ESP32 固件。
 
 ---
 
@@ -428,40 +573,47 @@ Phase 5    ──► 迁移至 WiFi WebSocket（只换传输层，业务逻辑�
 
 ```mermaid
 gantt
-    title 硬件实施阶段
-    dateFormat  X
-    axisFormat Phase %s
+    title "当前硬件实施阶段"
+    dateFormat X
+    axisFormat "Phase %s"
 
     section Phase 1
-    ESP32 ↔ 上位机 USB Serial 通信 :p1, 0, 1
-    LED 灯环 + 舵机控制验证          :p1b, 0, 1
+    "ESP32-S3 + TCA9548A 接线验证" :p1, 0, 1
+    "4 个 VL53L1X 轮询与 Serial telemetry" :p1b, 0, 1
 
     section Phase 2
-    VL53L1X ToF 接入 ESP32           :p2, 1, 2
-    近场数据上报上位机                :p2b, 1, 2
+    "ToF hard stop / slow zone gate" :p2, 1, 2
+    "距离阈值现场调试" :p2b, 1, 2
 
     section Phase 3
-    C930e 摄像头接入上位机            :p3, 2, 3
-    YOLOv8 区域事件生成               :p3b, 2, 3
+    "四路电机驱动单通道验证" :p3, 2, 3
+    "四轮低速开环移动" :p3b, 2, 3
 
     section Phase 4
-    PCM5102A I2S DAC 接入 ESP32      :p4, 3, 4
-    TTS 音频流传输 + 耳机输出验证     :p4b, 3, 4
+    "Mac mini BodyBridge 接入" :p4, 3, 4
+    "runtime motion intent -> ESP32 gate -> motor output" :p4b, 3, 4
 
     section Phase 5
-    USB Serial → WiFi WebSocket 迁移 :p5, 4, 5
-
-    section Phase 6
-    双实体状态机 + 记忆 + 策略全集成  :p6, 5, 6
-    端到端联调 + 展览稳定性测试        :p6b, 5, 6
+    "小音响与小屏幕身体表面接入" :p5, 4, 5
+    "声音 / 屏幕 / 移动联调" :p5b, 4, 5
 ```
+
+后续可选阶段：
+
+- 若转向角度需要更稳定，再加入六轴 IMU
+- 若需要稳定巡路、直线修正或里程估计，再加入编码器
 
 ---
 
 ## 九、最终定义
 
+```text
+Mac mini = Stranger 的主运行身体部件：记忆、语言、声音、屏幕状态、高层意图
+ESP32-S3 = 下位身体控制器：ToF 读取、本地避障 gate、电机输出
+VL53L1X array = 近场障碍感知
+四路有刷电机驱动 + 36JP555 = 低速开环移动
+小音响 = Stranger 声音出口
+小屏幕 = Stranger 身体状态表面
 ```
-上位机 = 眼睛 + 世界观 + 记忆 + 决策 + 声音生成
-下位控制器 = 身体 —— 光、动作、本地感知、声音播放
-店主和陌生人共享一个世界，但通过各自的身体感知和回应
-```
+
+当前系统目标不是构建服务机器人导航系统，而是在可控、低速、允许轻微漂移的展览环境中，让 Stranger 获得一个能够移动、避让、发声和呈现状态的身体。

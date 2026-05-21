@@ -115,3 +115,114 @@ def test_vision_manager_records_camera_open_failure(monkeypatch, tmp_path):
     assert status["recognition"]["pipeline_status"] == "error"
     assert status["recognition"]["camera_status"] == "error"
     assert "Camera permission" in status["recognition"]["access_hint"]
+
+
+def test_vision_manager_can_switch_camera_index_without_env(tmp_path):
+    model = tmp_path / "model.pt"
+    model.write_text("placeholder", encoding="utf-8")
+    manager = VisionManager(VisionConfig(model_path=model, camera_index=0))
+
+    status = manager.set_camera_index(2)
+
+    assert manager.config.camera_index == 2
+    assert status["config"]["camera_index"] == 2
+    assert status["recognition"]["camera_index"] == 2
+
+
+def test_vision_manager_scans_camera_indices(monkeypatch, tmp_path):
+    model = tmp_path / "model.pt"
+    model.write_text("placeholder", encoding="utf-8")
+
+    class FakeCapture:
+        def __init__(self, index):
+            self.index = index
+
+        def set(self, *_args):
+            return None
+
+        def get(self, prop):
+            return 640 if prop == 3 else 480
+
+        def isOpened(self):
+            return self.index == 1
+
+        def read(self):
+            return self.index == 1, object()
+
+        def release(self):
+            return None
+
+    class FakeCv2:
+        CAP_PROP_FRAME_WIDTH = 3
+        CAP_PROP_FRAME_HEIGHT = 4
+        CAP_PROP_FPS = 5
+
+        def VideoCapture(self, index):
+            return FakeCapture(index)
+
+    manager = VisionManager(VisionConfig(model_path=model, camera_index=0))
+    monkeypatch.setattr(vision_runtime, "_import_required", lambda *_args: FakeCv2())
+
+    result = manager.scan_cameras(max_index=2)
+
+    assert result["selected_index"] == 0
+    assert [item["index"] for item in result["cameras"]] == [0, 1, 2]
+    assert result["cameras"][1]["opened"] is True
+    assert result["cameras"][1]["frame_readable"] is True
+
+
+def test_vision_manager_processes_browser_frame(monkeypatch, tmp_path):
+    model = tmp_path / "model.pt"
+    model.write_text("placeholder", encoding="utf-8")
+
+    class FakeEncoded:
+        def tobytes(self):
+            return b"annotated-jpeg"
+
+    class FakeCv2:
+        IMREAD_COLOR = 1
+        IMWRITE_JPEG_QUALITY = 1
+
+        def imdecode(self, _array, _mode):
+            return object()
+
+        def imencode(self, _extension, _frame, _params):
+            return True, FakeEncoded()
+
+    class FakeNumpy:
+        uint8 = object()
+
+        def frombuffer(self, data, dtype=None):
+            return data
+
+    class FakeModel:
+        def __init__(self, _path):
+            pass
+
+        def __call__(self, _frame, verbose=False, conf=0.45):
+            return []
+
+    manager = VisionManager(VisionConfig(model_path=model, camera_index=0))
+    manager._dependency_status = lambda: {  # type: ignore[method-assign]
+        "available": True,
+        "missing": [],
+        "cv2": True,
+        "numpy": True,
+        "ultralytics": True,
+    }
+
+    def fake_import_required(module_name, _package_name):
+        return FakeCv2() if module_name == "cv2" else FakeNumpy()
+
+    monkeypatch.setattr(vision_runtime, "_import_required", fake_import_required)
+    monkeypatch.setattr(vision_runtime, "_import_yolo", lambda: FakeModel)
+
+    status = manager.process_image_frame(b"jpeg-bytes", source="browser")
+
+    assert status["frame_id"] == 1
+    assert status["recognition"]["pipeline_status"] == "running"
+    assert status["recognition"]["camera_status"] == "browser"
+    assert status["recognition"]["source"] == "browser"
+    metadata, jpeg = manager.stream_snapshot()
+    assert metadata["source"] == "browser"
+    assert jpeg == b"annotated-jpeg"

@@ -141,6 +141,28 @@ async function fetchJSON(url) {
   return r.json();
 }
 
+function nowMs() {
+  return window.performance && typeof window.performance.now === 'function'
+    ? window.performance.now()
+    : Date.now();
+}
+
+function postPresentationLatency(kind, startedAt, options = {}) {
+  const duration = Math.max(0, nowMs() - startedAt);
+  fetchJSON('/api/v1/stats/presentation-latency', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      kind,
+      duration_ms: duration,
+      latency_record_id: options.latencyRecordId || null,
+      success: options.success !== false,
+      error: options.error || null,
+      metadata: options.metadata || {},
+    }),
+  }).catch(() => null);
+}
+
 function clamp01(value) {
   const n = Number(value);
   if (!Number.isFinite(n)) return 0;
@@ -152,6 +174,7 @@ function updateDisplayHappiness() {
 }
 
 async function pollVisitorSurface() {
+  const pollStartedAt = nowMs();
   try {
     const [state, log, audio] = await Promise.all([
       fetchJSON('/api/v1/state').catch(() => null),
@@ -160,7 +183,7 @@ async function pollVisitorSurface() {
     ]);
     if (state) renderState(state);
     const latest = Array.isArray(log) && log.length ? log[0] : null;
-    renderLatestExpression(latest);
+    renderLatestExpression(latest, pollStartedAt);
     maybePlayLatestAudio(audio);
   } catch {}
 }
@@ -174,7 +197,9 @@ function renderState(state) {
   document.documentElement.style.setProperty('--pulse-ms', `${Math.round(3400 + fatigue * 2800)}ms`);
 }
 
-function renderLatestExpression(row) {
+let lastRenderedExpressionKey = '';
+
+function renderLatestExpression(row, startedAt) {
   const surface = document.getElementById('surface');
   const voice = document.getElementById('voice');
   const text = latestResponseText(row);
@@ -187,6 +212,18 @@ function renderLatestExpression(row) {
   surface.classList.toggle('fade', fadeModes.has(mode) || mode.includes('fade') || mode.includes('withdraw'));
   surface.classList.toggle('open', openModes.has(mode));
   voice.textContent = text;
+  const rowKey = row && (row.id || row.turn_id || row.turn_at || text);
+  if (text && rowKey && rowKey !== lastRenderedExpressionKey) {
+    lastRenderedExpressionKey = rowKey;
+    window.requestAnimationFrame(() => {
+      postPresentationLatency('visitor.text_render', startedAt, {
+        metadata: {
+          row_id: String(rowKey),
+          text_chars: text.length,
+        },
+      });
+    });
+  }
 }
 
 function latestResponseText(row) {
@@ -216,6 +253,7 @@ function parseResponsePlan(row) {
 
 let soundEnabled = false;
 let lastPlayedStreamId = '';
+let visitorAudioTiming = null;
 const soundToggle = document.getElementById('soundToggle');
 const voiceAudio = document.getElementById('voiceAudio');
 
@@ -243,9 +281,47 @@ async function maybePlayLatestAudio(audioStatus) {
   const streamId = audioStatus.tts.last_stream_id;
   if (!streamId || streamId === lastPlayedStreamId) return;
   lastPlayedStreamId = streamId;
+  visitorAudioTiming = { streamId, streamObservedAt: nowMs() };
   voiceAudio.src = `/api/v1/audio/tts/stream/${encodeURIComponent(streamId)}?t=${Date.now()}`;
-  try { await voiceAudio.play(); } catch {}
+  try {
+    await voiceAudio.play();
+    postPresentationLatency('visitor.audio.play_resolved', visitorAudioTiming.streamObservedAt, {
+      metadata: { stream_id: streamId },
+    });
+  } catch (err) {
+    postPresentationLatency('visitor.audio.play_resolved', visitorAudioTiming.streamObservedAt, {
+      success: false,
+      error: err && err.name ? err.name : 'play_failed',
+      metadata: { stream_id: streamId },
+    });
+    visitorAudioTiming = null;
+  }
 }
+
+voiceAudio.addEventListener('playing', () => {
+  if (!visitorAudioTiming) return;
+  postPresentationLatency('visitor.audio.playing', visitorAudioTiming.streamObservedAt, {
+    metadata: { stream_id: visitorAudioTiming.streamId },
+  });
+});
+
+voiceAudio.addEventListener('ended', () => {
+  if (!visitorAudioTiming) return;
+  postPresentationLatency('visitor.audio.ended', visitorAudioTiming.streamObservedAt, {
+    metadata: { stream_id: visitorAudioTiming.streamId },
+  });
+  visitorAudioTiming = null;
+});
+
+voiceAudio.addEventListener('error', () => {
+  if (!visitorAudioTiming) return;
+  postPresentationLatency('visitor.audio.error', visitorAudioTiming.streamObservedAt, {
+    success: false,
+    error: 'media_error',
+    metadata: { stream_id: visitorAudioTiming.streamId },
+  });
+  visitorAudioTiming = null;
+});
 
 pollVisitorSurface();
 updateDisplayHappiness();

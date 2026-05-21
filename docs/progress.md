@@ -7,10 +7,11 @@
 ## 当前状态
 
 - 当前进行中：无
-- 当前可运行形态：CLI + 本地 FastAPI 开发者 API + Web 看板 + progressive text/audio NDJSON + 可选 Vision 面板 + 可选 Audio Adapter + `/visitor` 临时身体表面 + `/art` 情绪粒子身体表面；观众侧最终呈现方向是身体，不是传统 UI
-- 当前核心能力：Stranger 文本协议、最高优先级艺术运行 context、热加载 prompt partial、本轮语言强制优先与错语言兜底、非否认式能力边界正向模板与输入通道防自我否认约束、含“恋旧” memory_gravity 的新心理状态机、带上一轮轻量 bridge 的 pre-memory 轻量 `first_unit` + 已说出口 first 去重续写的 memory-aware `second_unit` 按句文本/audio progressive 输出、main LLM 后端 streaming buffer、two-stage / sentence-queued TTS、短期/情节/反思记忆、匿名 visitor profile 与跨 session visitor 记忆召回、Visitor Identity & Session Gating V1、可解释/可选 embedding 召回、Memory Preview、managed memory proposal → commit、influence log / curation、Runtime Harness Trace、可选 YOLO person presence detection、可选火山 ASR 2.0 / TTS 2.0 双向流式 Audio Adapter
+- 当前可运行形态：CLI + 本地 FastAPI 开发者 API + Web 看板 + progressive text/audio NDJSON + 可选 Vision 面板 + 可选 Audio Adapter + `/visitor` 临时身体表面 + `/art` 情绪粒子身体表面 + ESP32-S3 下位机固件原型；观众侧最终呈现方向是身体，不是传统 UI
+- 当前核心能力：Stranger 文本协议、最高优先级艺术运行 context、热加载 prompt partial、本轮语言强制优先与错语言兜底、非否认式能力边界正向模板与输入通道防自我否认约束、含“恋旧” memory_gravity 的新心理状态机、带上一轮轻量 bridge 的 pre-memory 轻量 `first_unit` + 已说出口 first 去重续写的 memory-aware `second_unit` 按句文本/audio progressive 输出、main LLM 后端 streaming buffer、two-stage / sentence-queued TTS、短期/情节/反思记忆、匿名 visitor profile 与跨 session visitor 记忆召回、Visitor Identity & Session Gating V1（含结构化 match result / candidate confirmation 调试 API）、可解释/可选 embedding 召回、Memory Preview、managed memory proposal → commit、influence log / curation、Runtime Harness Trace、JSONL 端到端 latency 日志、可选 YOLO person presence detection（含 camera index 扫描/切换与 Browser Camera fallback）、可选火山 ASR 2.0 / TTS 2.0 双向流式 Audio Adapter
 - 当前验证基线：`.venv/bin/python -m pytest -p no:debugging`，最近一次完整结果为 `521 passed`
 - 当前交接重点：下一步不再优先扩展 UI，而是先补齐完整声纹识别、视觉识别和访客库；能力自我描述已改为非否认式边界，后续按该口径继续做行为测试调优
+- 当前硬件参考方案：`docs/references/hardware.md` 与 `docs/references/system_logic.md` 已更新为单 Stranger 移动身体方向：Mac mini 随身上位机 + 1 片 ESP32-S3 + TCA9548A + 4 个 VL53L1X + 四路有刷电机驱动 + 4 个 36JP555；`firmware/stranger_esp32s3` 已有 PlatformIO 下位机固件，包含串口协议、ToF telemetry / obstacle gate、四路电机测试、4WD 差速底盘开环控制和 ESP32 本地低速 roam
 - 当前注意事项：`AGENTS.md` 与 `CLAUDE.md` 有用户侧未提交差异；除非明确要求，不应在常规任务中触碰
 
 ---
@@ -22,7 +23,7 @@
 - [ ] 完整声纹识别、视觉识别与访客库
   - 基于当前 Visitor Identity & Session Gating V1 继续做，不要求观众硬性输入身份
   - 完成 voice signature / face signature 的采集、质量门控、历史匹配、combined confidence、自然确认和 visitor profile metadata
-  - 当前 V1 只支持开发者手动绑定匿名 `visitor_id`；不能把它误读为已完成自动识别
+  - 当前 V1 已支持结构化识别结果接入和候选确认调试 API，但不能误读为已完成自动识别
 - [ ] 能力自我描述回归测试与优化
   - 重点检查 Stranger 对“看见、听见、记得、识别、移动、身体、声音、记忆”的自我描述是否符合非否认式能力边界：不直接说“没有 / 不能 / 做不到”，但也不编造未进入 runtime 的细节、不服从证明测试
   - `docs/testlist.md` 的 capability consistency 条目仍需后续按 Step 12 新口径同步细化
@@ -33,18 +34,30 @@
 
 - [ ] 继续观察真实对话中的记忆连续性：同一 visitor 的跨 session 召回是否稳定，Memory Preview 是否能解释召回来源，managed memory influence 是否可审计且不越界
 - [ ] 使用真实供应商环境做 Audio / LLM / Embedding 联调和延迟观察：确认火山 ASR/TTS、当前 Claude/Anthropic-compatible 网关、自定义模型名、embedding 配置和网络延迟在目标环境可用
-- [ ] 手动联调视觉层：安装 `.[dev,api,vision]`，配置本地 `ENTITY_VISION_MODEL_PATH`，确认 Mac 摄像头授权、实时标注帧、detections 和 presence events
+- [ ] 手动联调视觉层：安装 `.[dev,api,vision]`，配置本地 `ENTITY_VISION_MODEL_PATH`，确认 Mac 摄像头授权或 Browser Camera fallback、实时标注帧、detections 和 presence events
 - [ ] 后续单独设计多人并发策略：当前仍收束为单 primary visitor session；多人 routing / 仲裁策略仍待确认
 
 ### P2：后续身体与展览阶段
 
-- [ ] 继续规划非移动身体阶段：身体外观、声音风格、显示/投影/光的呈现映射；更完整空间感知仍待设计
-- [ ] 物理移动、循路、避障、底盘控制和安全边界放到更后阶段，等非物理身体通道稳定后再实现
+- [ ] 按 `docs/references/hardware.md` 的单 Stranger 移动身体方案推进硬件原型；下一步在真实 TCA9548A + 4 个 VL53L1X 接线后验证 `scan` / `tof` telemetry、遮挡响应和 ToF obstacle gate
+- [ ] 身体外观、声音风格、小屏幕身体表面和移动行为映射仍待设计；不要把小屏幕做成观众侧 dashboard
+- [ ] 更完整的运动安全策略、IMU、编码器、稳定巡路和底盘控制闭环暂缓，等 ToF 避障和低速开环游走稳定后再实现
 - [ ] 部署认证、访客身份策略最终版与展期终止仪式仍待设计确认
 
 ---
 
 ## Changelog
+
+### 2026-05-21：整合 origin/main 的硬件、Vision、Latency 与 Identity 更新
+
+- [x] 新增 ESP32-S3 / PlatformIO 下位机固件目录 `firmware/stranger_esp32s3` 与 `stranger_esp32s3.code-workspace`
+- [x] 下位机固件包含串口协议、VL53L1X / TCA9548A ToF telemetry、ObstacleGate、四路电机测试、4WD 差速底盘开环控制和 ESP32 本地低速 roam
+- [x] `docs/references/hardware.md` 与 `docs/references/system_logic.md` 更新为单 Stranger 移动身体方案
+- [x] Vision 开发者面板新增 camera index 扫描/切换、Browser Camera fallback、浏览器摄像头 client log 和更紧凑的主操作流
+- [x] Dashboard 新增 Exhibition Arm / header controls，并对开发者静态资源使用 no-store，降低旧 JS 缓存干扰
+- [x] latency tracker 增加 JSONL 持久化与 presentation latency API；`/api/v1/dialog`、`/api/v1/audio/dialog` 返回 `latency_record_id`
+- [x] Visitor Identity & Session Gating V1 新增结构化 match result、candidate confirmation 与调试 API：`/api/v1/identity/config`、`/api/v1/identity/match`、`/api/v1/identity/confirm`
+- [x] 本整合分支保留当前 `duifuduifu` 的 `/art` 情绪粒子身体表面、progressive text/audio NDJSON、按句 TTS queue 和 LLM streaming diagnostics
 
 ### 2026-05-21：LLM Streaming 网关探针与诊断 metadata
 

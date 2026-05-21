@@ -7,6 +7,7 @@ data/memory.db-shm
 data/memory.db-wal
 data/export.json
 data/embeddings_cache/
+data/latency_logs/
 
 # Python
 __pycache__/
@@ -17,6 +18,9 @@ dist/
 build/
 .venv/
 venv/
+
+# PlatformIO
+.pio/
 
 # Claude Code infrastructure (skills package manager)
 skills/
