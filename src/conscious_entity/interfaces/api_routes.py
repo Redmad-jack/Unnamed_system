@@ -332,6 +332,27 @@ async def vision_frame(request: Request):
         raise HTTPException(status_code=400, detail=str(exc))
 
 
+@router.post("/api/v1/vision/client-log")
+async def vision_client_log(request: Request):
+    try:
+        payload = await request.json()
+    except Exception:
+        payload = {"event": "invalid_json"}
+    event = str(payload.get("event", "unknown"))[:80]
+    detail = payload.get("detail", {})
+    log_payload = {
+        "event": event,
+        "detail": detail,
+        "at": payload.get("at"),
+    }
+    print(
+        "[vision-client] "
+        + json.dumps(log_payload, ensure_ascii=False, default=str)[:2000],
+        flush=True,
+    )
+    return {"ok": True}
+
+
 @router.post("/api/v1/vision/start")
 async def vision_start(request: Request):
     manager = getattr(request.app.state, "vision_manager", None)

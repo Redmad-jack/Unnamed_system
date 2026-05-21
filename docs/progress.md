@@ -64,6 +64,7 @@
 - [x] Vision 面板显示输入来源 `opencv` / `browser`，可在 Python/OpenCV 被 macOS 拒绝摄像头权限时继续联调识别链路
 - [x] Vision 面板主操作流已收束为 `Scan Cameras -> Select Camera -> Connect -> Stop`；OpenCV direct start / reconnect / apply camera / browser fallback 分裂按钮不再出现在主界面
 - [x] Browser camera scan 不再强依赖 `enumerateDevices()` 返回列表；枚举为空时保留 `Default Camera`，`Connect` 会直接调用系统默认摄像头
+- [x] Vision 面板新增浏览器摄像头 debug 状态；`Scan Cameras` / `Connect` 会向 `/api/v1/vision/client-log` 写入开发者日志，终端可看到 mediaDevices、getUserMedia、设备数量、权限失败或连接结果
 - [x] 验证：
   - `node --check src/conscious_entity/interfaces/static/dashboard.js`
   - `PYTHONPATH=src python3 -m py_compile src/conscious_entity/vision/runtime.py src/conscious_entity/interfaces/api_routes.py src/conscious_entity/interfaces/api.py`

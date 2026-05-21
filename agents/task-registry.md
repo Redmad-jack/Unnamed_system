@@ -45,6 +45,12 @@ Status values: `in_progress`, `done`
 
 | File | Agent | Status | Started |
 |------|-------|--------|---------|
+| src/conscious_entity/interfaces/api_routes.py | Codex | done | 2026-05-21 16:12 CST |
+| src/conscious_entity/interfaces/api.py | Codex | done | 2026-05-21 16:12 CST |
+| src/conscious_entity/interfaces/static/dashboard.js | Codex | done | 2026-05-21 16:12 CST |
+| tests/unit/test_api_vision.py | Codex | done | 2026-05-21 16:12 CST |
+| docs/BACKEND_STRUCTURE.md | Codex | done | 2026-05-21 16:12 CST |
+| docs/progress.md | Codex | done | 2026-05-21 16:12 CST |
 | src/conscious_entity/interfaces/api.py | Codex | done | 2026-05-21 16:03 CST |
 | src/conscious_entity/interfaces/api_routes.py | Codex | done | 2026-05-21 16:03 CST |
 | docs/progress.md | Codex | done | 2026-05-21 16:03 CST |

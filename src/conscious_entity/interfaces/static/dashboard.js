@@ -55,6 +55,25 @@
     }).catch(() => null);
   }
 
+  function browserCameraCapability() {
+    const mediaDevices = Boolean(navigator.mediaDevices);
+    return {
+      secure_context: Boolean(window.isSecureContext),
+      media_devices: mediaDevices,
+      get_user_media: Boolean(mediaDevices && navigator.mediaDevices.getUserMedia),
+      enumerate_devices: Boolean(mediaDevices && navigator.mediaDevices.enumerateDevices),
+      protocol: window.location.protocol,
+      user_agent: navigator.userAgent,
+    };
+  }
+
+  function errorSummary(error) {
+    if (!error) return "unknown error";
+    const name = error.name || "Error";
+    const message = error.message || String(error);
+    return `${name}: ${message}`;
+  }
+
   function useInterval(callback, delay) {
     const saved = useRef(callback);
     useEffect(() => { saved.current = callback; }, [callback]);
@@ -327,10 +346,14 @@
     const [metadata, setMetadata] = useState(null);
     const [error, setError] = useState("");
     const [selectedCameraId, setSelectedCameraId] = useState("");
-    const [cameraOptions, setCameraOptions] = useState([]);
+    const [cameraOptions, setCameraOptions] = useState(() => [{ deviceId: "", label: "Default Camera" }]);
     const [scanning, setScanning] = useState(false);
     const [browserCameraActive, setBrowserCameraActive] = useState(false);
     const [browserCameraError, setBrowserCameraError] = useState("");
+    const [cameraDebug, setCameraDebug] = useState({
+      action: "idle",
+      detail: "Default Camera is available before scanning.",
+    });
     const [frameUrl, setFrameUrl] = useState("");
     const socketRef = useRef(null);
     const frameUrlRef = useRef("");
@@ -342,6 +365,26 @@
 
     const detections = (metadata && metadata.detections) || (status && status.latest && status.latest.detections) || [];
     const events = (metadata && metadata.events) || (status && status.recent_events) || [];
+
+    const reportCameraDebug = useCallback((event, detail = {}) => {
+      const payload = {
+        event,
+        detail: {
+          ...detail,
+          capability: browserCameraCapability(),
+        },
+        at: new Date().toISOString(),
+      };
+      setCameraDebug({
+        action: event,
+        detail: detail.summary || JSON.stringify(payload.detail),
+      });
+      fetchJSON("/api/v1/vision/client-log", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      }).catch(() => null);
+    }, []);
 
     const disconnectStream = useCallback(() => {
       if (socketRef.current) {
@@ -388,20 +431,34 @@
 
     const scanCameras = useCallback(async () => {
       setScanning(true);
+      setBrowserCameraError("");
+      reportCameraDebug("scan_start", { summary: "Scan requested." });
       try {
-        if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-          throw new Error("Browser camera capture is not available.");
+        const capability = browserCameraCapability();
+        if (!capability.get_user_media) {
+          const cameras = [{ deviceId: "", label: "Default Camera" }];
+          setCameraOptions(cameras);
+          setSelectedCameraId("");
+          const message = "Browser camera API is not available in this webview/browser.";
+          setError(message);
+          reportCameraDebug("scan_unavailable", { summary: message, capability });
+          return;
         }
         let devices = navigator.mediaDevices.enumerateDevices
           ? await navigator.mediaDevices.enumerateDevices()
           : [];
         let permissionStream = null;
+        let permissionError = null;
         const hasNamedCamera = devices.some((device) => device.kind === "videoinput" && device.label);
         if (!hasNamedCamera && !browserStreamRef.current) {
-          permissionStream = await navigator.mediaDevices.getUserMedia({ audio: false, video: true });
-          devices = navigator.mediaDevices.enumerateDevices
-            ? await navigator.mediaDevices.enumerateDevices()
-            : [];
+          try {
+            permissionStream = await navigator.mediaDevices.getUserMedia({ audio: false, video: true });
+            devices = navigator.mediaDevices.enumerateDevices
+              ? await navigator.mediaDevices.enumerateDevices()
+              : [];
+          } catch (err) {
+            permissionError = errorSummary(err);
+          }
         }
         if (permissionStream) {
           permissionStream.getTracks().forEach((track) => track.stop());
@@ -419,13 +476,27 @@
         if (cameras.length && !cameras.some((item) => item.deviceId === selectedCameraId)) {
           setSelectedCameraId(cameras[0].deviceId);
         }
-        setError("");
+        if (permissionError) {
+          setError(`Camera permission check failed: ${permissionError}`);
+        } else {
+          setError("");
+        }
+        reportCameraDebug("scan_done", {
+          summary: `Scan finished: ${cameras.length} option(s).${permissionError ? " Permission check failed." : ""}`,
+          device_count: devices.filter((device) => device.kind === "videoinput").length,
+          options: cameras.map((camera) => camera.label),
+          permission_error: permissionError,
+        });
       } catch (err) {
-        setError(err.message);
+        const message = errorSummary(err);
+        setCameraOptions([{ deviceId: "", label: "Default Camera" }]);
+        setSelectedCameraId("");
+        setError(message);
+        reportCameraDebug("scan_error", { summary: message });
       } finally {
         setScanning(false);
       }
-    }, [selectedCameraId]);
+    }, [reportCameraDebug, selectedCameraId]);
 
     const sendBrowserFrame = useCallback(async () => {
       const video = browserVideoRef.current;
@@ -482,13 +553,23 @@
 
     const startBrowserCamera = useCallback(async () => {
       if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-        setBrowserCameraError("Browser camera capture is not available.");
+        const message = "Browser camera capture is not available.";
+        setBrowserCameraError(message);
+        reportCameraDebug("connect_unavailable", { summary: message });
         return;
       }
       try {
         stopBrowserCamera();
+        setBrowserCameraError("");
+        setError("");
         const targetWidth = Number((status && status.config && status.config.width) || 1280);
         const targetHeight = Number((status && status.config && status.config.height) || 720);
+        const selected = cameraOptions.find((item) => item.deviceId === selectedCameraId);
+        reportCameraDebug("connect_start", {
+          summary: `Connect requested: ${selected ? selected.label : "Default Camera"}.`,
+          selected_camera: selected ? selected.label : "Default Camera",
+          selected_camera_id_present: Boolean(selectedCameraId),
+        });
         const stream = await navigator.mediaDevices.getUserMedia({
           audio: false,
           video: {
@@ -506,6 +587,16 @@
         await video.play();
         setBrowserCameraActive(true);
         setBrowserCameraError("");
+        const track = stream.getVideoTracks()[0] || null;
+        if (track && !selectedCameraId) {
+          const label = track.label || "Default Camera";
+          setCameraOptions([{ deviceId: "", label }]);
+        }
+        reportCameraDebug("connect_done", {
+          summary: `Connected: ${(track && track.label) || "Default Camera"}.`,
+          track_label: track && track.label,
+          track_settings: track && track.getSettings ? track.getSettings() : null,
+        });
         connectStream();
         await sendBrowserFrame();
         const targetFps = Math.min(5, Number((status && status.config && status.config.fps) || 5));
@@ -513,9 +604,19 @@
         browserIntervalRef.current = window.setInterval(sendBrowserFrame, intervalMs);
       } catch (err) {
         stopBrowserCamera();
-        setBrowserCameraError(err.message);
+        const message = errorSummary(err);
+        setBrowserCameraError(message);
+        reportCameraDebug("connect_error", { summary: message });
       }
-    }, [connectStream, selectedCameraId, sendBrowserFrame, status, stopBrowserCamera]);
+    }, [
+      cameraOptions,
+      connectStream,
+      reportCameraDebug,
+      selectedCameraId,
+      sendBrowserFrame,
+      status,
+      stopBrowserCamera,
+    ]);
 
     const stopVision = useCallback(async () => {
       stopBrowserCamera();
@@ -570,6 +671,7 @@
         h("button", { className: "btn-sm", onClick: stopVision, disabled: !browserCameraActive && !running }, "Stop"),
       ),
       h("div", { className: "item-meta", style: { marginTop: "4px" } }, cameraDetail),
+      h("div", { className: "item-meta" }, `Camera debug: ${cameraDebug.action} · ${cameraDebug.detail}`),
       h("div", { className: "vision-preview" }, frameUrl
         ? h("img", { src: frameUrl, alt: "Vision stream" })
         : h("div", { className: "dim", style: { padding: "12px" } }, "No frame yet.")),

@@ -364,6 +364,7 @@ CREATE TABLE schema_version (
 | `GET` | `/api/v1/vision/cameras` | 扫描本机 OpenCV 可打开的 camera index，用于现场选择可用通道 | 本地开发面板，当前无认证 |
 | `POST` | `/api/v1/vision/config` | 运行期切换 vision camera index；如 worker 已运行则释放旧摄像头并重启 | 本地开发面板，当前无认证 |
 | `POST` | `/api/v1/vision/frame` | 接收开发者面板浏览器采集的 JPEG/PNG 帧，由后端 YOLO 识别并回写最新 snapshot | 本地开发面板，当前无认证 |
+| `POST` | `/api/v1/vision/client-log` | 接收开发者面板浏览器摄像头 scan/connect 调试事件，并写入服务端终端日志 | 本地开发面板，当前无认证 |
 | `POST` | `/api/v1/vision/start` | 启动 Mac 摄像头和 YOLO worker | 本地开发面板，当前无认证 |
 | `POST` | `/api/v1/vision/stop` | 停止 vision worker 并释放摄像头 | 本地开发面板，当前无认证 |
 | `WS` | `/api/v1/vision/stream` | 推送 JSON metadata + binary JPEG frame | 本地开发面板，当前无认证 |

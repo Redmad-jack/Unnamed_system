@@ -69,6 +69,13 @@ def _frame_request(manager, payload=b"jpeg"):
     )
 
 
+def _json_request(payload):
+    async def json_body():
+        return payload
+
+    return SimpleNamespace(json=json_body)
+
+
 def test_vision_status_returns_disabled_state():
     manager = _FakeVisionManager()
 
@@ -129,6 +136,15 @@ def test_vision_frame_accepts_browser_jpeg_payload():
     assert result["frame_id"] == 1
     assert result["payload_size"] == len(b"jpeg-bytes")
     assert result["source"] == "browser"
+
+
+def test_vision_client_log_accepts_debug_payload():
+    result = asyncio.run(api.vision_client_log(_json_request({
+        "event": "scan_done",
+        "detail": {"device_count": 1},
+    })))
+
+    assert result == {"ok": True}
 
 
 def test_identity_status_reports_controller_state():
