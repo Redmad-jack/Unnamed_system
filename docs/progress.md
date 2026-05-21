@@ -48,6 +48,12 @@
 
 ## Changelog
 
+### 2026-05-21：开发者面板静态资源禁止浏览器缓存
+
+- [x] 定位 Safari / Codex 内置浏览器 Vision 面板 UI 不一致的原因：后端实际发出的 `dashboard.js` 已是新版，旧 `Start / Stop / Reconnect` 来自浏览器已加载脚本或静态资源缓存。
+- [x] `/`、`/visitor` 和 `/static/*` 开发者资源增加 `Cache-Control: no-store, max-age=0`，降低 Safari / Codex 各自缓存旧 dashboard JS 的概率。
+- [x] 该变更只影响开发者面板静态资源缓存，不改变 Vision、Identity、Audio 或对话逻辑。
+
 ### 2026-05-21：Vision camera index 选择与打开诊断
 
 - [x] 新增 `GET /api/v1/vision/cameras`，扫描本机 OpenCV 可打开的 camera index，用于现场选择可用通道

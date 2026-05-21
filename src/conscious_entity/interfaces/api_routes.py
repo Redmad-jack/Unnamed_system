@@ -78,6 +78,12 @@ from conscious_entity.vision import VisionConfigurationError
 
 router = APIRouter()
 
+_NO_CACHE_HEADERS = {
+    "Cache-Control": "no-store, max-age=0",
+    "Pragma": "no-cache",
+    "Expires": "0",
+}
+
 
 def _current_visitor_payload(request: Request, visitor_id: str | None) -> dict[str, Any]:
     if visitor_id is None:
@@ -160,7 +166,7 @@ async def dashboard():
     html_path = _static_dir() / "index.html"
     if not html_path.exists():
         raise HTTPException(status_code=404, detail="Dashboard not found")
-    return FileResponse(str(html_path), media_type="text/html")
+    return FileResponse(str(html_path), media_type="text/html", headers=_NO_CACHE_HEADERS)
 
 
 @router.get("/visitor", include_in_schema=False)
@@ -168,7 +174,7 @@ async def visitor_surface():
     html_path = _static_dir() / "visitor.html"
     if not html_path.exists():
         raise HTTPException(status_code=404, detail="Visitor surface not found")
-    return FileResponse(str(html_path), media_type="text/html")
+    return FileResponse(str(html_path), media_type="text/html", headers=_NO_CACHE_HEADERS)
 
 
 @router.get("/health")

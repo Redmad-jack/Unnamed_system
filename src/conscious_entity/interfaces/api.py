@@ -154,6 +154,15 @@ from conscious_entity.interfaces.api_runtime import (
 )
 
 
+class DevStaticFiles(StaticFiles):
+    async def get_response(self, path, scope):
+        response = await super().get_response(path, scope)
+        response.headers["Cache-Control"] = "no-store, max-age=0"
+        response.headers["Pragma"] = "no-cache"
+        response.headers["Expires"] = "0"
+        return response
+
+
 app = FastAPI(
     title="Conscious Entity — Developer API",
     version="0.1.0",
@@ -161,4 +170,4 @@ app = FastAPI(
 )
 app.include_router(router)
 app.include_router(audio_router)
-app.mount("/static", StaticFiles(directory=str(_static_dir())), name="static")
+app.mount("/static", DevStaticFiles(directory=str(_static_dir())), name="static")
