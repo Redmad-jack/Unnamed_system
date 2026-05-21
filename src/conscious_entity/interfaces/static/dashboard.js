@@ -326,7 +326,7 @@
     const [identityStatus, setIdentityStatus] = useState(null);
     const [metadata, setMetadata] = useState(null);
     const [error, setError] = useState("");
-    const [cameraIndex, setCameraIndex] = useState("");
+    const [selectedCameraId, setSelectedCameraId] = useState("");
     const [cameraOptions, setCameraOptions] = useState([]);
     const [scanning, setScanning] = useState(false);
     const [browserCameraActive, setBrowserCameraActive] = useState(false);
@@ -379,11 +379,6 @@
         ]);
         setStatus(data);
         setIdentityStatus(identity);
-        const configuredIndex = data && data.config ? data.config.camera_index : null;
-        if (configuredIndex != null) setCameraIndex(String(configuredIndex));
-        if (data && data.camera_scan && Array.isArray(data.camera_scan.cameras)) {
-          setCameraOptions(data.camera_scan.cameras);
-        }
         setError(data.error || data.disabled_reason || "");
         if (data.running) connectStream();
       } catch (err) {
@@ -391,66 +386,39 @@
       }
     }, [connectStream]);
 
-    const start = useCallback(async () => {
-      try {
-        const data = await fetchJSON("/api/v1/vision/start", { method: "POST" });
-        setStatus(data);
-        setError("");
-        connectStream();
-      } catch (err) {
-        setError(err.message);
-        await loadStatus();
-      }
-    }, [connectStream, loadStatus]);
-
-    const stop = useCallback(async () => {
-      try {
-        const data = await fetchJSON("/api/v1/vision/stop", { method: "POST" });
-        disconnectStream();
-        setStatus(data);
-        setMetadata(null);
-      } catch (err) {
-        setError(err.message);
-      }
-    }, [disconnectStream]);
-
     const scanCameras = useCallback(async () => {
       setScanning(true);
       try {
-        const data = await fetchJSON("/api/v1/vision/cameras?max_index=5");
-        setCameraOptions(data.cameras || []);
-        if (data.selected_index != null) setCameraIndex(String(data.selected_index));
+        if (!navigator.mediaDevices || !navigator.mediaDevices.enumerateDevices) {
+          throw new Error("Browser camera enumeration is not available.");
+        }
+        let devices = await navigator.mediaDevices.enumerateDevices();
+        let permissionStream = null;
+        const hasNamedCamera = devices.some((device) => device.kind === "videoinput" && device.label);
+        if (!hasNamedCamera && !browserStreamRef.current && navigator.mediaDevices.getUserMedia) {
+          permissionStream = await navigator.mediaDevices.getUserMedia({ audio: false, video: true });
+          devices = await navigator.mediaDevices.enumerateDevices();
+        }
+        if (permissionStream) {
+          permissionStream.getTracks().forEach((track) => track.stop());
+        }
+        const cameras = devices
+          .filter((device) => device.kind === "videoinput")
+          .map((device, index) => ({
+            deviceId: device.deviceId,
+            label: device.label || `Camera ${index + 1}`,
+          }));
+        setCameraOptions(cameras);
+        if (cameras.length && !cameras.some((item) => item.deviceId === selectedCameraId)) {
+          setSelectedCameraId(cameras[0].deviceId);
+        }
         setError("");
       } catch (err) {
         setError(err.message);
       } finally {
         setScanning(false);
       }
-    }, []);
-
-    const applyCamera = useCallback(async () => {
-      const parsed = Number.parseInt(cameraIndex, 10);
-      if (!Number.isFinite(parsed) || parsed < 0) {
-        setError("Camera index must be 0 or greater.");
-        return;
-      }
-      try {
-        disconnectStream();
-        const data = await fetchJSON("/api/v1/vision/config", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ camera_index: parsed }),
-        });
-        setStatus(data);
-        setMetadata(null);
-        setFrameUrl("");
-        if (data.running) connectStream();
-        setError(data.error || "");
-      } catch (err) {
-        setError(err.message);
-        await loadStatus();
-      }
-    }, [cameraIndex, connectStream, disconnectStream, loadStatus]);
+    }, [selectedCameraId]);
 
     const sendBrowserFrame = useCallback(async () => {
       const video = browserVideoRef.current;
@@ -517,6 +485,7 @@
         const stream = await navigator.mediaDevices.getUserMedia({
           audio: false,
           video: {
+            ...(selectedCameraId ? { deviceId: { exact: selectedCameraId } } : {}),
             width: { ideal: targetWidth },
             height: { ideal: targetHeight },
           },
@@ -539,7 +508,19 @@
         stopBrowserCamera();
         setBrowserCameraError(err.message);
       }
-    }, [connectStream, sendBrowserFrame, status, stopBrowserCamera]);
+    }, [connectStream, selectedCameraId, sendBrowserFrame, status, stopBrowserCamera]);
+
+    const stopVision = useCallback(async () => {
+      stopBrowserCamera();
+      disconnectStream();
+      setMetadata(null);
+      try {
+        const data = await fetchJSON("/api/v1/vision/stop", { method: "POST" });
+        setStatus(data);
+      } catch (err) {
+        setError(err.message);
+      }
+    }, [disconnectStream, stopBrowserCamera]);
 
     useEffect(() => {
       loadStatus();
@@ -561,42 +542,25 @@
     const statusText = recognition.pipeline_status || (running ? "running" : status && status.enabled ? "ready" : "disabled");
     const statusClass = statusText === "running" ? "ok" : statusText === "error" || statusText === "disabled" ? "err" : "dim";
     const source = recognition.source || (metadata && metadata.source) || "opencv";
-    const selectedOption = cameraOptions.find((item) => String(item.index) === String(cameraIndex));
+    const selectedOption = cameraOptions.find((item) => item.deviceId === selectedCameraId);
     const cameraDetail = selectedOption
-      ? `${selectedOption.opened ? "openable" : "closed"}${selectedOption.frame_readable ? " · frame ok" : ""}${selectedOption.backend ? ` · ${selectedOption.backend}` : ""}`
-      : "scan to list devices";
+      ? selectedOption.label
+      : cameraOptions.length ? "select a camera" : "scan cameras first";
 
     return h(React.Fragment, null,
       h("div", { className: "toolbar" },
-        h("button", { className: "btn-sm", onClick: start }, "Start"),
-        h("button", { className: "btn-sm", onClick: stop }, "Stop"),
-        h("button", { className: "btn-sm", onClick: () => { disconnectStream(); connectStream(); } }, "Reconnect"),
-      ),
-      h("div", { className: "toolbar", style: { marginTop: "8px" } },
+        h("button", { className: "btn-sm", onClick: scanCameras, disabled: scanning }, scanning ? "Scanning…" : "Scan Cameras"),
         h("select", {
-          value: cameraIndex,
-          onChange: (event) => setCameraIndex(event.target.value),
-          title: "Camera index",
+          value: selectedCameraId,
+          onChange: (event) => setSelectedCameraId(event.target.value),
+          title: "Camera",
         },
           cameraOptions.length
-            ? cameraOptions.map((item) => h("option", { key: item.index, value: String(item.index) },
-              `Camera ${item.index}${item.opened ? " · openable" : " · unavailable"}`,
-            ))
-            : h("option", { value: cameraIndex || "0" }, `Camera ${cameraIndex || "0"}`),
+            ? cameraOptions.map((item) => h("option", { key: item.deviceId, value: item.deviceId }, item.label))
+            : h("option", { value: "" }, "No camera scanned"),
         ),
-        h("input", {
-          value: cameraIndex,
-          onChange: (event) => setCameraIndex(event.target.value),
-          placeholder: "camera index",
-          style: { width: "90px" },
-        }),
-        h("button", { className: "btn-sm", onClick: applyCamera }, "Apply Camera"),
-        h("button", { className: "btn-sm", onClick: scanCameras, disabled: scanning }, scanning ? "Scanning…" : "Scan Cameras"),
-      ),
-      h("div", { className: "toolbar", style: { marginTop: "8px" } },
-        h("button", { className: browserCameraActive ? "btn-sm active" : "btn-sm", onClick: startBrowserCamera }, browserCameraActive ? "Browser Cam On" : "Browser Cam Start"),
-        h("button", { className: "btn-sm", onClick: stopBrowserCamera, disabled: !browserCameraActive }, "Browser Cam Stop"),
-        h("span", { className: browserCameraActive ? "ok" : "dim" }, browserCameraActive ? "Chrome capture active" : "backend OpenCV capture"),
+        h("button", { className: browserCameraActive ? "btn-sm active" : "btn-sm", onClick: startBrowserCamera, disabled: browserCameraActive }, browserCameraActive ? "Connected" : "Connect"),
+        h("button", { className: "btn-sm", onClick: stopVision, disabled: !browserCameraActive && !running }, "Stop"),
       ),
       h("div", { className: "item-meta", style: { marginTop: "4px" } }, cameraDetail),
       h("div", { className: "vision-preview" }, frameUrl

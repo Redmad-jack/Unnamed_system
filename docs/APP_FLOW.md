@@ -169,7 +169,7 @@ python scripts/inspect_state.py
 
 **当前 API 方式：** FastAPI `/api/v1/state` 端点 → 本地开发者 Web 看板（观众不可见）
 
-**Vision 工作区：** 开发者 Web 看板左侧 `Entity State` 下方显示 Vision 面板，可扫描/选择 camera index，启动/停止摄像头与 YOLO worker，也可启用 Browser Camera fallback。面板显示 runtime status、模型路径状态、camera open attempts、输入来源、FPS、detections、最近 vision events，并通过 WebSocket JPEG frames 显示后端标注后的实时画面。
+**Vision 工作区：** 开发者 Web 看板左侧 `Entity State` 下方显示 Vision 面板，主操作流收束为 `Scan Cameras -> Select Camera -> Connect -> Stop`。面板默认使用浏览器摄像头采集并上传帧给后端 YOLO 识别，避免 Python/OpenCV 在 macOS 下没有摄像头权限时阻塞现场联调；OpenCV camera index / open attempts 仅作为状态诊断信息保留。面板显示 runtime status、模型路径状态、输入来源、FPS、detections、最近 vision events，并通过 WebSocket JPEG frames 显示后端标注后的实时画面。
 
 **Audio 工作区：** 开发者 Web 看板 `Runtime` 区域显示 Audio Adapter，可启动/停止浏览器麦克风，查看 provider、disabled reason、STT partial/final transcript、TTS stream id 和错误，并将 final transcript 送入现有对话回合。
 
