@@ -330,7 +330,7 @@ CREATE TABLE schema_version (
 | `src/conscious_entity/interfaces/api_audio.py` | 可选 audio adapter 路由：STT stream、audio dialog、TTS stream |
 | `src/conscious_entity/harness/` | Runtime Harness trace 类型、recorder 和进程内 ring buffer |
 | `src/conscious_entity/identity/` | Visitor Identity & Session Gating V1：记录 encounter、intent、primary visitor、插入事件和安全开发者状态 |
-| `src/conscious_entity/vision/runtime.py` | 可选 vision runtime：摄像头采集、YOLO person detection、presence event debounce |
+| `src/conscious_entity/vision/runtime.py` | 可选 vision runtime：OpenCV/浏览器帧输入、YOLO person detection、presence event debounce |
 | `src/conscious_entity/audio/` | 可选 audio runtime：火山 STT/TTS 配置、stream id、协议封装 |
 
 **当前主要端点：**
@@ -363,6 +363,7 @@ CREATE TABLE schema_version (
 | `GET` | `/api/v1/vision/status` | 查看可选视觉 runtime 状态、依赖、模型路径和最新 detections | 本地开发面板，当前无认证 |
 | `GET` | `/api/v1/vision/cameras` | 扫描本机 OpenCV 可打开的 camera index，用于现场选择可用通道 | 本地开发面板，当前无认证 |
 | `POST` | `/api/v1/vision/config` | 运行期切换 vision camera index；如 worker 已运行则释放旧摄像头并重启 | 本地开发面板，当前无认证 |
+| `POST` | `/api/v1/vision/frame` | 接收开发者面板浏览器采集的 JPEG/PNG 帧，由后端 YOLO 识别并回写最新 snapshot | 本地开发面板，当前无认证 |
 | `POST` | `/api/v1/vision/start` | 启动 Mac 摄像头和 YOLO worker | 本地开发面板，当前无认证 |
 | `POST` | `/api/v1/vision/stop` | 停止 vision worker 并释放摄像头 | 本地开发面板，当前无认证 |
 | `WS` | `/api/v1/vision/stream` | 推送 JSON metadata + binary JPEG frame | 本地开发面板，当前无认证 |
@@ -382,6 +383,7 @@ CREATE TABLE schema_version (
 **Vision 事件边界：**
 - 当前视觉层只检测 YOLO `person` class，不做访客身份识别；下一优先级会在此基础上增加视觉身份 signature、质量门控和历史匹配。
 - 摄像头 index 可在开发者面板运行期切换；OpenCV 打开摄像头时优先尝试 macOS AVFoundation backend，再回退默认 backend，并在 status 中暴露 open attempts。
+- macOS 拒绝 Python/OpenCV 访问摄像头时，开发者面板可启用 Browser Camera：由已授权的浏览器采集画面并上传 JPEG frame，后端只做解码、YOLO 检测和 snapshot 发布。
 - 稳定进入、离开、长时间静默分别转换为已有 `USER_ENTERED`、`USER_LEFT`、`LONG_SILENCE_DETECTED`。
 - 事件通过 `InteractionLoop.handle_system_event(...)` 进入现有状态规则，不新增 `EventType`、YAML 行为规则或 SQLite schema。
 - 同一事件也会进入 `VisitorSessionGatingController`：presence 只产生 `encounter_candidate` / `observe_only`，不会自动创建新 session、不会自动切换 visitor。

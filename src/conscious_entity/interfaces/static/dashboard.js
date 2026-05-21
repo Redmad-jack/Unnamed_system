@@ -329,9 +329,16 @@
     const [cameraIndex, setCameraIndex] = useState("");
     const [cameraOptions, setCameraOptions] = useState([]);
     const [scanning, setScanning] = useState(false);
+    const [browserCameraActive, setBrowserCameraActive] = useState(false);
+    const [browserCameraError, setBrowserCameraError] = useState("");
     const [frameUrl, setFrameUrl] = useState("");
     const socketRef = useRef(null);
     const frameUrlRef = useRef("");
+    const browserVideoRef = useRef(null);
+    const browserCanvasRef = useRef(null);
+    const browserStreamRef = useRef(null);
+    const browserIntervalRef = useRef(null);
+    const browserBusyRef = useRef(false);
 
     const detections = (metadata && metadata.detections) || (status && status.latest && status.latest.detections) || [];
     const events = (metadata && metadata.events) || (status && status.recent_events) || [];
@@ -445,13 +452,103 @@
       }
     }, [cameraIndex, connectStream, disconnectStream, loadStatus]);
 
+    const sendBrowserFrame = useCallback(async () => {
+      const video = browserVideoRef.current;
+      if (!video || video.readyState < 2 || browserBusyRef.current) return;
+      const canvas = browserCanvasRef.current || document.createElement("canvas");
+      browserCanvasRef.current = canvas;
+      const targetWidth = Number((status && status.config && status.config.width) || video.videoWidth || 1280);
+      const targetHeight = Number((status && status.config && status.config.height) || video.videoHeight || 720);
+      canvas.width = targetWidth;
+      canvas.height = targetHeight;
+      const context = canvas.getContext("2d");
+      if (!context) return;
+      context.drawImage(video, 0, 0, targetWidth, targetHeight);
+      const blob = await new Promise((resolve) => canvas.toBlob(resolve, "image/jpeg", 0.76));
+      if (!blob) return;
+      browserBusyRef.current = true;
+      try {
+        const response = await fetch("/api/v1/vision/frame", {
+          method: "POST",
+          headers: { "Content-Type": "image/jpeg" },
+          body: blob,
+        });
+        if (!response.ok) {
+          const text = await response.text();
+          throw new Error(text || `HTTP ${response.status}`);
+        }
+        const data = await response.json();
+        setStatus(data);
+        setError(data.error || "");
+        connectStream();
+      } catch (err) {
+        setBrowserCameraError(err.message);
+      } finally {
+        browserBusyRef.current = false;
+      }
+    }, [connectStream, status]);
+
+    const stopBrowserCamera = useCallback(() => {
+      if (browserIntervalRef.current) {
+        window.clearInterval(browserIntervalRef.current);
+        browserIntervalRef.current = null;
+      }
+      if (browserStreamRef.current) {
+        browserStreamRef.current.getTracks().forEach((track) => track.stop());
+        browserStreamRef.current = null;
+      }
+      if (browserVideoRef.current) {
+        browserVideoRef.current.pause();
+        browserVideoRef.current.srcObject = null;
+      }
+      setBrowserCameraActive(false);
+      setBrowserCameraError("");
+    }, []);
+
+    const startBrowserCamera = useCallback(async () => {
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        setBrowserCameraError("Browser camera capture is not available.");
+        return;
+      }
+      try {
+        stopBrowserCamera();
+        const targetWidth = Number((status && status.config && status.config.width) || 1280);
+        const targetHeight = Number((status && status.config && status.config.height) || 720);
+        const stream = await navigator.mediaDevices.getUserMedia({
+          audio: false,
+          video: {
+            width: { ideal: targetWidth },
+            height: { ideal: targetHeight },
+          },
+        });
+        const video = browserVideoRef.current || document.createElement("video");
+        browserVideoRef.current = video;
+        video.muted = true;
+        video.playsInline = true;
+        video.srcObject = stream;
+        browserStreamRef.current = stream;
+        await video.play();
+        setBrowserCameraActive(true);
+        setBrowserCameraError("");
+        connectStream();
+        await sendBrowserFrame();
+        const targetFps = Math.min(5, Number((status && status.config && status.config.fps) || 5));
+        const intervalMs = Math.max(200, Math.round(1000 / Math.max(1, targetFps)));
+        browserIntervalRef.current = window.setInterval(sendBrowserFrame, intervalMs);
+      } catch (err) {
+        stopBrowserCamera();
+        setBrowserCameraError(err.message);
+      }
+    }, [connectStream, sendBrowserFrame, status, stopBrowserCamera]);
+
     useEffect(() => {
       loadStatus();
       return () => {
+        stopBrowserCamera();
         disconnectStream();
         if (frameUrlRef.current) URL.revokeObjectURL(frameUrlRef.current);
       };
-    }, [disconnectStream, loadStatus]);
+    }, [disconnectStream, loadStatus, stopBrowserCamera]);
     useInterval(loadStatus, 5000);
 
     const cfg = (metadata && metadata.camera) || (status && status.config) || {};
@@ -463,6 +560,7 @@
     const identity = identityStatus && identityStatus.status ? identityStatus.status : null;
     const statusText = recognition.pipeline_status || (running ? "running" : status && status.enabled ? "ready" : "disabled");
     const statusClass = statusText === "running" ? "ok" : statusText === "error" || statusText === "disabled" ? "err" : "dim";
+    const source = recognition.source || (metadata && metadata.source) || "opencv";
     const selectedOption = cameraOptions.find((item) => String(item.index) === String(cameraIndex));
     const cameraDetail = selectedOption
       ? `${selectedOption.opened ? "openable" : "closed"}${selectedOption.frame_readable ? " · frame ok" : ""}${selectedOption.backend ? ` · ${selectedOption.backend}` : ""}`
@@ -495,6 +593,11 @@
         h("button", { className: "btn-sm", onClick: applyCamera }, "Apply Camera"),
         h("button", { className: "btn-sm", onClick: scanCameras, disabled: scanning }, scanning ? "Scanning…" : "Scan Cameras"),
       ),
+      h("div", { className: "toolbar", style: { marginTop: "8px" } },
+        h("button", { className: browserCameraActive ? "btn-sm active" : "btn-sm", onClick: startBrowserCamera }, browserCameraActive ? "Browser Cam On" : "Browser Cam Start"),
+        h("button", { className: "btn-sm", onClick: stopBrowserCamera, disabled: !browserCameraActive }, "Browser Cam Stop"),
+        h("span", { className: browserCameraActive ? "ok" : "dim" }, browserCameraActive ? "Chrome capture active" : "backend OpenCV capture"),
+      ),
       h("div", { className: "item-meta", style: { marginTop: "4px" } }, cameraDetail),
       h("div", { className: "vision-preview" }, frameUrl
         ? h("img", { src: frameUrl, alt: "Vision stream" })
@@ -504,11 +607,13 @@
         h("span", null, "Frame"), h("span", null, frameId ?? "—"),
         h("span", null, "People"), h("span", null, detections.length),
         h("span", null, "Camera"), h("span", null, `${cfg.index ?? cfg.camera_index ?? "—"} · ${cfg.width ?? "—"}x${cfg.height ?? "—"} · ${cfg.fps ?? "—"}fps`),
+        h("span", null, "Input"), h("span", null, source),
         h("span", null, "Model"), h("span", { title: model }, String(model).split("/").pop()),
         h("span", null, "Updated"), h("span", null, formatTime(updated)),
       ),
       h(RealtimeRecognitionStatus, { recognition, identity, detections }),
       error ? h("div", { className: "err" }, error) : null,
+      browserCameraError ? h("div", { className: "err" }, browserCameraError) : null,
       h(DetectionList, { detections }),
       h(EventList, { events }),
     );
@@ -523,6 +628,7 @@
       h("div", { className: "kv-grid" },
         h("span", null, "Pipeline"), h("span", { className: recognition.pipeline_status === "running" ? "ok" : recognition.pipeline_status === "error" ? "err" : "dim" }, recognition.pipeline_status || "—"),
         h("span", null, "Camera"), h("span", null, recognition.camera_status || "—"),
+        h("span", null, "Source"), h("span", null, recognition.source || "—"),
         h("span", null, "Detector"), h("span", null, recognition.detector_status || "—"),
         h("span", null, "Frame age"), h("span", null, age),
         h("span", null, "Presence"), h("span", null, `${presence} · ${personCount} people`),

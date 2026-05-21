@@ -45,6 +45,18 @@ Status values: `in_progress`, `done`
 
 | File | Agent | Status | Started |
 |------|-------|--------|---------|
+| src/conscious_entity/vision/runtime.py | Codex | done | 2026-05-21 11:44 CST |
+| src/conscious_entity/interfaces/api_models.py | Codex | done | 2026-05-21 11:44 CST |
+| src/conscious_entity/interfaces/api_routes.py | Codex | done | 2026-05-21 11:44 CST |
+| src/conscious_entity/interfaces/api.py | Codex | done | 2026-05-21 11:44 CST |
+| src/conscious_entity/interfaces/static/dashboard.js | Codex | done | 2026-05-21 11:44 CST |
+| tests/unit/test_vision_runtime.py | Codex | done | 2026-05-21 11:44 CST |
+| tests/unit/test_api_vision.py | Codex | done | 2026-05-21 11:44 CST |
+| pyproject.toml | Codex | done | 2026-05-21 11:44 CST |
+| docs/TECH_STACK.md | Codex | done | 2026-05-21 11:44 CST |
+| docs/APP_FLOW.md | Codex | done | 2026-05-21 11:44 CST |
+| docs/BACKEND_STRUCTURE.md | Codex | done | 2026-05-21 11:44 CST |
+| docs/progress.md | Codex | done | 2026-05-21 11:44 CST |
 | src/conscious_entity/vision/runtime.py | Codex | done | 2026-05-21 11:23 CST |
 | src/conscious_entity/vision/__init__.py | Codex | done | 2026-05-21 11:23 CST |
 | src/conscious_entity/interfaces/api_models.py | Codex | done | 2026-05-21 11:23 CST |

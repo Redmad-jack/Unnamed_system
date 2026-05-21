@@ -50,9 +50,23 @@ class _FakeVisionManager:
         self.camera_index = camera_index
         return {"config": {"camera_index": camera_index}, "running": False}
 
+    def process_image_frame(self, payload, *, source):
+        return {"frame_id": 1, "payload_size": len(payload), "source": source}
+
 
 def _request(manager):
     return SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(vision_manager=manager)))
+
+
+def _frame_request(manager, payload=b"jpeg"):
+    async def body():
+        return payload
+
+    return SimpleNamespace(
+        app=SimpleNamespace(state=SimpleNamespace(vision_manager=manager)),
+        headers={"content-type": "image/jpeg"},
+        body=body,
+    )
 
 
 def test_vision_status_returns_disabled_state():
@@ -105,6 +119,16 @@ def test_vision_config_update_changes_camera_index():
 
     assert manager.camera_index == 2
     assert result["config"]["camera_index"] == 2
+
+
+def test_vision_frame_accepts_browser_jpeg_payload():
+    manager = _FakeVisionManager()
+
+    result = asyncio.run(api.vision_frame(_frame_request(manager, b"jpeg-bytes")))
+
+    assert result["frame_id"] == 1
+    assert result["payload_size"] == len(b"jpeg-bytes")
+    assert result["source"] == "browser"
 
 
 def test_identity_status_reports_controller_state():

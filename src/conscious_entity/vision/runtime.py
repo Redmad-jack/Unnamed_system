@@ -115,6 +115,7 @@ class VisionCameraProbe:
 class VisionSnapshot:
     frame_id: int = 0
     timestamp: datetime | None = None
+    source: str = "opencv"
     detections: list[VisionDetection] = field(default_factory=list)
     events: list[VisionRuntimeEvent] = field(default_factory=list)
     jpeg: bytes | None = None
@@ -124,6 +125,7 @@ class VisionSnapshot:
             "type": "vision_frame",
             "frame_id": self.frame_id,
             "timestamp": self.timestamp.isoformat() if self.timestamp else None,
+            "source": self.source,
             "running": running,
             "error": error,
             "camera": {
@@ -213,6 +215,7 @@ class VisionManager:
         self._stop_event = threading.Event()
         self._thread: threading.Thread | None = None
         self._capture: Any = None
+        self._model: Any = None
         self._running = False
         self._error: str | None = None
         self._snapshot = VisionSnapshot()
@@ -220,6 +223,7 @@ class VisionManager:
         self._pending_events: list[EventType] = []
         self._camera_open_attempts: list[dict[str, Any]] = []
         self._camera_scan: list[VisionCameraProbe] = []
+        self._external_frame_last_at: float | None = None
 
     @property
     def running(self) -> bool:
@@ -280,8 +284,7 @@ class VisionManager:
             self._stop_event.clear()
 
         cv2 = _import_required("cv2", "opencv-python")
-        yolo_cls = _import_yolo()
-        model = yolo_cls(str(self.config.model_path))
+        model = self._load_model()
         capture, attempts = self._open_capture(cv2, self.config.camera_index)
         with self._lock:
             self._camera_open_attempts = attempts
@@ -321,8 +324,40 @@ class VisionManager:
             self._pending_events.clear()
             self._error = None
             self._camera_open_attempts = []
+            self._external_frame_last_at = None
         if was_running:
             return self.start()
+        return self.status()
+
+    def process_image_frame(self, image_bytes: bytes, *, source: str = "browser") -> dict[str, Any]:
+        self._ensure_ready()
+        if not image_bytes:
+            raise VisionConfigurationError("Vision frame payload is empty.")
+        cv2 = _import_required("cv2", "opencv-python")
+        np = _import_required("numpy", "numpy")
+        array = np.frombuffer(image_bytes, dtype=np.uint8)
+        frame = cv2.imdecode(array, cv2.IMREAD_COLOR)
+        if frame is None:
+            raise VisionConfigurationError("Could not decode vision frame.")
+
+        started = time.time()
+        model = self._load_model()
+        detections = self._detect_people(model, frame)
+        self._draw_detections(cv2, frame, detections)
+        encoded_ok, encoded = cv2.imencode(
+            ".jpg",
+            frame,
+            [int(cv2.IMWRITE_JPEG_QUALITY), _DEFAULT_JPEG_QUALITY],
+        )
+        jpeg = encoded.tobytes() if encoded_ok else image_bytes
+        events = self._tracker.update(bool(detections), now=started)
+        runtime_events = [
+            VisionRuntimeEvent(event, datetime.now(timezone.utc), f"{source}_person_presence")
+            for event in events
+        ]
+        self._publish_snapshot(detections, runtime_events, jpeg, source=source)
+        with self._lock:
+            self._external_frame_last_at = started
         return self.status()
 
     def scan_cameras(self, *, max_index: int = 5) -> dict[str, Any]:
@@ -409,6 +444,16 @@ class VisionManager:
                 f"ENTITY_VISION_MODEL_PATH does not exist: {self.config.model_path}"
             )
 
+    def _load_model(self) -> Any:
+        with self._lock:
+            if self._model is not None:
+                return self._model
+        yolo_cls = _import_yolo()
+        model = yolo_cls(str(self.config.model_path))
+        with self._lock:
+            self._model = model
+            return self._model
+
     def _run_worker(self, cv2: Any, model: Any, capture: Any) -> None:
         frame_interval = 1.0 / max(1, self.config.fps)
         try:
@@ -433,7 +478,7 @@ class VisionManager:
                     VisionRuntimeEvent(event, datetime.now(timezone.utc), "yolo_person_presence")
                     for event in events
                 ]
-                self._publish_snapshot(detections, runtime_events, jpeg)
+                self._publish_snapshot(detections, runtime_events, jpeg, source="opencv")
                 elapsed = time.time() - started
                 time.sleep(max(0.0, frame_interval - elapsed))
         except Exception as exc:
@@ -485,6 +530,8 @@ class VisionManager:
         detections: list[VisionDetection],
         events: list[VisionRuntimeEvent],
         jpeg: bytes | None,
+        *,
+        source: str,
     ) -> None:
         with self._lock:
             frame_id = self._snapshot.frame_id + 1
@@ -495,6 +542,7 @@ class VisionManager:
             self._snapshot = VisionSnapshot(
                 frame_id=frame_id,
                 timestamp=datetime.now(timezone.utc),
+                source=source,
                 detections=detections,
                 events=events,
                 jpeg=jpeg,
@@ -511,6 +559,10 @@ class VisionManager:
             frame_age_ms = int(
                 (datetime.now(timezone.utc) - self._snapshot.timestamp).total_seconds() * 1000
             )
+        external_frame_fresh = (
+            self._external_frame_last_at is not None
+            and time.time() - self._external_frame_last_at <= max(2.0, 2.0 / max(1, self.config.fps))
+        )
         if disabled_reason:
             pipeline_status = "disabled"
             camera_status = "not_available"
@@ -523,6 +575,14 @@ class VisionManager:
             pipeline_status = "running"
             camera_status = "open"
             detector_status = "running"
+        elif external_frame_fresh:
+            pipeline_status = "running"
+            camera_status = "browser"
+            detector_status = "running"
+        elif self._snapshot.frame_id > 0 and self._snapshot.source == "browser":
+            pipeline_status = "stopped"
+            camera_status = "browser_idle"
+            detector_status = "ready"
         elif self._snapshot.frame_id > 0:
             pipeline_status = "stopped"
             camera_status = "closed"
@@ -535,8 +595,11 @@ class VisionManager:
             "pipeline_status": pipeline_status,
             "camera_status": camera_status,
             "detector_status": detector_status,
-            "frame_status": "receiving" if self._running and self._snapshot.frame_id > 0 else "no_frame",
+            "frame_status": "receiving"
+            if (self._running or external_frame_fresh) and self._snapshot.frame_id > 0
+            else "no_frame",
             "frame_age_ms": frame_age_ms,
+            "source": self._snapshot.source,
             "person_count": len(self._snapshot.detections),
             "person_present": self._tracker.person_present,
             "confidence_threshold": self.config.confidence,
@@ -550,15 +613,19 @@ class VisionManager:
     def _dependency_status(self) -> dict[str, Any]:
         missing: list[str] = []
         cv2_available = importlib.util.find_spec("cv2") is not None
+        numpy_available = importlib.util.find_spec("numpy") is not None
         ultralytics_available = importlib.util.find_spec("ultralytics") is not None
         if not cv2_available:
             missing.append("opencv-python")
+        if not numpy_available:
+            missing.append("numpy")
         if not ultralytics_available:
             missing.append("ultralytics")
         return {
             "available": not missing,
             "missing": missing,
             "cv2": cv2_available,
+            "numpy": numpy_available,
             "ultralytics": ultralytics_available,
         }
 

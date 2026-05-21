@@ -169,3 +169,60 @@ def test_vision_manager_scans_camera_indices(monkeypatch, tmp_path):
     assert [item["index"] for item in result["cameras"]] == [0, 1, 2]
     assert result["cameras"][1]["opened"] is True
     assert result["cameras"][1]["frame_readable"] is True
+
+
+def test_vision_manager_processes_browser_frame(monkeypatch, tmp_path):
+    model = tmp_path / "model.pt"
+    model.write_text("placeholder", encoding="utf-8")
+
+    class FakeEncoded:
+        def tobytes(self):
+            return b"annotated-jpeg"
+
+    class FakeCv2:
+        IMREAD_COLOR = 1
+        IMWRITE_JPEG_QUALITY = 1
+
+        def imdecode(self, _array, _mode):
+            return object()
+
+        def imencode(self, _extension, _frame, _params):
+            return True, FakeEncoded()
+
+    class FakeNumpy:
+        uint8 = object()
+
+        def frombuffer(self, data, dtype=None):
+            return data
+
+    class FakeModel:
+        def __init__(self, _path):
+            pass
+
+        def __call__(self, _frame, verbose=False, conf=0.45):
+            return []
+
+    manager = VisionManager(VisionConfig(model_path=model, camera_index=0))
+    manager._dependency_status = lambda: {  # type: ignore[method-assign]
+        "available": True,
+        "missing": [],
+        "cv2": True,
+        "numpy": True,
+        "ultralytics": True,
+    }
+
+    def fake_import_required(module_name, _package_name):
+        return FakeCv2() if module_name == "cv2" else FakeNumpy()
+
+    monkeypatch.setattr(vision_runtime, "_import_required", fake_import_required)
+    monkeypatch.setattr(vision_runtime, "_import_yolo", lambda: FakeModel)
+
+    status = manager.process_image_frame(b"jpeg-bytes", source="browser")
+
+    assert status["frame_id"] == 1
+    assert status["recognition"]["pipeline_status"] == "running"
+    assert status["recognition"]["camera_status"] == "browser"
+    assert status["recognition"]["source"] == "browser"
+    metadata, jpeg = manager.stream_snapshot()
+    assert metadata["source"] == "browser"
+    assert jpeg == b"annotated-jpeg"

@@ -106,6 +106,7 @@ from conscious_entity.interfaces.api_routes import (
     visitor_surface,
     vision_cameras,
     vision_config_update,
+    vision_frame,
     vision_start,
     vision_status,
     vision_stop,

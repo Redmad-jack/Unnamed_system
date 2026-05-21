@@ -311,6 +311,21 @@ async def vision_config_update(body: VisionRuntimeConfigRequest, request: Reques
         raise HTTPException(status_code=400, detail=str(exc))
 
 
+@router.post("/api/v1/vision/frame")
+async def vision_frame(request: Request):
+    manager = getattr(request.app.state, "vision_manager", None)
+    if manager is None:
+        raise HTTPException(status_code=503, detail="Vision runtime not initialised")
+    content_type = request.headers.get("content-type", "").split(";")[0].lower()
+    if content_type not in {"image/jpeg", "image/png", "application/octet-stream"}:
+        raise HTTPException(status_code=415, detail="Vision frame must be JPEG or PNG bytes")
+    payload = await request.body()
+    try:
+        return manager.process_image_frame(payload, source="browser")
+    except VisionConfigurationError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
 @router.post("/api/v1/vision/start")
 async def vision_start(request: Request):
     manager = getattr(request.app.state, "vision_manager", None)
