@@ -143,8 +143,15 @@
     const [health, setHealth] = useState(null);
     const [sessionType, setSessionType] = useState("test");
     const [configOpen, setConfigOpen] = useState(false);
+    const [armState, setArmState] = useState({ status: "idle", detail: "not armed" });
+    const armStreamsRef = useRef([]);
 
     useEffect(() => { writeLayout(layout); }, [layout]);
+    useEffect(() => () => {
+      armStreamsRef.current.forEach((stream) => {
+        stream.getTracks().forEach((track) => track.stop());
+      });
+    }, []);
 
     const pollHealth = useCallback(async () => {
       try {
@@ -236,6 +243,79 @@
       }
     }, []);
 
+    const armExhibition = useCallback(async () => {
+      setArmState({ status: "arming", detail: "requesting camera, mic, playback" });
+      armStreamsRef.current.forEach((stream) => {
+        stream.getTracks().forEach((track) => track.stop());
+      });
+      armStreamsRef.current = [];
+
+      const results = [];
+      const requestMedia = async (kind, constraints) => {
+        try {
+          const stream = await navigator.mediaDevices.getUserMedia(constraints);
+          armStreamsRef.current.push(stream);
+          const track = stream.getTracks()[0];
+          results.push({ kind, ok: true, label: track ? track.label : kind });
+        } catch (error) {
+          results.push({ kind, ok: false, error: errorSummary(error) });
+        }
+      };
+
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        const detail = "browser media API unavailable";
+        setArmState({ status: "error", detail });
+        fetchJSON("/api/v1/vision/client-log", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            event: "exhibition_arm_unavailable",
+            detail: { summary: detail, capability: browserCameraCapability() },
+            at: new Date().toISOString(),
+          }),
+        }).catch(() => null);
+        return;
+      }
+
+      await requestMedia("camera", { audio: false, video: true });
+      await requestMedia("mic", { audio: true, video: false });
+
+      let playbackOk = false;
+      let playbackError = null;
+      try {
+        const player = new Audio(SILENT_WAV);
+        player.volume = 0.01;
+        await player.play();
+        player.pause();
+        playbackOk = true;
+      } catch (error) {
+        playbackError = errorSummary(error);
+      }
+
+      const failed = results.filter((item) => !item.ok);
+      if (!playbackOk) {
+        failed.push({ kind: "playback", ok: false, error: playbackError || "playback unlock failed" });
+      }
+      const detail = failed.length
+        ? failed.map((item) => `${item.kind}: ${item.error}`).join(" | ")
+        : `camera, mic, playback ready`;
+      setArmState({ status: failed.length ? "error" : "ready", detail });
+      fetchJSON("/api/v1/vision/client-log", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          event: failed.length ? "exhibition_arm_error" : "exhibition_arm_ready",
+          detail: {
+            summary: detail,
+            results,
+            playback: { ok: playbackOk, error: playbackError },
+            capability: browserCameraCapability(),
+          },
+          at: new Date().toISOString(),
+        }),
+      }).catch(() => null);
+    }, []);
+
     const gridStyle = {
       gridTemplateColumns: `${layout.left}px minmax(360px, 1fr) ${layout.right}px`,
       gridTemplateRows: `minmax(220px, 1fr) ${layout.bottom}px`,
@@ -248,6 +328,8 @@
         health,
         sessionType,
         onSessionTypeChange: applySessionType,
+        armState,
+        onArm: armExhibition,
         onSave: saveConversation,
         onReset: resetMemory,
         onConfig: () => setConfigOpen(true),
@@ -281,8 +363,9 @@
     );
   }
 
-  function Header({ health, sessionType, onSessionTypeChange, onSave, onReset, onConfig }) {
+  function Header({ health, sessionType, onSessionTypeChange, armState, onArm, onSave, onReset, onConfig }) {
     const status = health && health.status ? health.status : "connecting";
+    const armStatus = armState && armState.status ? armState.status : "idle";
     return h("header", { className: "app-header" },
       h("h1", { className: "app-title" }, "CONSCIOUS ENTITY — DEV PANEL"),
       h("span", { className: `badge ${status === "ok" ? "ok" : status === "connecting" ? "" : "err"}` }, status.toUpperCase()),
@@ -298,6 +381,16 @@
       h("button", { className: "btn-sm", onClick: onSave }, "Save Dialog"),
       h("button", { className: "btn-sm", onClick: onReset }, "Reset Memory / New Session"),
       h("button", { className: "btn-sm", onClick: onConfig }, "YAML Config"),
+      h("button", {
+        className: armStatus === "ready" ? "btn-sm active" : "btn-sm",
+        onClick: onArm,
+        disabled: armStatus === "arming",
+        title: armState ? armState.detail : "",
+      }, armStatus === "arming" ? "Arming…" : "Exhibition Arm"),
+      h("span", {
+        className: `badge arm-badge ${armStatus === "ready" ? "ok" : armStatus === "error" ? "err" : ""}`,
+        title: armState ? armState.detail : "",
+      }, armStatus.toUpperCase()),
       h("div", { className: "header-spacer" }),
       h("span", { className: "session-label" }, health && health.session_id ? `session: ${compactId(health.session_id)} · ${sessionType} · visitor: ${health.visitor_id ? compactId(health.visitor_id) : "none"}` : "session: —"),
     );
