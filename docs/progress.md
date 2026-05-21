@@ -48,6 +48,18 @@
 
 ## Changelog
 
+### 2026-05-19：电机信号长窗口诊断
+
+- [x] 将 ESP32 下位机电机/底盘定时命令窗口从 2000 ms 放宽到 30000 ms，用于万用表验证 GPIO/PWM 信号链
+- [x] `status` telemetry 增加 `max_duration_ms`，串口 help 与 README 已同步长窗口上限
+- [x] 仍保留 `arm` 门槛与自动停机；该变更只用于当前硬件诊断，不代表自主运动策略放宽
+
+### 2026-05-19：ESP32-S3 板载 WS2812 启动熄灭
+
+- [x] 新增 `firmware/stranger_esp32s3/src/status_led.*`，启动时向 GPIO48 WS2812 发送全黑数据，避免板载 RGB 红/绿/白随机亮色干扰硬件判断
+- [x] 在 `config.h` 记录 `PIN_BOARD_RGB=48` 与板卡资料中的 8 颗 WS2812 计数
+- [x] README 已说明该 RGB 颜色不作为供电、故障或运动状态指示
+
 ### 2026-05-19：ESP32 本地 ToF 反应式避障与低速 roam
 
 - [x] 将 `tof_scan.*` 从 I2C presence scan 扩展为 VL53L1X 距离读取：

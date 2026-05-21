@@ -20,6 +20,7 @@ class SerialProtocol {
   void printStatus();
   void printHeartbeat();
   void printTelemetry();
+  bool telemetryEnabled() const;
 
  private:
   void handleLine(String line);
@@ -28,6 +29,7 @@ class SerialProtocol {
 
   void setAvoidance(bool enabled);
   void setRoam(bool enabled);
+  void setTelemetry(bool enabled);
   void printAck(const char *action);
   void printAckValue(const char *action, const char *key, int value);
   void printError(const char *error);
@@ -38,6 +40,7 @@ class SerialProtocol {
   ObstacleGate &gate_;
   RoamController &roam_;
   String line_;
+  bool telemetryEnabled_ = true;
 };
 
 }  // namespace stranger

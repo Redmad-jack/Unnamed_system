@@ -33,6 +33,8 @@ void SerialProtocol::printHelp() {
   Serial.println("  status");
   Serial.println("  scan");
   Serial.println("  tof");
+  Serial.println("  telemetry on");
+  Serial.println("  telemetry off");
   Serial.println("  avoidance on");
   Serial.println("  avoidance off");
   Serial.println("  roam start");
@@ -40,13 +42,15 @@ void SerialProtocol::printHelp() {
   Serial.println("  arm");
   Serial.println("  disarm");
   Serial.println("  motors off");
-  Serial.println("  motor <1-4> <duty -120..120> [duration_ms]");
-  Serial.println("  drive <throttle -120..120> <turn -120..120> [duration_ms]");
-  Serial.println("  spin <duty -120..120> [duration_ms]");
-  Serial.println("  test <1-4> [duty 1..120] [duration_ms]");
-  Serial.println("  test all [duty 1..120] [duration_ms]");
+  Serial.println("  motor <1-4> <duty -250..250> [duration_ms <= 30000]");
+  Serial.println(
+      "  drive <throttle -250..250> <turn -250..250> [duration_ms <= 30000]");
+  Serial.println("  spin <duty -250..250> [duration_ms <= 30000]");
+  Serial.println("  test <1-4> [duty 1..250] [duration_ms <= 30000]");
+  Serial.println("  test all [duty 1..250] [duration_ms <= 30000]");
   Serial.println("JSON examples:");
   Serial.println("  {\"cmd\":\"tof\"}");
+  Serial.println("  {\"cmd\":\"telemetry\",\"enabled\":false}");
   Serial.println("  {\"cmd\":\"avoidance\",\"enabled\":true}");
   Serial.println("  {\"cmd\":\"roam\",\"enabled\":true}");
   Serial.println("  {\"cmd\":\"drive\",\"throttle\":70,\"turn\":-20,\"ms\":500}");
@@ -57,13 +61,15 @@ void SerialProtocol::printStatus() {
   const DriveMix &mix = chassis_.lastMix();
   Serial.printf(
       "{\"type\":\"status\",\"uptime_ms\":%lu,\"motor_armed\":%s,"
-      "\"max_test_duty\":%d,\"tca_0x70\":%s,\"sda\":%u,\"scl\":%u,"
+      "\"max_test_duty\":%d,\"max_duration_ms\":%u,\"tca_0x70\":%s,"
+      "\"sda\":%u,\"scl\":%u,"
       "\"last_left\":%d,\"last_right\":%d,\"avoidance_enabled\":%s,"
       "\"obstacle_state\":\"%s\",\"roam_enabled\":%s,\"roam_mode\":\"%s\"}\n",
       static_cast<unsigned long>(millis()), motors_.isArmed() ? "true" : "false",
-      MOTOR_TEST_MAX_DUTY, tof_.tcaPresent() ? "true" : "false", PIN_I2C_SDA,
-      PIN_I2C_SCL, mix.left, mix.right, gate_.enabled() ? "true" : "false",
-      gate_.stateName(), roam_.enabled() ? "true" : "false", roam_.mode());
+      MOTOR_TEST_MAX_DUTY, MOTOR_TEST_MAX_MS,
+      tof_.tcaPresent() ? "true" : "false", PIN_I2C_SDA, PIN_I2C_SCL,
+      mix.left, mix.right, gate_.enabled() ? "true" : "false", gate_.stateName(),
+      roam_.enabled() ? "true" : "false", roam_.mode());
   motors_.printStatus(Serial);
   gate_.printState(Serial);
 }
@@ -77,6 +83,8 @@ void SerialProtocol::printTelemetry() {
   tof_.printTelemetry(Serial);
   gate_.printState(Serial);
 }
+
+bool SerialProtocol::telemetryEnabled() const { return telemetryEnabled_; }
 
 void SerialProtocol::handleLine(String line) {
   line.trim();
@@ -108,6 +116,14 @@ void SerialProtocol::handleText(String command) {
   }
   if (command == "tof") {
     printTelemetry();
+    return;
+  }
+  if (command == "telemetry on") {
+    setTelemetry(true);
+    return;
+  }
+  if (command == "telemetry off") {
+    setTelemetry(false);
     return;
   }
   if (command == "avoidance on") {
@@ -246,6 +262,10 @@ void SerialProtocol::handleJson(const String &line) {
     printTelemetry();
     return;
   }
+  if (strcmp(cmd, "telemetry") == 0) {
+    setTelemetry(doc["enabled"] | true);
+    return;
+  }
   if (strcmp(cmd, "avoidance") == 0) {
     setAvoidance(doc["enabled"] | true);
     return;
@@ -307,6 +327,12 @@ void SerialProtocol::setRoam(bool enabled) {
   } else {
     printError(roam_.lastError());
   }
+}
+
+void SerialProtocol::setTelemetry(bool enabled) {
+  telemetryEnabled_ = enabled;
+  Serial.printf("{\"type\":\"ack\",\"action\":\"telemetry\",\"enabled\":%s}\n",
+                enabled ? "true" : "false");
 }
 
 void SerialProtocol::printAck(const char *action) {

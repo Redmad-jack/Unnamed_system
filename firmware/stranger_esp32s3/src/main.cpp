@@ -5,6 +5,7 @@
 #include "obstacle_gate.h"
 #include "roam_controller.h"
 #include "serial_protocol.h"
+#include "status_led.h"
 #include "tof_scan.h"
 
 namespace {
@@ -24,7 +25,9 @@ uint32_t lastTelemetryMs = 0;
 
 void setup() {
   Serial.begin(115200);
+  stranger::turnOffBoardRgb();
   delay(800);
+  stranger::turnOffBoardRgb();
 
   motorDriver.begin();
   tofScanner.begin();
@@ -46,11 +49,12 @@ void loop() {
   serialProtocol.update();
 
   const uint32_t now = millis();
-  if (now - lastTelemetryMs >= stranger::TELEMETRY_INTERVAL_MS) {
+  if (serialProtocol.telemetryEnabled() &&
+      now - lastTelemetryMs >= stranger::TELEMETRY_INTERVAL_MS) {
     lastTelemetryMs = now;
     serialProtocol.printTelemetry();
   }
-  if (now - lastHeartbeatMs >= 2000) {
+  if (serialProtocol.telemetryEnabled() && now - lastHeartbeatMs >= 2000) {
     lastHeartbeatMs = now;
     serialProtocol.printHeartbeat();
   }

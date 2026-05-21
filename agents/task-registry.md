@@ -45,6 +45,27 @@ Status values: `in_progress`, `done`
 
 | File | Agent | Status | Started |
 |------|-------|--------|---------|
+| firmware/stranger_esp32s3/src/config.h | Codex | done | 2026-05-19 22:14 CST |
+| firmware/stranger_esp32s3/src/serial_protocol.cpp | Codex | done | 2026-05-19 22:14 CST |
+| firmware/stranger_esp32s3/README.md | Codex | done | 2026-05-19 22:14 CST |
+| docs/progress.md | Codex | done | 2026-05-19 22:14 CST |
+| firmware/stranger_esp32s3/src/config.h | Codex | done | 2026-05-19 21:54 CST |
+| firmware/stranger_esp32s3/src/main.cpp | Codex | done | 2026-05-19 21:54 CST |
+| firmware/stranger_esp32s3/src/status_led.h | Codex | done | 2026-05-19 21:54 CST |
+| firmware/stranger_esp32s3/src/status_led.cpp | Codex | done | 2026-05-19 21:54 CST |
+| firmware/stranger_esp32s3/README.md | Codex | done | 2026-05-19 21:54 CST |
+| docs/progress.md | Codex | done | 2026-05-19 21:54 CST |
+| firmware/stranger_esp32s3/src/config.h | Codex | done | 2026-05-19 20:43 CST |
+| firmware/stranger_esp32s3/src/serial_protocol.cpp | Codex | done | 2026-05-19 20:43 CST |
+| firmware/stranger_esp32s3/README.md | Codex | done | 2026-05-19 20:43 CST |
+| firmware/stranger_esp32s3/src/main.cpp | Codex | done | 2026-05-19 20:12 CST |
+| firmware/stranger_esp32s3/src/serial_protocol.h | Codex | done | 2026-05-19 20:12 CST |
+| firmware/stranger_esp32s3/src/serial_protocol.cpp | Codex | done | 2026-05-19 20:12 CST |
+| firmware/stranger_esp32s3/README.md | Codex | done | 2026-05-19 20:12 CST |
+| .vscode/settings.json | Codex | done | 2026-05-19 18:38 CST |
+| .vscode/c_cpp_properties.json | Codex | done | 2026-05-19 18:38 CST |
+| firmware/stranger_esp32s3/.gitignore | Codex | done | 2026-05-19 18:38 CST |
+| agents/task-registry.md | Codex | done | 2026-05-19 18:38 CST |
 | firmware/stranger_esp32s3/platformio.ini | Codex | done | 2026-05-19 12:16 CST |
 | firmware/stranger_esp32s3/src/main.cpp | Codex | done | 2026-05-19 12:16 CST |
 | firmware/stranger_esp32s3/src/config.h | Codex | done | 2026-05-19 12:16 CST |

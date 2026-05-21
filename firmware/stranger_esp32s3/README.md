@@ -64,8 +64,12 @@ PlatformIO `.cpp` files do not get the same automatic `Arduino.h` insertion that
 | M3 DIR | GPIO12 |
 | M4 PWM | GPIO7 |
 | M4 DIR | GPIO13 |
+| Board WS2812 RGB | GPIO48 |
 
 The motor outputs initialize to `PWM=0`. The firmware will not move motors on boot.
+
+The board's GPIO48 WS2812 RGB LED is explicitly cleared during boot. Its color is
+not used as a power, fault, or motion status indicator.
 
 Motor commands are guarded by `arm`. After `arm`, the firmware allows short timed motor pulses for testing. The arm window expires after 60 seconds and all motor pulses auto-stop.
 
@@ -84,6 +88,7 @@ The firmware is split by responsibility:
 | `obstacle_gate.*` | ToF safety state, slow-zone clipping, hard-stop blocking |
 | `roam_controller.*` | ESP32-local low-speed reactive roaming |
 | `serial_protocol.*` | Text and JSON serial command parsing |
+| `status_led.*` | Board GPIO48 WS2812 startup clear |
 | `config.h` | Pin map, motor positions, limits, timing constants |
 
 ## Serial commands
@@ -95,6 +100,8 @@ help
 status
 scan
 tof
+telemetry on
+telemetry off
 avoidance on
 avoidance off
 roam start
@@ -102,11 +109,11 @@ roam stop
 arm
 disarm
 motors off
-motor <1-4> <duty -120..120> [duration_ms]
-drive <throttle -120..120> <turn -120..120> [duration_ms]
-spin <duty -120..120> [duration_ms]
-test <1-4> [duty 1..120] [duration_ms]
-test all [duty 1..120] [duration_ms]
+motor <1-4> <duty -250..250> [duration_ms <= 30000]
+drive <throttle -250..250> <turn -250..250> [duration_ms <= 30000]
+spin <duty -250..250> [duration_ms <= 30000]
+test <1-4> [duty 1..250] [duration_ms <= 30000]
+test all [duty 1..250] [duration_ms <= 30000]
 ```
 
 Examples:
@@ -114,9 +121,11 @@ Examples:
 ```text
 scan
 tof
+telemetry off
 arm
 motor 1 70 500
 motor 1 -70 500
+motor 1 250 30000
 drive 70 0 500
 drive 60 -20 500
 spin 60 500
@@ -134,7 +143,13 @@ disarm
 
 `motors off` immediately stops all PWM outputs and disarms the motor test gate.
 
-Use a low duty first. If a motor does not move at duty 60-70, increase gradually, but keep the first mechanical test below 120.
+`telemetry off` stops automatic `tof`, `obstacle`, and `heartbeat` output so manual motor tests are readable. Manual commands such as `status`, `tof`, and `scan` still print on demand. Use `telemetry on` to resume automatic telemetry for the Mac-side bridge.
+
+Use a low duty first. If a motor does not move at duty 60-70, increase gradually. For isolated bench diagnosis, the firmware allows duty up to 250 out of the ESP32's 8-bit PWM range.
+
+The maximum timed command window is 30000 ms. This is intended for bench
+diagnosis with a multimeter or oscilloscope; keep the chassis lifted or otherwise
+safe before running long full-duty tests.
 
 4WD differential mixing:
 
@@ -173,6 +188,7 @@ JSON commands are also accepted for the later Mac mini bridge:
 {"cmd":"arm"}
 {"cmd":"status"}
 {"cmd":"tof"}
+{"cmd":"telemetry","enabled":false}
 {"cmd":"avoidance","enabled":true}
 {"cmd":"roam","enabled":true}
 {"cmd":"motor","m":1,"duty":70,"ms":500}
