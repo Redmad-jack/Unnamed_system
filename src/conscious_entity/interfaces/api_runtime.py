@@ -14,12 +14,18 @@ from typing import Any, Optional
 
 from fastapi import HTTPException, Request
 
+from conscious_entity.body import BodySerialBridge, BodyTelemetryStore
 from conscious_entity.core.config_loader import load_all_configs
 from conscious_entity.core.loop import InteractionLoop
 from conscious_entity.db.connection import get_connection
 from conscious_entity.db.migrations import run_migrations
 from conscious_entity.audio import AudioConfig, AudioManager
-from conscious_entity.identity import VisitorSessionGatingController
+from conscious_entity.identity import (
+    FaceIdentityConfig,
+    FaceIdentityManager,
+    IdentitySignatureReference,
+    VisitorSessionGatingController,
+)
 from conscious_entity.interfaces.api_models import EmbeddingConfigRequest, LLMConfigRequest
 from conscious_entity.llm.claude_client import ClaudeClient, ClaudeConfigurationError
 from conscious_entity.llm.embedding_client import EmbeddingClient, EmbeddingConfigurationError
@@ -135,12 +141,19 @@ async def lifespan(app: Any):
     app.state.llm_runtime_config = None
     app.state.embedding_runtime_config = None
     app.state.vision_manager = VisionManager(VisionConfig.from_env())
+    app.state.face_identity_manager = FaceIdentityManager(
+        FaceIdentityConfig(signature_dir=_project_root() / "data" / "signatures" / "face")
+    )
     app.state.vision_event_task = asyncio.create_task(_vision_event_dispatcher(app))
     app.state.audio_manager = AudioManager(AudioConfig.from_env())
+    app.state.body_telemetry = BodyTelemetryStore()
+    app.state.body_bridge = BodySerialBridge(app.state.body_telemetry)
 
     try:
         yield
     finally:
+        if getattr(app.state, "body_bridge", None) is not None:
+            await app.state.body_bridge.disconnect()
         if getattr(app.state, "loop", None) is not None:
             app.state.loop.close(wait_for_background=True)
         app.state.vision_event_task.cancel()
@@ -423,6 +436,39 @@ def _update_visitor_identity_metadata(
     )
 
 
+def _append_visitor_identity_signature(
+    conn: sqlite3.Connection,
+    visitor_id: str,
+    signature: IdentitySignatureReference,
+) -> None:
+    row = conn.execute(
+        "SELECT metadata FROM visitor_profiles WHERE id = ?",
+        (visitor_id,),
+    ).fetchone()
+    existing_metadata = (
+        _json_dict(row["metadata"] if isinstance(row, sqlite3.Row) else row[0])
+        if row
+        else {}
+    )
+    identity = existing_metadata.get("identity")
+    if not isinstance(identity, dict):
+        identity = {}
+    signatures = identity.get("signatures")
+    if not isinstance(signatures, dict):
+        signatures = {}
+    modality_items = signatures.get(signature.modality)
+    if not isinstance(modality_items, list):
+        modality_items = []
+    modality_items = [item for item in modality_items if isinstance(item, dict)]
+    modality_items.append(signature.to_public_dict())
+    signatures[signature.modality] = modality_items
+    identity.update({
+        "schema_version": 1,
+        "signatures": signatures,
+    })
+    _ensure_visitor_profile(conn, visitor_id, metadata={"identity": identity})
+
+
 def _deep_merge_dicts(base: dict[str, Any], patch: dict[str, Any]) -> dict[str, Any]:
     merged = dict(base)
     for key, value in patch.items():
@@ -440,7 +486,7 @@ def _redact_biometric_metadata(value: Any) -> Any:
     if isinstance(value, dict):
         redacted: dict[str, Any] = {}
         for key, item in value.items():
-            if key in {"face_embedding", "voice_embedding", "raw_audio", "raw_image"}:
+            if key in {"face_embedding", "voice_embedding", "raw_audio", "raw_image", "face_crop"}:
                 redacted[key] = "[redacted]"
             else:
                 redacted[key] = _redact_biometric_metadata(item)

@@ -42,7 +42,9 @@ Identity & Session Gating 记录 encounter_candidate，但不创建 session / �
 **成功状态：** 系统就绪，等待访客输入
 **错误状态：** 数据库连接失败 → fallback 到默认初始状态，记录错误日志
 
-**当前视觉入口：** 可选 vision runtime 使用 Mac 摄像头或开发者面板 Browser Camera + 本地 YOLO 模型，只检测 `person` class。开发者面板可扫描本机 OpenCV 可打开的 camera index，并运行期切换通道；如果 macOS 拒绝 Python/OpenCV 摄像头权限，可改用已授权浏览器采集画面并上传帧给后端识别。稳定检测到人会触发 `USER_ENTERED`，人离开超过阈值会触发 `USER_LEFT`，持续存在但长时间没有文字交互会触发 `LONG_SILENCE_DETECTED`。这些事件同时进入 `loop.handle_system_event(...)` 和 Identity & Session Gating：前者更新状态，后者只记录 encounter / intent 状态。presence 不等于对话意图，不会自动创建新 session 或切换 visitor。
+**当前视觉入口：** 可选 vision runtime 使用 Mac 摄像头或开发者面板 Browser Camera + 本地 YOLO 模型检测 `person` class。开发者面板可扫描本机 OpenCV 可打开的 camera index，并运行期切换通道；如果 macOS 拒绝 Python/OpenCV 摄像头权限，可改用已授权浏览器采集画面并上传帧给后端识别。稳定检测到人会触发 `USER_ENTERED`，人离开超过阈值会触发 `USER_LEFT`，持续存在但长时间没有文字交互会触发 `LONG_SILENCE_DETECTED`。这些事件同时进入 `loop.handle_system_event(...)` 和 Identity & Session Gating：前者更新状态，后者只记录 encounter / intent 状态。presence 不等于对话意图，不会自动创建新 session 或切换 visitor。
+
+**当前 face signature 入口：** 开发者可在 presence / intent 明确后，从 vision runtime 最近一帧触发 `/api/v1/identity/face/capture`。后端使用本地 InsightFace / ArcFace (`buffalo_l`) 做 face detection、quality gate、embedding 和本地历史匹配；通过质量门控后只在内存中保留 pending capture。只有对已存在 visitor 调用 `/api/v1/identity/face/enroll` 时，才把 embedding 写入私有本地 signature store，并在 `visitor_profiles.metadata.identity.signatures.face[]` 追加安全 reference 与质量摘要。
 
 **macOS 摄像头权限注意：** 摄像头授权绑定启动 API 的宿主进程。Codex 启动的 Python 可能无法获得 Camera 权限；若出现 `Could not open camera index N`，可从已授权的 Terminal / VS Code 启动同一 API 进程，或在开发者面板使用 Browser Camera fallback。
 
@@ -135,7 +137,7 @@ Step 16  发送 turn_complete 到 EventBus，供调试或后续 instrumentation 
 
 **当前语音入口：** 可选 audio runtime 使用火山 STT/TTS。浏览器或未来身体节点只把 16k / 16bit / mono PCM chunk 发到 `/api/v1/audio/stt/stream`；只有 `transcript.final` 可以通过 `/api/v1/audio/dialog` 进入现有 `run_turn()`。TTS 只朗读最终已过滤的 `ExpressionOutput` 派生文本，并通过 `tts_stream_id` 播放，不允许 visitor/body 直接指定任意 TTS 文本。
 
-**当前身份/会话入口：** V1 不接真实人脸/声纹模型，但已支持结构化识别结果接入：`/api/v1/identity/match` 可提交 face / voice / combined match result，high confidence 默认只设置 candidate 并等待非强制确认；开发者可临时开启 auto-bind，但只在没有 primary visitor 且非 active dialogue 时生效。已绑定 visitor 时本轮标记为 `continue_current`；未绑定 visitor 时标记为 `continue_unidentified`；显式插入信号只记录 interruption，默认不替换当前 primary visitor。
+**当前身份/会话入口：** V1 已支持结构化识别结果接入和本地 face signature capture / matching：`/api/v1/identity/match` 可提交 face / voice / combined match result；`/api/v1/identity/face/capture` 会把本地 face match 转成 `IdentityMatchResult` 并进入同一个 gating。high confidence 默认只设置 candidate 并等待非强制确认；开发者可临时开启 auto-bind，但只在没有 primary visitor 且非 active dialogue 时生效。已绑定 visitor 时本轮标记为 `continue_current`；未绑定 visitor 时标记为 `continue_unidentified`；显式插入信号只记录 interruption，默认不替换当前 primary visitor。
 
 **错误状态：**
 - LLM 调用失败 → 使用规则生成 fallback 回应（简短、中性）
@@ -186,7 +188,7 @@ python scripts/inspect_state.py
 
 **Harness 工作区：** 开发者 Web 看板 `Runtime` 区域显示最近一轮 Harness layer 状态、decision 和摘要。Prompt Harness 只显示 partial 名称与摘要，不显示完整 hidden prompt。
 
-**Identity & Session Gating 工作区：** 开发者 Web 看板 `Runtime` 区域显示当前 runtime state、session decision、primary visitor、candidate、encounter/intent、confidence level、latest match summary、confirmation state、是否等待确认和 interruption count。V1 不展示原始人脸、原始音频、embedding 向量或完整身份库。
+**Identity & Session Gating 工作区：** 开发者 Web 看板 `Runtime` 区域显示当前 runtime state、session decision、primary visitor、candidate、encounter/intent、confidence level、latest match summary、confirmation state、是否等待确认和 interruption count。Face Signature 区域显示 provider/model、pending capture、last capture、last match 和 signature count，并提供 Capture Face / Enroll Current。V1 不展示原始人脸、原始音频、embedding 向量或完整身份库。
 
 **访客 surface：** `/visitor` 只读取最新 `ExpressionOutput` 与少量 state 映射为文字、扰动、沉默和延迟感；如已启用声音，也只播放后端已创建的 `tts_stream_id`，不显示 dashboard 控件、内部规则、memory、prompt 或调试指标。
 
@@ -284,13 +286,13 @@ HarnessTraceStore.record(...)
 ## 6. 待办与待确认
 
 **P0 交接优先级：**
-- 完整声纹识别、视觉识别与访客库：基于当前 V1 gating 和结构化 match result，继续接入真实 signature capture、质量门控和历史匹配模块。
+- 完整声纹识别、combined confidence 与访客库闭环：基于当前 V1 gating、结构化 match result 和本地 face signature capture，继续接入 voice signature、face/voice combined confidence、自然确认表达、数据库污染测试和 visitor memory continuity 验证。
 - 能力自我描述回归测试与优化：确保 Stranger 对看见、听见、识别、记忆、身体、移动等能力的描述与 runtime 上下文一致。
 - 行为测试与调优：统一见 `docs/testlist.md`，本文件不展开测试清单。
 
 **已完成第一版但仍需现场校准：**
 - STT / TTS Audio Adapter：火山 STT/TTS，可降级 disabled，不改变核心 turn loop。
-- 视觉 presence detection：Mac 摄像头 + 本地 YOLO，后续空间感知和视觉身份识别仍待扩展。
+- 视觉 presence detection 与 face signature：Mac 摄像头 / Browser Camera + 本地 YOLO presence；本地 InsightFace / ArcFace face capture 和历史匹配已接入，后续仍需现场精度、阈值和污染测试。
 - Visitor Identity & Session Gating V1：单 primary visitor session、presence 不创建 session、插入只记录事件。
 
 **后续待确认：**

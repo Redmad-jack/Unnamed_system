@@ -743,7 +743,7 @@ def _redact_sensitive(value: Any) -> Any:
     if isinstance(value, dict):
         redacted: dict[str, Any] = {}
         for key, item in value.items():
-            if key in {"face_embedding", "voice_embedding", "raw_audio", "raw_image"}:
+            if key in {"face_embedding", "voice_embedding", "raw_audio", "raw_image", "face_crop"}:
                 redacted[key] = "[redacted]"
             else:
                 redacted[key] = _redact_sensitive(item)

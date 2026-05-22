@@ -28,7 +28,7 @@ Out of current scope:
 - Shopkeeper entity
 - ESP32 + PCM5102A audio playback
 - Wheel encoders
-- IMU integration
+- IMU control-loop integration; BNO085 SPI wiring is reserved below for a later phase
 - Full SLAM, precise odometry, or map-based navigation
 
 The first hardware milestone is **local ToF obstacle avoidance**, then motor behavior and body presentation can be integrated into the Stranger runtime.
@@ -157,6 +157,12 @@ This wiring plan is the current recommended plan for the first ESP32-S3 body con
 | M3 DIR | GPIO12 | Motor driver `D3` | Direction can be inverted in firmware if needed |
 | M4 PWM | GPIO7 | Motor driver `P4` | LEDC PWM |
 | M4 DIR | GPIO13 | Motor driver `D4` | Direction can be inverted in firmware if needed |
+| BNO085 SPI SCK | GPIO15 | BNO085 `SCL` | Optional later IMU; SPI mode, not I2C |
+| BNO085 SPI MISO | GPIO16 | BNO085 `SDA` | Optional later IMU; BNO085 -> ESP32-S3 |
+| BNO085 SPI MOSI | GPIO17 | BNO085 `DI` | Optional later IMU; ESP32-S3 -> BNO085 |
+| BNO085 SPI CS | GPIO18 | BNO085 `CS` | Optional later IMU chip select |
+| BNO085 INT | GPIO21 | BNO085 `INT` | Optional later IMU data-ready interrupt |
+| BNO085 RST | GPIO47 | BNO085 `RST` | Optional later IMU reset |
 | Serial command | USB | Mac mini | Use USB CDC / serial monitor first |
 
 Avoid using ESP32-S3 pins that are tied to USB D+/D-, boot mode, flash, PSRAM, or board-specific onboard peripherals. If the chosen development board exposes a safer documented I2C pair, prefer the board's documented pair and update this table before firmware is finalized.
@@ -244,6 +250,45 @@ Optional VL53L1X pins:
 | `GPIO1` | Leave unconnected for first build |
 
 Because TCA9548A isolates the sensors by channel, `XSHUT` address reassignment is not needed for the first four-sensor build.
+
+### Optional ESP32-S3 to BNO085 IMU wiring
+
+This is a reserved wiring plan for a later heading / turn-confirmation phase. It is not part of the current ToF-first bring-up. The BNO085 should not be connected through the TCA9548A ToF multiplexer.
+
+Use **SPI** for the Adafruit BNO085 breakout when possible. The BNO08x I2C path is known to be troublesome with some ESP32 / ESP32-S3 and I2C multiplexer combinations, while SPI keeps the IMU off the ToF safety bus.
+
+Power and mode pins:
+
+| BNO085 pin | ESP32-S3 / rail | Purpose |
+|---|---|---|
+| `VIN` | ESP32-S3 `3V3` | IMU logic power |
+| `GND` | ESP32-S3 `GND` | Shared logic ground |
+| `P0` / `PS0` | `3V3` | Select SPI mode |
+| `P1` / `PS1` | `3V3` | Select SPI mode |
+
+SPI and control pins:
+
+| BNO085 pin | SPI meaning | ESP32-S3 GPIO | Notes |
+|---|---|---:|---|
+| `SCL` | `SCK` | GPIO15 | SPI clock |
+| `SDA` | `MISO` | GPIO16 | BNO085 data to ESP32-S3 |
+| `DI` | `MOSI` | GPIO17 | ESP32-S3 data to BNO085 |
+| `CS` | chip select | GPIO18 | Keep separate from motor / ToF pins |
+| `INT` | data ready | GPIO21 | Input interrupt; optional in early polling tests but recommended |
+| `RST` | reset | GPIO47 | Output reset; recommended for recovery |
+
+Planned IMU responsibilities:
+
+- Short-turn yaw confirmation for commands such as `turn 45` or `spin_angle 90`
+- Heading hold during low-speed open-loop driving
+- Angular-rate limiting for safer spin behavior
+- Tilt / lift / impact detection for local safety state
+
+Limits:
+
+- The IMU does not replace wheel encoders.
+- It should not be used as factual distance traveled.
+- It should not be treated as full localization, odometry, SLAM, or path replay.
 
 ### ESP32-S3 to motor driver control wiring
 

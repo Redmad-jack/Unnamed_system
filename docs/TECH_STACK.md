@@ -78,12 +78,15 @@
 | `api` | uvicorn | FastAPI ASGI 服务器 | 已实现，按需安装 |
 | `vision` | numpy | 浏览器上传图像帧解码为 OpenCV ndarray | 已实现，按需安装 |
 | `vision` | opencv-python | Mac 摄像头采集、JPEG 编码、标注帧绘制 | 已实现，按需安装 |
+| `vision` | insightface | 本地 InsightFace / ArcFace face detection、alignment 与 embedding | 已实现，按需安装；预训练模型授权需展览部署前复核 |
+| `vision` | onnxruntime | InsightFace 本地 ONNX 推理运行时 | 已实现，按需安装 |
 | `vision` | ultralytics | 本地 YOLO person detection | 已实现，按需安装 |
 | `audio` | websockets | 后端代理火山 STT/TTS WebSocket 流式接口 | 已实现，按需安装 |
+| `hardware` | pyserial | Dashboard BodyBridge 连接 ESP32-S3 USB Serial、读 telemetry、写手动 teleop 命令 | 已实现，按需安装 |
 | `dev` | pytest | 测试框架 | 已实现，开发时安装 |
 | `dev` | pytest-mock | Mock LLM 调用 | 已实现，开发时安装 |
 
-原则：后续硬件、访客识别模型或前端构建依赖不得并入核心 `dependencies`；只有完成设计确认并声明安装路径后，才加入对应 optional group。视觉第一版已进入 `vision` optional group，语音第一版已进入 `audio` optional group，但默认安装路径仍不包含 OpenCV / ultralytics / websockets。
+原则：后续硬件、访客识别模型或前端构建依赖不得并入核心 `dependencies`；只有完成设计确认并声明安装路径后，才加入对应 optional group。视觉与本地 face signature 已进入 `vision` optional group，语音第一版已进入 `audio` optional group，ESP32-S3 USB Serial 手动 teleop 已进入 `hardware` optional group；默认安装路径仍不包含 OpenCV / ultralytics / insightface / onnxruntime / websockets / pyserial。
 
 ---
 
@@ -191,6 +194,6 @@ ENTITY_AUDIO_ALLOW_DEBUG_RAW_TTS=0
 - 不允许为 LLM 调用引入 LangChain 等框架（直接使用 Anthropic SDK）
 - 不允许把后续语音、硬件或前端构建依赖并入核心 `dependencies`
 - FastAPI / uvicorn 必须继续保留在 `api` optional group 中
-- OpenCV / ultralytics 必须继续保留在 `vision` optional group 中，且模型路径必须显式配置，不自动下载模型
+- OpenCV / ultralytics / insightface / onnxruntime 必须继续保留在 `vision` optional group 中；YOLO 模型路径必须显式配置，不自动下载模型；InsightFace 预训练模型授权需在正式展览部署前复核
 - websockets 必须继续保留在 `audio` optional group 中；火山凭证不得写入客户端代码或公开状态响应
 - 声纹识别、视觉身份识别和访客库扩展不得把原始生物特征暴露到开发者面板；新增依赖和数据字段必须同步更新 `docs/BACKEND_STRUCTURE.md` 与 `docs/progress.md`

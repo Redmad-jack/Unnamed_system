@@ -27,6 +27,15 @@ class PresentationLatencyRequest(BaseModel):
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
+class BodyBridgeConnectRequest(BaseModel):
+    port: str
+    baud: int = 115200
+
+
+class BodyCommandRequest(BaseModel):
+    command: str
+
+
 class LLMConfigRequest(BaseModel):
     mode: str
     model: Optional[str] = None
@@ -94,6 +103,14 @@ class IdentityMatchRequest(BaseModel):
 
 class IdentityConfirmRequest(BaseModel):
     accepted: bool
+
+
+class FaceCaptureRequest(BaseModel):
+    apply_to_gating: bool = True
+
+
+class FaceEnrollRequest(BaseModel):
+    visitor_id: str
 
 
 class MemoryStatusRequest(BaseModel):

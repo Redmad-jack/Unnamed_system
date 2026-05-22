@@ -7,10 +7,17 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 from conscious_entity.db.migrations import run_migrations
-from conscious_entity.identity import VisitorSessionGatingController
+from conscious_entity.identity import (
+    FaceDetectionCandidate,
+    FaceIdentityConfig,
+    FaceIdentityManager,
+    VisitorSessionGatingController,
+)
 from conscious_entity.interfaces import api
 from conscious_entity.interfaces import api_routes
 from conscious_entity.interfaces.api_models import (
+    FaceCaptureRequest,
+    FaceEnrollRequest,
     IdentityConfirmRequest,
     IdentityConfigRequest,
     IdentityMatchRequest,
@@ -19,7 +26,13 @@ from conscious_entity.interfaces.api_models import (
 from conscious_entity.interfaces.api_runtime import _ensure_visitor_profile, _visitor_row_to_public
 
 
-def _request(conn: sqlite3.Connection, controller: VisitorSessionGatingController):
+def _request(
+    conn: sqlite3.Connection,
+    controller: VisitorSessionGatingController,
+    *,
+    face_identity_manager=None,
+    vision_manager=None,
+):
     return SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(
         conn=conn,
         db_path=":memory:",
@@ -31,6 +44,8 @@ def _request(conn: sqlite3.Connection, controller: VisitorSessionGatingControlle
         embedding_runtime_config=None,
         embedding_error=None,
         identity_gating=controller,
+        face_identity_manager=face_identity_manager,
+        vision_manager=vision_manager,
     )))
 
 
@@ -41,6 +56,66 @@ def _db() -> sqlite3.Connection:
     conn.execute("INSERT INTO sessions (id) VALUES (?)", ("current",))
     conn.commit()
     return conn
+
+
+class FakeFaceProvider:
+    def __init__(self, candidates):
+        self.candidates = candidates
+
+    def dependency_status(self):
+        return {"available": True, "missing": []}
+
+    def model_status(self):
+        return {
+            "provider": "fake",
+            "model_name": "fake-face",
+            "loaded": True,
+            "dependencies": self.dependency_status(),
+            "disabled_reason": None,
+            "last_error": None,
+        }
+
+    def extract(self, _image_bytes):
+        return list(self.candidates)
+
+
+class MissingFaceProvider(FakeFaceProvider):
+    def dependency_status(self):
+        return {"available": False, "missing": ["insightface"]}
+
+    def model_status(self):
+        return {
+            "provider": "fake",
+            "model_name": "fake-face",
+            "loaded": False,
+            "dependencies": self.dependency_status(),
+            "disabled_reason": "Missing optional dependencies: insightface",
+            "last_error": None,
+        }
+
+
+class FakeVisionManager:
+    def __init__(self, frame=b"frame"):
+        self.frame = frame
+
+    def latest_frame_jpeg(self):
+        return self.frame
+
+
+def _face_manager(tmp_path, candidates, provider=None):
+    config = FaceIdentityConfig(signature_dir=tmp_path, min_sharpness=35.0)
+    return FaceIdentityManager(config, provider=provider or FakeFaceProvider(candidates))
+
+
+def _candidate(embedding=None):
+    return FaceDetectionCandidate(
+        bbox=(100, 100, 420, 460),
+        detection_score=0.95,
+        embedding=embedding or [1.0, 0.0],
+        frame_width=1280,
+        frame_height=720,
+        quality_summary={"sharpness": 80.0},
+    )
 
 
 def test_identity_config_defaults_to_no_auto_bind_and_can_update():
@@ -173,4 +248,108 @@ def test_identity_auto_bind_runtime_config_binds_when_idle(monkeypatch):
     assert result["status"]["candidate_visitor_id"] is None
     assert request.app.state.visitor_id == "visitor-k"
     assert rebuilt["called"] is True
+    conn.close()
+
+
+def test_face_identity_status_reports_disabled_provider(tmp_path):
+    conn = _db()
+    controller = VisitorSessionGatingController(session_id="current")
+    manager = _face_manager(tmp_path, [], provider=MissingFaceProvider([]))
+    request = _request(conn, controller, face_identity_manager=manager)
+
+    result = asyncio.run(api.identity_face_status(request))
+
+    assert result["enabled"] is False
+    assert "insightface" in result["model"]["disabled_reason"]
+    conn.close()
+
+
+def test_face_capture_matches_existing_signature_and_updates_gating(tmp_path):
+    conn = _db()
+    _ensure_visitor_profile(conn, "visitor-k", display_name="K")
+    manager = _face_manager(tmp_path, [_candidate([1.0, 0.0])])
+    manager.capture_and_match(b"frame")
+    manager.enroll_pending("visitor-k")
+    manager.provider.candidates = [_candidate([0.96, 0.28])]  # type: ignore[attr-defined]
+    controller = VisitorSessionGatingController(session_id="current")
+    controller.before_turn(source="dialog", input_mode="text", text="hello")
+    request = _request(
+        conn,
+        controller,
+        face_identity_manager=manager,
+        vision_manager=FakeVisionManager(),
+    )
+
+    result = asyncio.run(api.identity_face_capture(request, FaceCaptureRequest()))
+
+    assert result["capture"]["accepted"] is True
+    assert result["identity"]["status"]["candidate_visitor_id"] == "visitor-k"
+    row = conn.execute("SELECT metadata FROM visitor_profiles WHERE id = ?", ("visitor-k",)).fetchone()
+    metadata = json.loads(row["metadata"])
+    latest = metadata["identity"]["latest_match"]
+    assert latest["candidate_visitor_id"] == "visitor-k"
+    assert latest["face"]["metadata"]["face_embedding"] == "[redacted]"
+    conn.close()
+
+
+def test_face_capture_without_frame_returns_api_error(tmp_path):
+    conn = _db()
+    controller = VisitorSessionGatingController(session_id="current")
+    controller.before_turn(source="dialog", input_mode="text", text="hello")
+    manager = _face_manager(tmp_path, [_candidate()])
+    request = _request(
+        conn,
+        controller,
+        face_identity_manager=manager,
+        vision_manager=FakeVisionManager(frame=None),
+    )
+
+    try:
+        asyncio.run(api.identity_face_capture(request, FaceCaptureRequest()))
+    except Exception as exc:
+        assert getattr(exc, "status_code", None) == 400
+        assert "No vision frame" in str(getattr(exc, "detail", exc))
+    else:
+        raise AssertionError("expected HTTPException")
+    conn.close()
+
+
+def test_face_capture_requires_confirmed_dialogue_intent(tmp_path):
+    conn = _db()
+    controller = VisitorSessionGatingController(session_id="current")
+    manager = _face_manager(tmp_path, [_candidate()])
+    request = _request(
+        conn,
+        controller,
+        face_identity_manager=manager,
+        vision_manager=FakeVisionManager(),
+    )
+
+    try:
+        asyncio.run(api.identity_face_capture(request, FaceCaptureRequest()))
+    except Exception as exc:
+        assert getattr(exc, "status_code", None) == 409
+        assert "confirmed dialogue intent" in str(getattr(exc, "detail", exc))
+    else:
+        raise AssertionError("expected HTTPException")
+    conn.close()
+
+
+def test_face_enroll_requires_existing_visitor_and_appends_reference(tmp_path):
+    conn = _db()
+    _ensure_visitor_profile(conn, "visitor-k", metadata={"favorite_color": "blue"})
+    controller = VisitorSessionGatingController(session_id="current")
+    manager = _face_manager(tmp_path, [_candidate([1.0, 0.0])])
+    manager.capture_and_match(b"frame")
+    request = _request(conn, controller, face_identity_manager=manager)
+
+    result = asyncio.run(api.identity_face_enroll(FaceEnrollRequest(visitor_id="visitor-k"), request))
+
+    assert result["signature"]["reference"].startswith("local://face/")
+    row = conn.execute("SELECT metadata FROM visitor_profiles WHERE id = ?", ("visitor-k",)).fetchone()
+    metadata = json.loads(row["metadata"])
+    face_refs = metadata["identity"]["signatures"]["face"]
+    assert metadata["favorite_color"] == "blue"
+    assert "embedding" not in face_refs[0]
+    assert face_refs[0]["reference"].startswith("local://face/")
     conn.close()

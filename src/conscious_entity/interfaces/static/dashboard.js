@@ -14,6 +14,20 @@
     happiness: "happiness (display)",
   };
 
+  const MOTION_LABELS = {
+    stopped: "Stopped",
+    forward: "Forward",
+    reverse: "Reverse",
+    turning_left: "Forward left",
+    turning_right: "Forward right",
+    reverse_left: "Reverse left",
+    reverse_right: "Reverse right",
+    spin_left: "Spin left",
+    spin_right: "Spin right",
+    roaming: "Roaming",
+    mixed: "Mixed",
+  };
+
   const LAYOUT_DEFAULTS = {
     left: 440,
     right: 420,
@@ -1351,16 +1365,442 @@
 
   function RuntimeSidebar() {
     const [tab, setTab] = useState("runtime");
+    const tabs = [
+      ["runtime", "Runtime"],
+      ["memory", "Memory Curation"],
+      ["hardware", "Hardware"],
+      ["history", "Session & History"],
+    ];
     return h(React.Fragment, null,
       h("div", { className: "tabs" },
-        ["runtime", "memory", "history"].map((name) => h("button", {
+        tabs.map(([name, label]) => h("button", {
           key: name,
           className: `tab ${tab === name ? "active" : ""}`,
           onClick: () => setTab(name),
-        }, name === "runtime" ? "Runtime" : name === "memory" ? "Memory Curation" : "Session & History")),
+        }, label)),
       ),
       h("div", { className: "tab-content" },
-        tab === "runtime" ? h(RuntimePane) : tab === "memory" ? h(MemoryCurationPane) : h(SessionHistoryPane),
+        tab === "runtime" ? h(RuntimePane)
+          : tab === "memory" ? h(MemoryCurationPane)
+            : tab === "hardware" ? h(HardwareMotionPane)
+              : h(SessionHistoryPane),
+      ),
+    );
+  }
+
+  function yn(value) {
+    if (value === null || value === undefined) return "—";
+    return value ? "yes" : "no";
+  }
+
+  function ageText(ms) {
+    if (ms === null || ms === undefined) return "never";
+    if (ms < 1000) return `${Math.round(ms)} ms`;
+    return `${(ms / 1000).toFixed(1)} s`;
+  }
+
+  function motionDisplay(value) {
+    return MOTION_LABELS[value] || value || "Unknown";
+  }
+
+  function statusTone(value) {
+    return value ? "ok" : "err";
+  }
+
+  function isEditableTarget(target) {
+    if (!target) return false;
+    const tag = String(target.tagName || "").toLowerCase();
+    return tag === "input" || tag === "textarea" || tag === "select" || Boolean(target.isContentEditable);
+  }
+
+  function isTeleopKey(code) {
+    return [
+      "KeyW", "KeyA", "KeyS", "KeyD",
+      "ArrowUp", "ArrowLeft", "ArrowDown", "ArrowRight",
+      "ShiftLeft", "ShiftRight", "ControlLeft", "ControlRight",
+    ].includes(code);
+  }
+
+  function computeTeleopIntent(keys) {
+    const slow = keys.has("ControlLeft") || keys.has("ControlRight");
+    const fast = keys.has("ShiftLeft") || keys.has("ShiftRight");
+    const speed = slow ? 60 : fast ? 180 : 80;
+    let throttle = 0;
+    let turn = 0;
+    if (keys.has("KeyW") || keys.has("ArrowUp")) throttle += speed;
+    if (keys.has("KeyS") || keys.has("ArrowDown")) throttle -= speed;
+    if (keys.has("KeyA") || keys.has("ArrowLeft")) turn -= speed;
+    if (keys.has("KeyD") || keys.has("ArrowRight")) turn += speed;
+    return { type: "intent", throttle, turn, duration_ms: 180 };
+  }
+
+  function HardwareMotionPane() {
+    const [body, setBody] = useState(null);
+    const [bridge, setBridge] = useState(null);
+    const [ports, setPorts] = useState([]);
+    const [port, setPort] = useState("");
+    const [baud, setBaud] = useState("115200");
+    const [error, setError] = useState("");
+    const [bridgeError, setBridgeError] = useState("");
+    const [commandBusy, setCommandBusy] = useState("");
+    const [teleopActive, setTeleopActive] = useState(false);
+    const [teleopStatus, setTeleopStatus] = useState("idle");
+    const keysRef = useRef(new Set());
+    const teleopSocketRef = useRef(null);
+    const teleopTimerRef = useRef(null);
+    const sendTeleopRef = useRef(() => {});
+
+    const load = useCallback(async () => {
+      try {
+        const [bodyData, bridgeData, portsData] = await Promise.all([
+          fetchJSON("/api/v1/body/status"),
+          fetchJSON("/api/v1/body/bridge/status").catch(() => null),
+          fetchJSON("/api/v1/body/ports").catch(() => null),
+        ]);
+        setBody(bodyData);
+        setBridge(bridgeData || (portsData && portsData.bridge) || null);
+        const nextPorts = portsData && Array.isArray(portsData.ports) ? portsData.ports : [];
+        setPorts(nextPorts);
+        setPort((current) => current || (bridgeData && bridgeData.port) || (nextPorts[0] && nextPorts[0].device) || "");
+        setError("");
+      } catch (err) {
+        setError(err.message);
+      }
+    }, []);
+
+    useEffect(() => { load(); }, [load]);
+    useInterval(load, 1000);
+
+    const controller = body && body.controller ? body.controller : {};
+    const motion = body && body.motion ? body.motion : {};
+    const obstacle = body && body.obstacle ? body.obstacle : {};
+    const tof = body && body.tof ? body.tof : {};
+    const sensors = Array.isArray(tof.sensors) ? tof.sensors : [];
+    const motors = body && Array.isArray(body.motors) ? body.motors : [];
+    const motorDuties = motion.motor_duties || {};
+    const bridgeConnected = Boolean(bridge && bridge.connected);
+    const bridgeEnabled = !bridge || bridge.enabled !== false;
+
+    const connectBridge = async () => {
+      const selectedPort = String(port || "").trim();
+      if (!selectedPort) {
+        setBridgeError("Select or enter a serial port first.");
+        return;
+      }
+      setCommandBusy("connect");
+      try {
+        const data = await fetchJSON("/api/v1/body/bridge/connect", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ port: selectedPort, baud: Number(baud) || 115200 }),
+        });
+        setBridge(data);
+        setBridgeError("");
+      } catch (err) {
+        setBridgeError(err.message);
+      } finally {
+        setCommandBusy("");
+      }
+    };
+
+    const disconnectBridge = async () => {
+      setTeleopActive(false);
+      setCommandBusy("disconnect");
+      try {
+        const data = await fetchJSON("/api/v1/body/bridge/disconnect", { method: "POST" });
+        setBridge(data);
+        setBridgeError("");
+      } catch (err) {
+        setBridgeError(err.message);
+      } finally {
+        setCommandBusy("");
+      }
+    };
+
+    const sendCommand = async (command) => {
+      setCommandBusy(command);
+      try {
+        const data = await fetchJSON("/api/v1/body/command", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ command }),
+        });
+        setBridge(data);
+        setBridgeError("");
+        await load();
+      } catch (err) {
+        setBridgeError(err.message);
+      } finally {
+        setCommandBusy("");
+      }
+    };
+
+    const sendTeleopFrame = useCallback((overridePayload = null) => {
+      const socket = teleopSocketRef.current;
+      if (!socket || socket.readyState !== WebSocket.OPEN) return;
+      const payload = overridePayload || computeTeleopIntent(keysRef.current);
+      socket.send(JSON.stringify(payload));
+      if (payload.type === "kill") {
+        setTeleopStatus("kill stop sent");
+      } else {
+        setTeleopStatus(`tx throttle ${payload.throttle} turn ${payload.turn}`);
+      }
+    }, []);
+    sendTeleopRef.current = sendTeleopFrame;
+
+    useEffect(() => {
+      if (!teleopActive) {
+        if (teleopTimerRef.current) {
+          window.clearInterval(teleopTimerRef.current);
+          teleopTimerRef.current = null;
+        }
+        if (teleopSocketRef.current) {
+          teleopSocketRef.current.close();
+          teleopSocketRef.current = null;
+        }
+        keysRef.current.clear();
+        return undefined;
+      }
+      if (!bridgeConnected) {
+        setTeleopStatus("connect serial bridge first");
+        setTeleopActive(false);
+        return undefined;
+      }
+      const socket = new WebSocket(`${window.location.protocol === "https:" ? "wss" : "ws"}://${window.location.host}/api/v1/body/teleop`);
+      teleopSocketRef.current = socket;
+      setTeleopStatus("connecting");
+      socket.onopen = () => {
+        setTeleopStatus("ready");
+        sendTeleopRef.current();
+        teleopTimerRef.current = window.setInterval(() => sendTeleopRef.current(), 80);
+      };
+      socket.onmessage = (event) => {
+        try {
+          const payload = JSON.parse(event.data);
+          if (payload.type === "error") {
+            setTeleopStatus(`error: ${payload.error || "unknown"}`);
+          } else if (payload.command) {
+            setTeleopStatus(`ack ${payload.command}`);
+          } else {
+            setTeleopStatus(payload.type || "event");
+          }
+        } catch (_) {
+          setTeleopStatus("event");
+        }
+      };
+      socket.onerror = () => setTeleopStatus("websocket error");
+      socket.onclose = () => {
+        if (teleopTimerRef.current) {
+          window.clearInterval(teleopTimerRef.current);
+          teleopTimerRef.current = null;
+        }
+        teleopSocketRef.current = null;
+        keysRef.current.clear();
+        setTeleopStatus("closed");
+      };
+      return () => {
+        if (teleopTimerRef.current) {
+          window.clearInterval(teleopTimerRef.current);
+          teleopTimerRef.current = null;
+        }
+        if (teleopSocketRef.current) {
+          teleopSocketRef.current.close();
+          teleopSocketRef.current = null;
+        }
+        keysRef.current.clear();
+      };
+    }, [bridgeConnected, teleopActive]);
+
+    useEffect(() => {
+      if (!teleopActive) return undefined;
+      const keydown = (event) => {
+        if (isEditableTarget(event.target)) return;
+        if (event.code === "Escape") {
+          event.preventDefault();
+          setTeleopActive(false);
+          return;
+        }
+        if (event.code === "Space") {
+          event.preventDefault();
+          keysRef.current.clear();
+          sendTeleopRef.current({ type: "kill" });
+          return;
+        }
+        if (!isTeleopKey(event.code)) return;
+        event.preventDefault();
+        keysRef.current.add(event.code);
+        sendTeleopRef.current();
+      };
+      const keyup = (event) => {
+        if (isEditableTarget(event.target)) return;
+        if (!isTeleopKey(event.code)) return;
+        event.preventDefault();
+        keysRef.current.delete(event.code);
+        sendTeleopRef.current();
+      };
+      window.addEventListener("keydown", keydown);
+      window.addEventListener("keyup", keyup);
+      return () => {
+        window.removeEventListener("keydown", keydown);
+        window.removeEventListener("keyup", keyup);
+      };
+    }, [teleopActive]);
+
+    if (error) {
+      return h("div", { className: "section" },
+        h("div", { className: "section-title" }, "Hardware / Motion"),
+        h("div", { className: "err" }, error),
+      );
+    }
+    if (!body) {
+      return h("div", { className: "dim" }, "Loading hardware status...");
+    }
+
+    return h(React.Fragment, null,
+      h("div", { className: "section" },
+        h("div", { className: "section-title" }, "Hardware / Motion"),
+        h("table", null, h("tbody", null,
+          h("tr", null, h("td", null, "Telemetry"), h("td", { className: body.connected ? "ok" : "err" }, body.connected ? "fresh" : "offline / stale")),
+          h("tr", null, h("td", null, "Last packet"), h("td", null, `${body.last_packet_type || "none"} · ${ageText(body.last_packet_age_ms)}`)),
+          h("tr", null, h("td", null, "TCA9548A 0x70"), h("td", { className: statusTone(controller.tca_0x70) }, yn(controller.tca_0x70))),
+          h("tr", null, h("td", null, "I2C pins"), h("td", null, `SDA ${controller.sda ?? "—"} · SCL ${controller.scl ?? "—"}`)),
+          h("tr", null, h("td", null, "Armed"), h("td", null, yn(controller.motor_armed))),
+          h("tr", null, h("td", null, "Avoidance"), h("td", null, yn(controller.avoidance_enabled))),
+          h("tr", null, h("td", null, "Roam"), h("td", null, `${yn(controller.roam_enabled)} · ${controller.roam_mode || "stopped"}`)),
+        )),
+      ),
+      h("div", { className: "section" },
+        h("div", { className: "section-title" }, "Serial Bridge"),
+        h("table", null, h("tbody", null,
+          h("tr", null, h("td", null, "Dependency"), h("td", { className: bridgeEnabled ? "ok" : "err" }, bridgeEnabled ? "pyserial ready" : "serial dependency missing")),
+          h("tr", null, h("td", null, "Connection"), h("td", { className: bridgeConnected ? "ok" : "err" }, bridgeConnected ? "connected" : "disconnected")),
+          h("tr", null, h("td", null, "Port"), h("td", null, bridge && bridge.port ? bridge.port : "—")),
+          h("tr", null, h("td", null, "RX / TX"), h("td", null, `${bridge && bridge.rx_count ? bridge.rx_count : 0} / ${bridge && bridge.tx_count ? bridge.tx_count : 0}`)),
+          h("tr", null, h("td", null, "Event"), h("td", null, bridge && bridge.last_event ? bridge.last_event : "—")),
+          h("tr", null, h("td", null, "Last line"), h("td", null, bridge && bridge.last_line ? String(bridge.last_line).slice(0, 120) : "—")),
+        )),
+        h("div", { className: "bridge-controls" },
+          h("select", {
+            className: "compact-select",
+            value: port,
+            disabled: bridgeConnected,
+            onChange: (event) => setPort(event.target.value),
+            onFocus: () => setTeleopActive(false),
+          },
+            port ? h("option", { value: port }, port) : h("option", { value: "" }, "Select port"),
+            ports.filter((item) => item.device !== port).map((item) => h("option", { key: item.device, value: item.device }, `${item.device}${item.description ? ` · ${item.description}` : ""}`)),
+          ),
+          h("input", {
+            className: "compact-input",
+            value: port,
+            disabled: bridgeConnected,
+            onChange: (event) => setPort(event.target.value),
+            onFocus: () => setTeleopActive(false),
+            placeholder: "/dev/cu.usbmodem...",
+          }),
+          h("input", {
+            className: "compact-input baud-input",
+            value: baud,
+            disabled: bridgeConnected,
+            onChange: (event) => setBaud(event.target.value),
+            onFocus: () => setTeleopActive(false),
+            placeholder: "115200",
+          }),
+          h("button", { className: "btn-sm", disabled: commandBusy || bridgeConnected || !bridgeEnabled, onClick: connectBridge }, commandBusy === "connect" ? "Connecting…" : "Connect"),
+          h("button", { className: "btn-sm", disabled: commandBusy || !bridgeConnected, onClick: disconnectBridge }, commandBusy === "disconnect" ? "Disconnecting…" : "Disconnect"),
+        ),
+        bridgeError ? h("div", { className: "err" }, bridgeError) : bridge && bridge.last_error ? h("div", { className: "err" }, bridge.last_error) : null,
+      ),
+      h("div", { className: "section" },
+        h("div", { className: "section-title" }, "Controls"),
+        h("div", { className: "toolbar" },
+          ["arm", "motors off", "avoidance on", "avoidance off", "telemetry on", "telemetry off", "tof", "status"].map((command) => h("button", {
+            key: command,
+            className: command === "motors off" ? "btn-sm danger" : "btn-sm",
+            disabled: commandBusy || !bridgeConnected,
+            onClick: () => sendCommand(command),
+          }, commandBusy === command ? "Sending…" : command)),
+        ),
+      ),
+      h("div", { className: "section" },
+        h("div", { className: "section-title" }, "Keyboard Teleop"),
+        h("button", {
+          className: `teleop-capture ${teleopActive ? "active" : ""}`,
+          disabled: !bridgeConnected,
+          onClick: () => setTeleopActive((value) => !value),
+        },
+          h("span", { className: "teleop-title" }, teleopActive ? "Teleop Active" : "Click to Capture Keyboard"),
+          h("span", { className: "teleop-help" }, "WASD / arrows move · Shift fast 180 · Ctrl slow 60 · Space kill stop · Esc release"),
+          h("span", { className: "teleop-status" }, teleopStatus),
+        ),
+      ),
+      h("div", { className: "section" },
+        h("div", { className: "section-title" }, "Current Motion"),
+        h("div", { className: `motion-readout motion-${motion.label || "unknown"}` },
+          h("div", { className: "motion-label" }, motionDisplay(motion.label)),
+          h("div", { className: "motion-detail" }, motion.detail || "—"),
+        ),
+        h("table", null, h("tbody", null,
+          h("tr", null, h("td", null, "Left / Right"), h("td", null, `${motion.left_duty ?? 0} / ${motion.right_duty ?? 0}`)),
+          h("tr", null, h("td", null, "Motor duties"), h("td", null, `M1 ${motorDuties.m1 ?? 0} · M2 ${motorDuties.m2 ?? 0} · M3 ${motorDuties.m3 ?? 0} · M4 ${motorDuties.m4 ?? 0}`)),
+          h("tr", null, h("td", null, "Clipped"), h("td", null, yn(motion.clipped))),
+        )),
+      ),
+      h("div", { className: "section" },
+        h("div", { className: "section-title" }, "Obstacle Gate"),
+        h("table", null, h("tbody", null,
+          h("tr", null, h("td", null, "State"), h("td", null, obstacle.state || "unknown")),
+          h("tr", null, h("td", null, "Reason"), h("td", null, obstacle.reason || "—")),
+          h("tr", null, h("td", null, "Front L / R"), h("td", null, `${obstacle.front_left_mm ?? "—"} / ${obstacle.front_right_mm ?? "—"} mm`)),
+          h("tr", null, h("td", null, "Suggested turn"), h("td", null, obstacle.suggested_turn ?? "—")),
+        )),
+      ),
+      h("div", { className: "section" },
+        h("div", { className: "section-title" }, "ToF Array"),
+        h("div", { className: "item-meta" },
+          `${tof.present_count ?? 0}/${tof.expected_count ?? 4} present · ${tof.initialized_count ?? 0} initialized · ${tof.valid_count ?? 0} valid`,
+        ),
+        h("div", { className: "tof-grid" }, sensors.map((sensor) => h(TofSensorCard, {
+          key: sensor.channel,
+          sensor,
+        }))),
+      ),
+      h("div", { className: "section" },
+        h("div", { className: "section-title" }, "Motor Channels"),
+        h("table", null,
+          h("thead", null, h("tr", null, h("th", null, "Motor"), h("th", null, "Duty"), h("th", null, "PWM"), h("th", null, "DIR"))),
+          h("tbody", null, motors.map((motor) => h("tr", { key: motor.motor },
+            h("td", null, `${motor.name || `M${motor.motor}`} · ${motor.position || "—"}`),
+            h("td", null, motor.duty ?? 0),
+            h("td", null, motor.pwm_pin ?? "—"),
+            h("td", null, motor.dir_pin ?? "—"),
+          ))),
+        ),
+      ),
+      h("div", { className: "section" },
+        h("div", { className: "section-title" }, "Last Hardware Event"),
+        body.last_ack ? h("div", { className: "item-text" }, `ack: ${body.last_ack.action || body.last_ack.type || "—"}`) : h("div", { className: "dim" }, "No ack yet."),
+        body.last_error ? h("div", { className: "err" }, `error: ${body.last_error.error || "unknown"}`) : null,
+      ),
+    );
+  }
+
+  function TofSensorCard({ sensor }) {
+    const valid = Boolean(sensor.present && sensor.initialized && sensor.range_valid && !sensor.timeout);
+    return h("div", { className: `tof-card ${valid ? "ok" : sensor.present ? "warn" : "offline"}` },
+      h("div", { className: "tof-card-head" },
+        h("span", null, `${sensor.channel}: ${sensor.name || "tof"}`),
+        h("span", null, valid ? "valid" : sensor.present ? "check" : "offline"),
+      ),
+      h("div", { className: "tof-distance" }, sensor.distance_mm === null || sensor.distance_mm === undefined ? "—" : `${sensor.distance_mm} mm`),
+      h("div", { className: "kv-grid" },
+        h("span", null, "Present"), h("span", null, yn(sensor.present)),
+        h("span", null, "Initialized"), h("span", null, yn(sensor.initialized)),
+        h("span", null, "Fresh"), h("span", null, yn(sensor.fresh)),
+        h("span", null, "Range valid"), h("span", null, yn(sensor.range_valid)),
+        h("span", null, "Timeout"), h("span", null, yn(sensor.timeout)),
+        h("span", null, "Age"), h("span", null, ageText(sensor.age_ms)),
+        h("span", null, "Status"), h("span", null, sensor.status || "—"),
       ),
     );
   }
@@ -1375,9 +1815,10 @@
     const [harness, setHarness] = useState(null);
     const [visitor, setVisitor] = useState(null);
     const [identity, setIdentity] = useState(null);
+    const [faceIdentity, setFaceIdentity] = useState(null);
 
     const load = useCallback(async () => {
-      const [llmConfig, embeddingConfig, llmStats, latencyStats, audioLatencyStats, presentationLatencyStats, harnessStatus, visitorStatus, identityStatus] = await Promise.all([
+      const [llmConfig, embeddingConfig, llmStats, latencyStats, audioLatencyStats, presentationLatencyStats, harnessStatus, visitorStatus, identityStatus, faceIdentityStatus] = await Promise.all([
         fetchJSON("/api/v1/config/llm").catch(() => null),
         fetchJSON("/api/v1/config/embedding").catch(() => null),
         fetchJSON("/api/v1/stats/llm").catch(() => null),
@@ -1387,6 +1828,7 @@
         fetchJSON("/api/v1/harness/status").catch(() => null),
         fetchJSON("/api/v1/visitors/current").catch(() => null),
         fetchJSON("/api/v1/identity/status").catch(() => null),
+        fetchJSON("/api/v1/identity/face/status").catch(() => null),
       ]);
       setLlm(llmConfig);
       setEmbedding(embeddingConfig);
@@ -1397,14 +1839,14 @@
       setHarness(harnessStatus);
       setVisitor(visitorStatus);
       setIdentity(identityStatus);
+      setFaceIdentity(faceIdentityStatus);
     }, []);
 
     useEffect(() => { load(); }, [load]);
     useInterval(load, 10000);
 
     return h(React.Fragment, null,
-      h(VisitorSection, { data: visitor, onSaved: load }),
-      h(IdentityGatingSection, { data: identity }),
+      h(VisitorIdentitySection, { visitorData: visitor, identityData: identity, faceIdentityData: faceIdentity, onSaved: load }),
       h(LLMConfigSection, { data: llm, onSaved: load }),
       h(EmbeddingConfigSection, { data: embedding, onSaved: load }),
       h(AudioPane),
@@ -1423,12 +1865,26 @@
     );
   }
 
-  function VisitorSection({ data, onSaved }) {
+  function VisitorIdentitySection({ visitorData, identityData, faceIdentityData, onSaved }) {
     const [known, setKnown] = useState([]);
     const [visitorId, setVisitorId] = useState("");
     const [displayName, setDisplayName] = useState("");
     const [saving, setSaving] = useState(false);
-    const current = data && data.visitor ? data.visitor : null;
+    const [configSaving, setConfigSaving] = useState(false);
+    const [configError, setConfigError] = useState("");
+    const [faceSaving, setFaceSaving] = useState(false);
+    const [faceError, setFaceError] = useState("");
+    const current = visitorData && visitorData.visitor ? visitorData.visitor : null;
+    const status = identityData && identityData.status ? identityData.status : null;
+    const constraints = identityData && identityData.v1_constraints ? identityData.v1_constraints : {};
+    const config = identityData && identityData.config ? identityData.config : {};
+    const events = identityData && Array.isArray(identityData.recent_events) ? identityData.recent_events : [];
+    const autoBind = Boolean(config.auto_bind_high_confidence);
+    const faceModel = faceIdentityData && faceIdentityData.model ? faceIdentityData.model : {};
+    const faceStore = faceIdentityData && faceIdentityData.store ? faceIdentityData.store : {};
+    const faceCapture = faceIdentityData && faceIdentityData.last_capture ? faceIdentityData.last_capture : null;
+    const facePending = faceIdentityData && faceIdentityData.pending_capture ? faceIdentityData.pending_capture : null;
+    const faceMatch = faceCapture && Array.isArray(faceCapture.matches) && faceCapture.matches.length ? faceCapture.matches[0] : null;
 
     const loadKnown = useCallback(async () => {
       setKnown(await fetchJSON("/api/v1/visitors?limit=80").catch(() => []));
@@ -1477,11 +1933,73 @@
       }
     }, [onSaved]);
 
+    const toggleAutoBind = useCallback(async () => {
+      setConfigSaving(true);
+      setConfigError("");
+      try {
+        await fetchJSON("/api/v1/identity/config", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ auto_bind_high_confidence: !autoBind }),
+        });
+        await onSaved();
+      } catch (error) {
+        setConfigError(error.message);
+      } finally {
+        setConfigSaving(false);
+      }
+    }, [autoBind, onSaved]);
+
+    const captureFace = useCallback(async () => {
+      setFaceSaving(true);
+      setFaceError("");
+      try {
+        await fetchJSON("/api/v1/identity/face/capture", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ apply_to_gating: true }),
+        });
+        await onSaved();
+      } catch (error) {
+        setFaceError(error.message);
+      } finally {
+        setFaceSaving(false);
+      }
+    }, [onSaved]);
+
+    const enrollFace = useCallback(async () => {
+      if (!current) return;
+      setFaceSaving(true);
+      setFaceError("");
+      try {
+        await fetchJSON("/api/v1/identity/face/enroll", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ visitor_id: current.id }),
+        });
+        await onSaved();
+        await loadKnown();
+      } catch (error) {
+        setFaceError(error.message);
+      } finally {
+        setFaceSaving(false);
+      }
+    }, [current, onSaved, loadKnown]);
+
     return h("div", { className: "section" },
-      h("div", { className: "section-title" }, "Visitor Identity"),
+      h("div", { className: "section-title" }, "Visitor Identity & Gating"),
       h("table", null, h("tbody", null,
         h("tr", null, h("td", null, "Current visitor"), h("td", null, current ? `${current.display_name || current.id} · ${current.id}` : "none")),
         h("tr", null, h("td", null, "Scope"), h("td", null, current ? "same visitor sessions included in retrieval" : "current session only")),
+        status ? h("tr", null, h("td", null, "Primary visitor"), h("td", null, status.primary_visitor_id || "unknown")) : null,
+        status ? h("tr", null, h("td", null, "Candidate"), h("td", null, status.candidate_visitor_id || "none")) : null,
+        status ? h("tr", null, h("td", null, "Runtime"), h("td", null, status.runtime_state || "—")) : null,
+        status ? h("tr", null, h("td", null, "Session decision"), h("td", null, status.last_decision || "—")) : null,
+        status ? h("tr", null, h("td", null, "Encounter / intent"), h("td", null, `${status.encounter_status || "—"} · ${status.intent_status || "—"}`)) : null,
+        status ? h("tr", null, h("td", null, "Identity"), h("td", null, `${status.identity_status || "—"} · face ${status.face_confidence_level || "none"} · voice ${status.voice_confidence_level || "none"} · combined ${status.combined_confidence_level || "none"}`)) : null,
+        status ? h("tr", null, h("td", null, "Waiting confirm"), h("td", null, status.waiting_for_identity_confirmation ? "yes" : "no")) : null,
+        status ? h("tr", null, h("td", null, "Interruptions"), h("td", null, status.interruption_count || 0)) : null,
+        h("tr", null, h("td", null, "Auto-bind"), h("td", null, autoBind ? "high confidence on" : "high confidence off")),
       )),
       h("div", { className: "toolbar", style: { marginTop: "8px" } },
         h("input", {
@@ -1496,6 +2014,29 @@
         }),
         h("button", { className: "btn-sm", disabled: saving, onClick: create }, saving ? "Saving…" : "Create / Set"),
         h("button", { className: "btn-sm", disabled: saving || !current, onClick: () => select(null) }, "Clear"),
+        h("button", {
+          className: autoBind ? "btn-sm active" : "btn-sm",
+          disabled: configSaving || !identityData || identityData.enabled === false,
+          onClick: toggleAutoBind,
+          title: "Only auto-binds high-confidence candidates when no primary visitor exists and dialogue is not active.",
+        }, configSaving ? "Saving…" : `Auto-bind ${autoBind ? "On" : "Off"}`),
+      ),
+      configError ? h("div", { className: "err" }, configError) : null,
+      h("div", { className: "item" },
+        h("div", { className: "item-meta" }, "Face Signature"),
+        h("table", null, h("tbody", null,
+          h("tr", null, h("td", null, "Provider"), h("td", null, `${faceModel.provider || "insightface_arcface"} · ${faceModel.model_name || "buffalo_l"}`)),
+          h("tr", null, h("td", null, "Model"), h("td", null, faceModel.loaded ? "loaded" : (faceModel.disabled_reason || "not loaded"))),
+          h("tr", null, h("td", null, "Signature store"), h("td", null, `${faceStore.signature_count || 0} face signature(s)`)),
+          h("tr", null, h("td", null, "Pending capture"), h("td", null, facePending ? `${facePending.capture_id} · ${facePending.quality_summary ? JSON.stringify(facePending.quality_summary) : "quality ok"}` : "none")),
+          h("tr", null, h("td", null, "Last capture"), h("td", null, faceCapture ? `${faceCapture.accepted ? "accepted" : "rejected"} · ${faceCapture.reason}` : "none")),
+          h("tr", null, h("td", null, "Last match"), h("td", null, faceMatch ? `${faceMatch.visitor_id} · ${faceMatch.level} · ${faceMatch.score}` : "none")),
+        )),
+        h("div", { className: "toolbar", style: { marginTop: "8px" } },
+          h("button", { className: "btn-sm", disabled: faceSaving || !faceIdentityData, onClick: captureFace }, faceSaving ? "Working…" : "Capture Face"),
+          h("button", { className: "btn-sm", disabled: faceSaving || !current || !facePending, onClick: enrollFace }, "Enroll Current"),
+        ),
+        faceError ? h("div", { className: "err" }, faceError) : null,
       ),
       known.length ? h("div", { className: "card-list compact-list" },
         known.slice(0, 5).map((item) => h("button", {
@@ -1508,30 +2049,11 @@
           h("div", { className: "session-meta" }, `${item.session_count || 0} sessions · ${item.turn_count || 0} turns`),
         )),
       ) : h("div", { className: "dim" }, "No visitor profiles yet."),
-    );
-  }
-
-  function IdentityGatingSection({ data }) {
-    const status = data && data.status ? data.status : null;
-    const constraints = data && data.v1_constraints ? data.v1_constraints : {};
-    const events = data && Array.isArray(data.recent_events) ? data.recent_events : [];
-    return h("div", { className: "section" },
-      h("div", { className: "section-title" }, "Identity & Session Gating"),
       status ? h(React.Fragment, null,
-        h("table", null, h("tbody", null,
-          h("tr", null, h("td", null, "Runtime"), h("td", null, status.runtime_state || "—")),
-          h("tr", null, h("td", null, "Session decision"), h("td", null, status.last_decision || "—")),
-          h("tr", null, h("td", null, "Primary visitor"), h("td", null, status.primary_visitor_id || "unknown")),
-          h("tr", null, h("td", null, "Candidate"), h("td", null, status.candidate_visitor_id || "none")),
-          h("tr", null, h("td", null, "Encounter / intent"), h("td", null, `${status.encounter_status || "—"} · ${status.intent_status || "—"}`)),
-          h("tr", null, h("td", null, "Identity"), h("td", null, `${status.identity_status || "—"} · face ${status.face_confidence_level || "none"} · voice ${status.voice_confidence_level || "none"} · combined ${status.combined_confidence_level || "none"}`)),
-          h("tr", null, h("td", null, "Waiting confirm"), h("td", null, status.waiting_for_identity_confirmation ? "yes" : "no")),
-          h("tr", null, h("td", null, "Interruptions"), h("td", null, status.interruption_count || 0)),
-        )),
         h("div", { className: "item" },
           h("div", { className: "item-meta" }, "V1 constraints"),
           h("div", { className: "item-text" },
-            `single visitor ${constraints.single_primary_visitor_per_session ? "on" : "off"} · group session ${constraints.group_session_enabled ? "on" : "off"} · wide-angle identity ${constraints.wide_angle_identity_input_enabled ? "on" : "off"}`,
+            `single visitor ${constraints.single_primary_visitor_per_session ? "on" : "off"} · auto-bind high confidence ${autoBind ? "on" : "off"} · group session ${constraints.group_session_enabled ? "on" : "off"} · wide-angle identity ${constraints.wide_angle_identity_input_enabled ? "on" : "off"}`,
           ),
         ),
         events.length ? h("details", { className: "item" },
@@ -1828,6 +2350,9 @@
     const [playbackUnlocked, setPlaybackUnlocked] = useState(false);
     const [playbackBlocked, setPlaybackBlocked] = useState(false);
     const [playbackDetail, setPlaybackDetail] = useState("not unlocked");
+    const [playbackQueueDepth, setPlaybackQueueDepth] = useState(0);
+    const [playbackCurrentStream, setPlaybackCurrentStream] = useState("");
+    const [lastPlaybackEvent, setLastPlaybackEvent] = useState("none");
     const [bargeInDetail, setBargeInDetail] = useState("idle");
     const [sttStreamState, setSttStreamState] = useState("stopped");
     const [sttCloseDetail, setSttCloseDetail] = useState("none");
@@ -1849,8 +2374,11 @@
     const playbackQueueRef = useRef([]);
     const playbackPlayingRef = useRef(false);
     const playbackTimingRef = useRef(null);
+    const playbackWatchdogRef = useRef(null);
+    const playNextQueuedStreamRef = useRef(null);
     const bargeInFramesRef = useRef(0);
     const activeAudioTurnRef = useRef(0);
+    const suppressedPlaybackTurnRef = useRef(0);
     const manualStopRef = useRef(false);
     const reconnectTimerRef = useRef(null);
 
@@ -1871,6 +2399,17 @@
         }
       } catch (err) {
         setError(err.message);
+      }
+    }, []);
+
+    const updatePlaybackQueueDepth = useCallback(() => {
+      setPlaybackQueueDepth(playbackQueueRef.current.length);
+    }, []);
+
+    const clearPlaybackWatchdog = useCallback(() => {
+      if (playbackWatchdogRef.current) {
+        window.clearTimeout(playbackWatchdogRef.current);
+        playbackWatchdogRef.current = null;
       }
     }, []);
 
@@ -1950,8 +2489,16 @@
       }
     }, []);
 
-    const stopPlayback = useCallback((detail = "interrupted") => {
-      activeAudioTurnRef.current += 1;
+    const stopPlayback = useCallback((detail = "interrupted", options = {}) => {
+      if (options.cancelDialog) {
+        activeAudioTurnRef.current += 1;
+        setDialogPending(false);
+        dialogPendingRef.current = false;
+      }
+      if (options.suppressTurnPlayback) {
+        suppressedPlaybackTurnRef.current = activeAudioTurnRef.current;
+      }
+      clearPlaybackWatchdog();
       const player = playerRef.current;
       const hadPlayback = Boolean(playbackStreamRef.current || (player && player.getAttribute("src")));
       if (player) {
@@ -1963,6 +2510,9 @@
       playbackPlayingRef.current = false;
       playbackStreamRef.current = "";
       playbackTimingRef.current = null;
+      setPlaybackQueueDepth(0);
+      setPlaybackCurrentStream("");
+      setLastPlaybackEvent(String(detail || "interrupted"));
       bargeInFramesRef.current = 0;
       suppressMicRef.current = false;
       setPlaybackBlocked(false);
@@ -1972,16 +2522,19 @@
         setPlaybackDetail(detailText);
         setBargeInDetail(detailText.startsWith("barge-in") ? "detected, playback stopped" : "idle");
       }
-    }, []);
+    }, [clearPlaybackWatchdog]);
 
     const startPlaybackStream = useCallback(async (streamId, timing = {}) => {
       if (!streamId || !playerRef.current) return false;
+      clearPlaybackWatchdog();
       suppressMicRef.current = true;
       playbackPlayingRef.current = true;
       bargeInFramesRef.current = 0;
       setVoiceActivity("speaking");
       setPlaybackBlocked(false);
       setBargeInDetail("armed while speaking");
+      setPlaybackCurrentStream(streamId);
+      setLastPlaybackEvent(`starting ${compactId(streamId)}`);
       const player = playerRef.current;
       playbackStreamRef.current = streamId;
       const streamReceivedAt = timing.streamReceivedAt || nowMs();
@@ -2003,8 +2556,40 @@
         playbackUnlockedRef.current = true;
         setPlaybackUnlocked(true);
         setPlaybackDetail(`playing ${compactId(streamId)}`);
+        setLastPlaybackEvent(`playing ${compactId(streamId)}`);
+        const textChars = Number(timing.textChars || 0);
+        const watchdogMs = clamp(6000 + textChars * 240, 8000, 30000);
+        playbackWatchdogRef.current = window.setTimeout(() => {
+          if (playbackStreamRef.current !== streamId) return;
+          const currentTiming = playbackTimingRef.current;
+          if (currentTiming) {
+            postPresentationLatency("dashboard.audio.watchdog_recovered", currentTiming.streamReceivedAt, {
+              latencyRecordId: currentTiming.latencyRecordId,
+              metadata: { stream_id: currentTiming.streamId, watchdog_ms: watchdogMs },
+            });
+          }
+          const activePlayer = playerRef.current;
+          if (activePlayer) {
+            activePlayer.pause();
+            activePlayer.removeAttribute("src");
+            activePlayer.load();
+          }
+          playbackWatchdogRef.current = null;
+          playbackTimingRef.current = null;
+          playbackStreamRef.current = "";
+          playbackPlayingRef.current = false;
+          suppressMicRef.current = false;
+          setPlaybackCurrentStream("");
+          setPlaybackDetail(`watchdog advanced ${compactId(streamId)}`);
+          setLastPlaybackEvent(`watchdog advanced ${compactId(streamId)}`);
+          if (playNextQueuedStreamRef.current) playNextQueuedStreamRef.current();
+        }, watchdogMs);
         return true;
       } catch (err) {
+        clearPlaybackWatchdog();
+        player.pause();
+        player.removeAttribute("src");
+        player.load();
         playbackPlayingRef.current = false;
         postPresentationLatency("dashboard.audio.play_resolved", streamReceivedAt, {
           latencyRecordId: timing.latencyRecordId,
@@ -2013,6 +2598,9 @@
           metadata: { stream_id: streamId },
         });
         playbackTimingRef.current = null;
+        playbackStreamRef.current = "";
+        setPlaybackCurrentStream("");
+        setLastPlaybackEvent(`play failed ${compactId(streamId)}`);
         suppressMicRef.current = false;
         bargeInFramesRef.current = 0;
         setVoiceActivity(recordingRef.current ? "listening" : "idle");
@@ -2023,35 +2611,50 @@
           : describeMediaError(player, "Playback failed.");
         setPlaybackDetail(message);
         setError("Playback is blocked by the browser. Click Enable Playback or Speak Latest.");
+        if (err && err.name === "NotAllowedError") {
+          playbackUnlockedRef.current = false;
+          setPlaybackUnlocked(false);
+          playbackQueueRef.current = [];
+          updatePlaybackQueueDepth();
+        } else if (playbackQueueRef.current.length && playNextQueuedStreamRef.current) {
+          playNextQueuedStreamRef.current();
+        }
         return false;
       }
-    }, []);
+    }, [clearPlaybackWatchdog, updatePlaybackQueueDepth]);
 
     const playNextQueuedStream = useCallback(() => {
       const next = playbackQueueRef.current.shift();
+      updatePlaybackQueueDepth();
       if (!next) {
+        clearPlaybackWatchdog();
         playbackPlayingRef.current = false;
         playbackStreamRef.current = "";
         playbackTimingRef.current = null;
         bargeInFramesRef.current = 0;
         suppressMicRef.current = false;
+        setPlaybackCurrentStream("");
         setVoiceActivity(recordingRef.current ? "listening" : "idle");
         setPlaybackDetail("ended");
+        setLastPlaybackEvent("queue empty");
         setBargeInDetail("idle");
         return false;
       }
       startPlaybackStream(next.streamId, next.timing);
       return true;
-    }, [startPlaybackStream]);
+    }, [clearPlaybackWatchdog, startPlaybackStream, updatePlaybackQueueDepth]);
+    playNextQueuedStreamRef.current = playNextQueuedStream;
 
     const enqueueTtsStream = useCallback((streamId, timing = {}) => {
       if (!streamId) return false;
       playbackQueueRef.current.push({ streamId, timing });
+      updatePlaybackQueueDepth();
+      setLastPlaybackEvent(`queued ${compactId(streamId)}`);
       if (!playbackPlayingRef.current) {
         playNextQueuedStream();
       }
       return true;
-    }, [playNextQueuedStream]);
+    }, [playNextQueuedStream, updatePlaybackQueueDepth]);
 
     const submitTranscript = useCallback(async (value) => {
       const transcript = String(value || "").trim();
@@ -2061,6 +2664,7 @@
       let finalPayload = null;
       const turnToken = activeAudioTurnRef.current + 1;
       activeAudioTurnRef.current = turnToken;
+      suppressedPlaybackTurnRef.current = 0;
       try {
         setError("");
         setFinalText(transcript);
@@ -2099,10 +2703,11 @@
           if (event.phase === "final") {
             finalPayload = payload;
           }
-          if (event.tts_stream_id) {
+          if (event.tts_stream_id && suppressedPlaybackTurnRef.current !== turnToken) {
             playbackStarted = enqueueTtsStream(event.tts_stream_id, {
               latencyRecordId: event.latency_record_id || null,
               streamReceivedAt: nowMs(),
+              textChars: String(event.text || "").length,
             }) || playbackStarted;
           }
         });
@@ -2125,7 +2730,7 @@
         if (turnToken === activeAudioTurnRef.current) {
           setDialogPending(false);
           dialogPendingRef.current = false;
-          if (!playbackStarted) {
+          if (!playbackStarted || suppressedPlaybackTurnRef.current === turnToken) {
             suppressMicRef.current = false;
             setVoiceActivity(recordingRef.current ? "listening" : "idle");
           }
@@ -2224,7 +2829,10 @@
               bargeInFramesRef.current = Math.max(0, bargeInFramesRef.current - 1);
             }
             if (bargeInFramesRef.current >= 2) {
-              stopPlayback("barge-in: user speech detected");
+              stopPlayback("barge-in: user speech detected", {
+                cancelDialog: true,
+                suppressTurnPlayback: true,
+              });
               socketRef.current.send(pcm);
               return;
             }
@@ -2278,7 +2886,14 @@
         h("button", { className: "btn-sm", onClick: stopMic, disabled: !recording }, "Mic Stop"),
         h("span", { className: "dim" }, "Playback"),
         h("button", { className: `btn-sm ${playbackUnlocked ? "active" : ""}`, onClick: unlockPlayback }, playbackUnlocked ? "Playback Ready" : "Enable Playback"),
-        h("button", { className: `btn-sm ${voiceActivity === "speaking" ? "active" : ""}`, onClick: () => stopPlayback(), disabled: voiceActivity !== "speaking" }, "Stop Speaking"),
+        h("button", {
+          className: `btn-sm ${voiceActivity === "speaking" ? "active" : ""}`,
+          onClick: () => stopPlayback("manual stop speaking", {
+            cancelDialog: dialogPendingRef.current,
+            suppressTurnPlayback: true,
+          }),
+          disabled: voiceActivity !== "speaking",
+        }, "Stop Speaking"),
       ),
       h("div", { className: "toolbar" },
         h("span", { className: "dim" }, "Dialogue"),
@@ -2300,6 +2915,9 @@
         h("span", null, "Reconnect"), h("span", { className: sttStreamState === "reconnecting" ? "ok" : "dim" }, reconnectDetail),
         h("span", null, "Playback"), h("span", { className: playbackBlocked ? "err" : playbackUnlocked ? "ok" : "dim" }, playbackBlocked ? "blocked" : playbackUnlocked ? "ready" : "locked"),
         h("span", null, "Playback detail"), h("span", { className: playbackBlocked ? "err" : "dim" }, playbackDetail),
+        h("span", null, "Playback stream"), h("span", { className: playbackCurrentStream ? "ok" : "dim" }, playbackCurrentStream ? compactId(playbackCurrentStream) : "none"),
+        h("span", null, "Playback queue"), h("span", { className: playbackQueueDepth > 0 ? "ok" : "dim" }, String(playbackQueueDepth)),
+        h("span", null, "Playback event"), h("span", { className: "dim" }, lastPlaybackEvent),
         h("span", null, "Barge-in"), h("span", { className: bargeInDetail.startsWith("detected") ? "ok" : "dim" }, bargeInDetail),
         h("span", null, "Voice mode"), h("span", { className: voiceMode && recording ? "ok" : "" }, `${voiceMode ? "auto" : "manual"} · ${voiceActivity}`),
         h("span", null, "STT"), h("span", null, status && status.stt ? `${status.stt.sample_rate || "—"}Hz · ${status.stt.chunk_ms || "—"}ms · ${status.stt.active_sessions || 0} active` : "—"),
@@ -2338,6 +2956,7 @@
           }
         },
         onEnded: () => {
+          clearPlaybackWatchdog();
           const timing = playbackTimingRef.current;
           if (timing) {
             postPresentationLatency("dashboard.audio.ended", timing.streamReceivedAt, {
@@ -2346,10 +2965,13 @@
             });
           }
           playbackTimingRef.current = null;
+          setLastPlaybackEvent(`ended ${compactId(playbackStreamRef.current)}`);
           playNextQueuedStream();
         },
         onError: () => {
+          clearPlaybackWatchdog();
           playbackQueueRef.current = [];
+          updatePlaybackQueueDepth();
           playbackPlayingRef.current = false;
           const timing = playbackTimingRef.current;
           if (timing) {
@@ -2361,12 +2983,14 @@
             });
           }
           playbackStreamRef.current = "";
+          setPlaybackCurrentStream("");
           playbackTimingRef.current = null;
           bargeInFramesRef.current = 0;
           suppressMicRef.current = false;
           setVoiceActivity(recordingRef.current ? "listening" : "idle");
           setPlaybackBlocked(true);
           setPlaybackDetail(describeMediaError(playerRef.current, "Playback stream error."));
+          setLastPlaybackEvent("media error");
           setBargeInDetail("idle");
         },
       }),

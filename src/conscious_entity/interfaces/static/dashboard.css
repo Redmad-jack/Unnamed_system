@@ -81,6 +81,7 @@ button, input, select, textarea {
 }
 .btn-sm:hover { border-color: var(--accent); color: var(--text); }
 .btn-sm.active { border-color: var(--accent); color: var(--text); }
+.btn-sm.danger { border-color: rgba(255, 107, 107, 0.65); color: #ffb3b3; }
 .btn-sm:disabled { cursor: default; opacity: 0.45; }
 
 .compact-select {
@@ -91,6 +92,16 @@ button, input, select, textarea {
   font-size: 11px;
   padding: 2px 6px;
 }
+.compact-input {
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  color: var(--text);
+  font-size: 11px;
+  min-width: 0;
+  padding: 3px 6px;
+}
+.baud-input { width: 72px; }
 
 .dashboard {
   background: var(--border);
@@ -299,7 +310,7 @@ button, input, select, textarea {
   border-bottom: 1px solid var(--border);
   display: grid;
   flex-shrink: 0;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
 }
 .tab {
   background: var(--surface);
@@ -339,6 +350,89 @@ tr:hover td { background: var(--surface2); }
 .item-meta { color: var(--dim); font-size: 10px; margin-bottom: 4px; }
 .item-text { color: var(--text); font-size: 11px; white-space: pre-wrap; word-break: break-word; }
 .item-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+
+.motion-readout {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  margin-bottom: 8px;
+  padding: 8px;
+}
+.motion-label {
+  color: var(--text);
+  font-size: 16px;
+  line-height: 1.2;
+}
+.motion-detail { color: var(--dim); font-size: 10px; margin-top: 2px; }
+.motion-forward,
+.motion-reverse,
+.motion-turning_left,
+.motion-turning_right,
+.motion-spin_left,
+.motion-spin_right,
+.motion-roaming { border-color: var(--accent); }
+.motion-stopped { border-color: var(--border); }
+
+.bridge-controls {
+  display: grid;
+  gap: 6px;
+  grid-template-columns: minmax(0, 1fr);
+  margin-top: 8px;
+}
+.teleop-capture {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text);
+  cursor: pointer;
+  display: grid;
+  gap: 4px;
+  padding: 10px;
+  text-align: left;
+  width: 100%;
+}
+.teleop-capture.active {
+  border-color: var(--accent);
+  box-shadow: inset 0 0 0 1px rgba(74, 163, 255, 0.35);
+}
+.teleop-capture:disabled {
+  cursor: default;
+  opacity: 0.55;
+}
+.teleop-title { font-size: 13px; }
+.teleop-help { color: var(--dim); font-size: 10px; line-height: 1.35; }
+.teleop-status { color: var(--text-dim); font-size: 10px; }
+
+.tof-grid {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: 1fr;
+  margin-top: 8px;
+}
+.tof-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 8px;
+}
+.tof-card.ok { border-color: rgba(81, 207, 102, 0.65); }
+.tof-card.warn { border-color: rgba(255, 212, 59, 0.65); }
+.tof-card.offline { opacity: 0.72; }
+.tof-card-head {
+  align-items: center;
+  color: var(--text-dim);
+  display: flex;
+  font-size: 10px;
+  justify-content: space-between;
+  margin-bottom: 4px;
+  text-transform: uppercase;
+}
+.tof-distance {
+  color: var(--text);
+  font-size: 18px;
+  line-height: 1.2;
+  margin-bottom: 6px;
+}
 
 .history-grid {
   display: grid;

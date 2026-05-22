@@ -25,7 +25,7 @@
 
 当前暂缓：
 
-- IMU
+- IMU 控制闭环接入；BNO085 SPI 引脚已作为后续扩展预留
 - 编码器
 - 稳定巡路 / 精确里程计
 - SLAM / 地图导航
@@ -209,6 +209,35 @@ ESP32-S3 不运行：
 | M3 DIR | GPIO12 | 电机驱动 `D3` |
 | M4 PWM | GPIO7 | 电机驱动 `P4` |
 | M4 DIR | GPIO13 | 电机驱动 `D4` |
+| BNO085 SPI SCK | GPIO15 | BNO085 `SCL` |
+| BNO085 SPI MISO | GPIO16 | BNO085 `SDA` |
+| BNO085 SPI MOSI | GPIO17 | BNO085 `DI` |
+| BNO085 SPI CS | GPIO18 | BNO085 `CS` |
+| BNO085 INT | GPIO21 | BNO085 `INT` |
+| BNO085 RST | GPIO47 | BNO085 `RST` |
+
+#### 可选 BNO085 IMU SPI 接线
+
+该接线是后续 heading / 转向确认阶段的预留方案，不属于当前 ToF-first 联调阻塞项。BNO085 不应挂在 TCA9548A 下游，避免 IMU 通信影响 ToF 安全总线。
+
+| BNO085 引脚 | ESP32-S3 / 电源 | 用途 |
+|---|---|---|
+| `VIN` | `3V3` | IMU 逻辑供电 |
+| `GND` | `GND` | 逻辑共地 |
+| `P0` / `PS0` | `3V3` | 选择 SPI 模式 |
+| `P1` / `PS1` | `3V3` | 选择 SPI 模式 |
+| `SCL` | GPIO15 | SPI `SCK` |
+| `SDA` | GPIO16 | SPI `MISO`，BNO085 到 ESP32-S3 |
+| `DI` | GPIO17 | SPI `MOSI`，ESP32-S3 到 BNO085 |
+| `CS` | GPIO18 | SPI chip select |
+| `INT` | GPIO21 | data-ready interrupt |
+| `RST` | GPIO47 | IMU reset |
+
+BNO085 加入后的职责边界：
+
+- 可用于短时间 yaw 转向确认、heading hold、角速度限制、倾斜 / 搬起 / 碰撞检测
+- 不用于真实里程、全局定位、SLAM 或路径复现
+- 不替代编码器；若后续需要稳定里程和轮速闭环，仍需轮端编码器
 
 #### TCA9548A 与 ToF 通道
 
@@ -293,20 +322,26 @@ TCA9548A channel connector 与 VL53L1X module connector 的线序不同，必须
 - 可选 Audio Adapter
 - Visitor Identity & Session Gating V1
 
-### 4.2 后续新增的身体桥层
+### 4.2 身体桥层
 
-硬件接入时应新增一个薄的 body bridge，而不是把硬件逻辑塞入 expression、policy 或 API 入口。
+硬件接入使用一个薄的 body bridge，而不是把硬件逻辑塞入 expression、policy 或 API 入口。当前第一版已经接入 Dashboard 手动 teleop 和 ESP32 telemetry 读取；艺术行为到运动意图的自动映射仍留到后续阶段。
 
-建议职责：
+当前职责：
 
 | 模块 | 职责 |
 |---|---|
-| `body/protocol.py` | 定义 Mac mini ↔ ESP32 的消息结构 |
-| `body/serial_bridge.py` | USB Serial 读写、重连、遥测缓存 |
+| `body/protocol.py` | 将 Dashboard allowlist command / teleop intent 转成 ESP32 当前文本命令 |
+| `body/serial_bridge.py` | USB Serial connect/disconnect、读 ESP32 JSON line、写命令、将 telemetry 推入缓存 |
+| `body/telemetry.py` | 缓存 ToF、obstacle、motion、motor state、ack/error，供 Hardware 面板显示 |
+
+后续可新增：
+
+| 模块 | 职责 |
+|---|---|
 | `body/command_mapper.py` | 将 runtime 状态 / 表达输出映射为运动意图和屏幕模式 |
 | `body/tof_events.py` | 将 ESP32 ToF telemetry 转为可记录的近场状态或 perception hint |
 
-命名只是建议；实际实现前仍需按代码结构确认。
+当前 Dashboard teleop 是开发者手动测试通道，不进入 LLM、memory、policy 或 ExpressionOutput。
 
 ### 4.3 软件模块全景
 
@@ -316,7 +351,7 @@ graph LR
         TEXT["Text / API input"]
         AUDIO_IN["Audio transcript"]
         VISION["Vision presence"]
-        TOF_TEL["ToF telemetry（后续）"]
+        TOF_TEL["ToF telemetry"]
     end
 
     subgraph CORE ["Stranger 核心运行时"]
@@ -334,7 +369,8 @@ graph LR
         EXPO["ExpressionOutput"]
         AUD["Mac mini audio output"]
         SCRMODE["Screen body mode"]
-        MOTION["Motion intent"]
+        MOTION["Motion intent（后续自动映射）"]
+        DEVTELEOP["Dashboard teleop"]
     end
 
     subgraph BODY ["下位身体控制"]
@@ -353,8 +389,9 @@ graph LR
     EXP --> HAR
     EXPO --> AUD
     EXPO --> SCRMODE
-    ST --> MOTION
-    POL --> MOTION
+    ST -. "后续" .-> MOTION
+    POL -. "后续" .-> MOTION
+    DEVTELEOP --> BRIDGE
     MOTION --> BRIDGE --> GATE --> MOTOR
     GATE --> TOF_TEL
 ```
@@ -393,7 +430,7 @@ flowchart TD
 
 ```mermaid
 flowchart TD
-    A["Stranger runtime 产生运动意图"] --> B["BodyBridge 序列化为 USB Serial JSON"]
+    A["Dashboard 手动 teleop 或后续 Stranger motion intent"] --> B["BodyBridge 转为 USB Serial 文本命令"]
     B --> C["ESP32 接收 command"]
     C --> D["读取最新 ToF obstacle state"]
     D --> E["裁剪或覆盖 wheel command"]
@@ -404,10 +441,12 @@ flowchart TD
 
 关键原则：
 
-- Mac mini 给出“想怎么动”
+- 当前第一版由 Dashboard 手动 teleop 给出“想怎么动”
+- 后续才允许 Stranger runtime 产生高层 motion intent
 - ESP32-S3 决定“当前能不能这样动”
 - ToF gate 必须在电机输出前执行
 - 当前不把 PWM 时间当成真实里程
+- 串口同一时刻只允许一个 owner；使用 Dashboard BodyBridge 时不要同时打开 PlatformIO Monitor
 
 ### 5.3 语音输出流
 

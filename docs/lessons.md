@@ -66,6 +66,11 @@
 - 原因：展陈对话需要允许观众打断实体发声；无条件 suppress 麦克风会让系统看似“听不见”
 - 如何应用：播放期间用本地音量门限检测 barge-in，未触发时静音，触发后停止 `<audio>` 并发送真实 PCM
 
+**L29：Progressive 音频取消不能卡住 turn lifecycle**
+- 规则：停止 `<audio>` 播放、取消当前 progressive turn、清空播放队列、释放麦克风 suppress / dialog pending 必须是明确分离的状态操作；任何取消路径都必须释放 pending，不能只依赖 `ended` 事件
+- 原因：浏览器可能不触发 `<audio ended>`，barge-in 或播放异常也可能打断首段音频；如果此时只推进 turn token 而不释放 pending，后续 `second_delta/final` 会被前端丢弃，麦克风也会继续被静音
+- 如何应用：Audio Adapter 需要独立的播放队列 watchdog、取消后状态清理、以及开发者面板中的 queue/current stream/last event 诊断字段
+
 **L16：语音 transcript 必须带通道上下文进入 prompt**
 - 规则：`/audio/dialog` 不能只把 STT final transcript 当普通文字输入；必须用 metadata 告诉 expression prompt 最新用户消息来自实时语音转录
 - 原因：否则实体会把转录文本当成书面输入来解释，错误声称自己区分了文字层面的语言、标点或拼写，而不知道它没有接收原始声音

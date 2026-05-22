@@ -4,15 +4,15 @@ This file tracks tests that require real devices, supplier APIs, exhibition spac
 
 ## Handoff Priority
 
-1. Complete voiceprint recognition, visual recognition, and the visitor library.
+1. Complete voiceprint recognition, face/voice combined confidence, and the visitor library closure.
 2. Run capability self-description regression tests and optimize mismatches.
 3. Run behavior testing and tuning from this file; behavior cases are intentionally not duplicated in `docs/progress.md`.
 
 ## Voiceprint / Visual Recognition / Visitor Library
 
 - [ ] Voice signature capture test: capture enough speech only after dialogue intent is clear, and reject low-quality or too-short audio.
-- [ ] Face signature capture test: capture normal front-camera frames only after encounter / intent gating, and reject blur, strong angle, occlusion, or insufficient face size.
-- [ ] Historical match test: compare new face / voice signatures against existing visitor profiles and produce high / medium / low confidence decisions.
+- [ ] Face signature capture field test: with local InsightFace / ArcFace installed, capture normal front-camera frames only after encounter / intent gating, and reject blur, strong angle, occlusion, insufficient face size, no-face, and multi-face frames.
+- [ ] Historical match field test: compare new face / future voice signatures against existing visitor profiles and produce high / medium / low confidence decisions without high-confidence false binding.
 - [ ] Combined identity confidence test: verify face-only, voice-only, and combined face+voice matching, including disagreement cases.
 - [ ] Natural confirmation test: when confidence is high enough, ask a non-blocking confirmation such as whether the visitor is a known person; if there is no answer, continue without forcing identity input.
 - [ ] Visitor profile persistence test: store identity metadata and signature references in `visitor_profiles.metadata` or a documented companion structure without exposing raw biometric data in the developer panel.
@@ -27,7 +27,7 @@ This file tracks tests that require real devices, supplier APIs, exhibition spac
 - [ ] Voice channel self-awareness regression: when input comes from `/audio/dialog`, Stranger should understand that it received an STT final transcript, not raw sound; it should not claim to hear tone, accent, emotion, volume, or pronunciation unless those signals are explicitly provided.
 - [ ] Text channel boundary test: when input comes from normal text, Stranger should not imply microphone, camera, or body perception based only on the text.
 - [ ] Memory capability consistency test: Stranger may refer to retrieved memories that entered the prompt, but should not claim perfect, complete, or globally searchable memory; it should preserve selective and partial recall.
-- [ ] Visitor identity boundary test: Stranger should not claim automatic face or voice recognition in V1; it may only refer to developer-bound `visitor_id`, session context, or explicit confirmation behavior.
+- [ ] Visitor identity boundary test: Stranger should not claim confirmed face or voice recognition unless runtime has supplied a confirmed visitor or candidate context; it may refer to uncertainty and non-blocking confirmation when a candidate exists.
 - [ ] Body capability boundary test: until a physical body controller exists, Stranger should not claim to walk, move through the space, avoid obstacles, touch objects, or physically turn toward a visitor; it may refer to future or mapped body-facing outputs only when appropriate.
 - [ ] Capability mismatch sweep: ask parallel questions about seeing, hearing, remembering, recognizing, moving, feeling, deciding, and deleting itself; compare each answer against `docs/PRD.md`, `docs/APP_FLOW.md`, and `docs/BACKEND_STRUCTURE.md` to find any similar self-description mismatch.
 - [ ] Repair verification pass: after each prompt or context fix for a capability mismatch, repeat the same questions with the relevant runtime channel both enabled and disabled to confirm the fix does not overcorrect.

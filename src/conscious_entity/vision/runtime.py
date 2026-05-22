@@ -119,6 +119,7 @@ class VisionSnapshot:
     detections: list[VisionDetection] = field(default_factory=list)
     events: list[VisionRuntimeEvent] = field(default_factory=list)
     jpeg: bytes | None = None
+    raw_jpeg: bytes | None = None
 
     def metadata(self, config: VisionConfig, running: bool, error: str | None) -> dict[str, Any]:
         return {
@@ -343,6 +344,7 @@ class VisionManager:
         started = time.time()
         model = self._load_model()
         detections = self._detect_people(model, frame)
+        raw_jpeg = _encode_jpeg(cv2, frame, fallback=image_bytes)
         self._draw_detections(cv2, frame, detections)
         encoded_ok, encoded = cv2.imencode(
             ".jpg",
@@ -355,7 +357,7 @@ class VisionManager:
             VisionRuntimeEvent(event, datetime.now(timezone.utc), f"{source}_person_presence")
             for event in events
         ]
-        self._publish_snapshot(detections, runtime_events, jpeg, source=source)
+        self._publish_snapshot(detections, runtime_events, jpeg, raw_jpeg=raw_jpeg, source=source)
         with self._lock:
             self._external_frame_last_at = started
         return self.status()
@@ -423,6 +425,10 @@ class VisionManager:
             metadata["recognition"] = self._recognition_status_locked(None)
             return metadata, self._snapshot.jpeg
 
+    def latest_frame_jpeg(self) -> bytes | None:
+        with self._lock:
+            return self._snapshot.raw_jpeg or self._snapshot.jpeg
+
     def pop_pending_events(self) -> list[EventType]:
         with self._lock:
             events = list(self._pending_events)
@@ -466,6 +472,7 @@ class VisionManager:
                     continue
 
                 detections = self._detect_people(model, frame)
+                raw_jpeg = _encode_jpeg(cv2, frame)
                 self._draw_detections(cv2, frame, detections)
                 encoded_ok, encoded = cv2.imencode(
                     ".jpg",
@@ -478,7 +485,7 @@ class VisionManager:
                     VisionRuntimeEvent(event, datetime.now(timezone.utc), "yolo_person_presence")
                     for event in events
                 ]
-                self._publish_snapshot(detections, runtime_events, jpeg, source="opencv")
+                self._publish_snapshot(detections, runtime_events, jpeg, raw_jpeg=raw_jpeg, source="opencv")
                 elapsed = time.time() - started
                 time.sleep(max(0.0, frame_interval - elapsed))
         except Exception as exc:
@@ -531,6 +538,7 @@ class VisionManager:
         events: list[VisionRuntimeEvent],
         jpeg: bytes | None,
         *,
+        raw_jpeg: bytes | None = None,
         source: str,
     ) -> None:
         with self._lock:
@@ -546,6 +554,7 @@ class VisionManager:
                 detections=detections,
                 events=events,
                 jpeg=jpeg,
+                raw_jpeg=raw_jpeg,
             )
             self._error = None
 
@@ -729,6 +738,20 @@ def _capture_int_property(capture: Any, prop: Any | None) -> int | None:
     except Exception:
         return None
     return value if value > 0 else None
+
+
+def _encode_jpeg(cv2: Any, frame: Any, *, fallback: bytes | None = None) -> bytes | None:
+    try:
+        encoded_ok, encoded = cv2.imencode(
+            ".jpg",
+            frame,
+            [int(cv2.IMWRITE_JPEG_QUALITY), _DEFAULT_JPEG_QUALITY],
+        )
+        if encoded_ok:
+            return encoded.tobytes()
+    except Exception:
+        return fallback
+    return fallback
 
 
 def _env_int(name: str, default: int, *, minimum: int, maximum: int | None = None) -> int:

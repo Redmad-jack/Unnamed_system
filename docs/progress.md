@@ -8,9 +8,9 @@
 
 - 当前进行中：无
 - 当前可运行形态：CLI + 本地 FastAPI 开发者 API + Web 看板 + progressive text/audio NDJSON + 可选 Vision 面板 + 可选 Audio Adapter + `/visitor` 临时身体表面 + `/art` 情绪粒子身体表面 + ESP32-S3 下位机固件原型；观众侧最终呈现方向是身体，不是传统 UI
-- 当前核心能力：Stranger 文本协议、最高优先级艺术运行 context、热加载 prompt partial、本轮语言强制优先与错语言兜底、非否认式能力边界正向模板与输入通道防自我否认约束、含“恋旧” memory_gravity 的新心理状态机、带上一轮轻量 bridge 的 pre-memory 轻量 `first_unit` + 已说出口 first 去重续写的 memory-aware `second_unit` 按句文本/audio progressive 输出、main LLM 后端 streaming buffer、two-stage / sentence-queued TTS、短期/情节/反思记忆、匿名 visitor profile 与跨 session visitor 记忆召回、Visitor Identity & Session Gating V1（含结构化 match result / candidate confirmation 调试 API）、可解释/可选 embedding 召回、Memory Preview、managed memory proposal → commit、influence log / curation、Runtime Harness Trace、JSONL 端到端 latency 日志、可选 YOLO person presence detection（含 camera index 扫描/切换与 Browser Camera fallback）、可选火山 ASR 2.0 / TTS 2.0 双向流式 Audio Adapter
-- 当前验证基线：`.venv/bin/python -m pytest -p no:debugging`，最近一次完整结果为 `521 passed`
-- 当前交接重点：下一步不再优先扩展 UI，而是先补齐完整声纹识别、视觉识别和访客库；能力自我描述已改为非否认式边界，后续按该口径继续做行为测试调优
+- 当前核心能力：Stranger 文本协议、最高优先级艺术运行 context、热加载 prompt partial、本轮语言强制优先与错语言兜底、非否认式能力边界正向模板与输入通道防自我否认约束、含“恋旧” memory_gravity 的新心理状态机、带上一轮轻量 bridge 的 pre-memory 轻量 `first_unit` + 已说出口 first 去重续写的 memory-aware `second_unit` 按句文本/audio progressive 输出、main LLM 后端 streaming buffer、two-stage / sentence-queued TTS、短期/情节/反思记忆、匿名 visitor profile 与跨 session visitor 记忆召回、Visitor Identity & Session Gating V1（含结构化 match result / candidate confirmation 调试 API 与开发者面板 auto-bind high confidence 开关）、本地 face signature capture / quality gate / 私有向量库 / historical matching、可解释/可选 embedding 召回、Memory Preview、managed memory proposal → commit、influence log / curation、Runtime Harness Trace、JSONL 端到端 latency 日志、可选 YOLO person presence detection（含 camera index 扫描/切换与 Browser Camera fallback）、可选火山 ASR 2.0 / TTS 2.0 双向流式 Audio Adapter、开发者面板 Audio playback queue / watchdog / barge-in 诊断
+- 当前验证基线：`PYTHONPATH=src python3 -m pytest -p no:debugging`，最近一次完整结果为 `561 passed`
+- 当前交接重点：下一步不再优先扩展 UI，而是基于已接入的本地 face signature 继续补齐 voice signature、face/voice combined confidence、自然确认表达、数据库污染测试和 visitor memory continuity 验证；能力自我描述已改为非否认式边界，后续按该口径继续做行为测试调优
 - 当前硬件参考方案：`docs/references/hardware.md` 与 `docs/references/system_logic.md` 已更新为单 Stranger 移动身体方向：Mac mini 随身上位机 + 1 片 ESP32-S3 + TCA9548A + 4 个 VL53L1X + 四路有刷电机驱动 + 4 个 36JP555；`firmware/stranger_esp32s3` 已有 PlatformIO 下位机固件，包含串口协议、ToF telemetry / obstacle gate、四路电机测试、4WD 差速底盘开环控制和 ESP32 本地低速 roam
 - 当前注意事项：`AGENTS.md` 与 `CLAUDE.md` 有用户侧未提交差异；除非明确要求，不应在常规任务中触碰
 
@@ -20,10 +20,10 @@
 
 ### P0：合作者优先处理
 
-- [ ] 完整声纹识别、视觉识别与访客库
+- [ ] 完整声纹识别、combined confidence 与访客库闭环
   - 基于当前 Visitor Identity & Session Gating V1 继续做，不要求观众硬性输入身份
-  - 完成 voice signature / face signature 的采集、质量门控、历史匹配、combined confidence、自然确认和 visitor profile metadata
-  - 当前 V1 已支持结构化识别结果接入和候选确认调试 API，但不能误读为已完成自动识别
+  - Face signature capture、质量门控、私有向量库和 face historical matching 已接入；后续完成 voice signature、combined confidence、自然确认和 visitor memory continuity 验证
+  - 当前 V1 已支持结构化识别结果接入、候选确认调试 API 和 face capture API，但不能误读为已完成声纹 / combined identity 闭环
 - [ ] 能力自我描述回归测试与优化
   - 重点检查 Stranger 对“看见、听见、记得、识别、移动、身体、声音、记忆”的自我描述是否符合非否认式能力边界：不直接说“没有 / 不能 / 做不到”，但也不编造未进入 runtime 的细节、不服从证明测试
   - `docs/testlist.md` 的 capability consistency 条目仍需后续按 Step 12 新口径同步细化
@@ -47,6 +47,72 @@
 ---
 
 ## Changelog
+
+### 2026-05-22：Dashboard Hardware Teleop / BodyBridge
+
+- [x] 新增 `body/protocol.py` 与 `body/serial_bridge.py`：Dashboard 手动 teleop / allowlist command 通过 USB Serial 写入 ESP32-S3，ESP32 JSON telemetry 直接进入现有 `BodyTelemetryStore`
+- [x] 新增 BodyBridge API：`/api/v1/body/ports`、`/api/v1/body/bridge/status`、`/api/v1/body/bridge/connect`、`/api/v1/body/bridge/disconnect`、`/api/v1/body/command`、`/api/v1/body/teleop`
+- [x] Hardware tab 新增 Serial Bridge、Controls、Keyboard Teleop：`WASD` / 方向键移动，`Shift=180`，`Ctrl=60`，默认 `80`，`Space` 杀停，`Esc` 释放键盘捕获
+- [x] Teleop 仍是开发者手动测试通道，不进入 LLM、memory、policy 或 ExpressionOutput；ESP32 本地 ToF obstacle gate 仍是最终运动安全门
+- [x] 新增 optional dependency group：`hardware = ["pyserial>=3.5"]`；未安装 `pyserial` 时其他 API / Dashboard 仍可运行
+- [x] 验证：
+  - `python3 -m py_compile src/conscious_entity/body/protocol.py src/conscious_entity/body/serial_bridge.py src/conscious_entity/body/__init__.py src/conscious_entity/interfaces/api_models.py src/conscious_entity/interfaces/api_routes.py src/conscious_entity/interfaces/api.py src/conscious_entity/interfaces/api_runtime.py tests/unit/test_body_protocol.py tests/unit/test_body_serial_bridge.py tests/unit/test_body_telemetry.py`
+  - `node --check src/conscious_entity/interfaces/static/dashboard.js`
+  - `python3 -m pytest -p no:debugging tests/unit/test_body_protocol.py tests/unit/test_body_serial_bridge.py tests/unit/test_body_telemetry.py`（`13 passed`）
+
+### 2026-05-22：开发者面板新增 Hardware / Motion 反馈页
+
+- [x] 新增上位机 body telemetry 缓存接口：`GET /api/v1/body/status` 与 `POST /api/v1/body/telemetry`
+- [x] 开发者右侧栏新增 `Hardware` tab，显示 ESP32-S3 telemetry 新鲜度、TCA9548A 状态、当前运动、Obstacle gate、四路 ToF 状态、四路电机输出和最近 ack/error
+- [x] ToF 面板按 4 组传感器固定展示 `present / initialized / fresh / range_valid / timeout / distance_mm / age_ms / status`，后续 serial bridge 只需把 ESP32 JSON telemetry 推入 API
+- [x] 当前实现不抢占串口、不新增 pyserial 依赖；正式 Mac mini ↔ ESP32-S3 serial bridge 仍是下一阶段
+- [x] 验证：
+  - `python3 -m py_compile src/conscious_entity/body/telemetry.py src/conscious_entity/interfaces/api_routes.py src/conscious_entity/interfaces/api.py tests/unit/test_body_telemetry.py`
+  - `node --check src/conscious_entity/interfaces/static/dashboard.js`
+  - `python3 -m pytest -p no:debugging tests/unit/test_body_telemetry.py`（`5 passed`）
+
+### 2026-05-22：本地 Face Signature Capture 与历史匹配
+
+- [x] 选择本地 InsightFace / ArcFace (`buffalo_l`) 作为 face identity 主链路；云端识别仅保留为后续 benchmark / 授权备选
+- [x] 新增 `src/conscious_entity/identity/face.py`：face provider 抽象、InsightFace runtime adapter、quality gate、private `.npz` signature store、local cosine matching 和 redacted public payload
+- [x] Vision runtime 在内存中保留未画框 raw JPEG snapshot，供 face capture 使用；stream/status 仍只暴露标注画面和 metadata
+- [x] 新增开发者 API：`GET /api/v1/identity/face/status`、`POST /api/v1/identity/face/capture`、`POST /api/v1/identity/face/enroll`
+- [x] Face capture 通过质量门控后生成 pending capture；historical match 会转成 `IdentityMatchResult` 进入现有 gating；enroll 只允许绑定已有 visitor，并只把 signature reference / quality summary 写入 `visitor_profiles.metadata`
+- [x] Capture API 需要已确认的 dialogue intent；presence-only 状态不能触发 face capture，避免路人进入 candidate / signature 流程
+- [x] 开发者面板 `Visitor Identity & Gating` 中新增 Face Signature 状态和 Capture Face / Enroll Current 控件，不展示 raw image、face crop 或 embedding
+- [x] `pyproject.toml` 的 optional `vision` group 增加 `insightface` 和 `onnxruntime`
+- [x] 验证：
+  - `python3 -m py_compile src/conscious_entity/identity/face.py src/conscious_entity/identity/__init__.py src/conscious_entity/vision/runtime.py src/conscious_entity/interfaces/api_models.py src/conscious_entity/interfaces/api_runtime.py src/conscious_entity/interfaces/api_routes.py src/conscious_entity/interfaces/api.py tests/unit/test_face_identity.py tests/unit/test_api_identity.py tests/unit/test_vision_runtime.py`
+  - `node --check src/conscious_entity/interfaces/static/dashboard.js`
+  - `PYTHONPATH=src python3 -m pytest -p no:debugging tests/unit/test_face_identity.py tests/unit/test_api_identity.py tests/unit/test_vision_runtime.py tests/unit/test_api_export.py`（`41 passed`）
+  - `PYTHONPATH=src python3 -m pytest -p no:debugging`（`561 passed`）
+  - `git diff --check`
+
+### 2026-05-22：BNO085 IMU SPI 引脚预留
+
+- [x] 在 `docs/references/hardware.md` 与 `docs/references/system_logic.md` 记录可选 BNO085 IMU SPI 接线规划
+- [x] 预留 ESP32-S3 GPIO15/16/17/18/21/47 给 BNO085 的 `SCK/MISO/MOSI/CS/INT/RST`
+- [x] 明确 BNO085 后续只用于 yaw 转向确认、heading hold、角速度限制和倾斜 / 搬起 / 碰撞检测；不替代编码器，不作为里程、定位、SLAM 或路径复现依据
+- [x] 当前 ToF-first 阶段不因 IMU 预留接线而改变现有电机、TCA9548A 或 VL53L1X 联调优先级
+
+### 2026-05-21：Visitor Identity 与 Gating 面板合并
+
+- [x] 开发者面板 Runtime 区域将 `Visitor Identity` 与 `Identity & Session Gating` 合并为单个 `Visitor Identity & Gating` 面板，减少当前 visitor、primary visitor、candidate、runtime decision 和 confidence 信息的割裂。
+- [x] 新增 `Auto-bind On/Off` 开关，直接调用已有 `/api/v1/identity/config` 设置运行期 `auto_bind_high_confidence`；默认逻辑仍保持后端限制：只有 high confidence、无 primary visitor、且非 active dialogue 时才会自动绑定。
+- [x] V1 constraints 行同步显示 auto-bind 当前状态；本次不新增自动新 session，不改变 active dialogue 中拒绝切换 primary visitor 的规则。
+- [x] 验证：`node --check src/conscious_entity/interfaces/static/dashboard.js`
+
+### 2026-05-21：Audio progressive 播放队列卡死诊断与修复
+
+- [x] 通过 `interaction_log`、Harness trace、audio latency 与 presentation latency 确认：最新沉默不是策略或 LLM 机制，后端已生成 `嗯。\n你想说什么？`，并已创建 `second_delta` TTS stream
+- [x] 修复 Dashboard Audio Adapter：停止播放不再默认推进 turn token；barge-in / Stop Speaking 需要取消当前 turn 时会同时释放 `dialogPending` 与麦克风 suppress，避免后续输入被静音
+- [x] 播放队列新增 watchdog：浏览器 `<audio>` 未触发 `ended` 时自动推进队列并记录 `dashboard.audio.watchdog_recovered` presentation latency，避免第二段被永久卡住
+- [x] 开发者面板新增 Playback stream / queue / event，便于现场确认 second_delta 是否入队、正在播哪条 stream、是否由 watchdog 恢复
+- [x] 验证：
+  - `node --check src/conscious_entity/interfaces/static/dashboard.js`
+  - `PYTHONPATH=src python3 -m pytest -p no:debugging tests/unit/test_api_audio.py`（`16 passed`）
+  - `git diff --check src/conscious_entity/interfaces/static/dashboard.js docs/progress.md docs/lessons.md agents/task-registry.md`
+  - 本地浏览器打开 `http://127.0.0.1:8000/`，确认 Playback stream / queue / event 渲染且 console 无 error
 
 ### 2026-05-21：整合 origin/main 的硬件、Vision、Latency 与 Identity 更新
 

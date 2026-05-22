@@ -329,7 +329,8 @@ CREATE TABLE schema_version (
 | `src/conscious_entity/interfaces/api_routes.py` | HTTP 路由处理 |
 | `src/conscious_entity/interfaces/api_audio.py` | 可选 audio adapter 路由：STT stream、audio dialog、TTS stream |
 | `src/conscious_entity/harness/` | Runtime Harness trace 类型、recorder 和进程内 ring buffer |
-| `src/conscious_entity/identity/` | Visitor Identity & Session Gating V1：记录 encounter、intent、primary visitor、插入事件和安全开发者状态 |
+| `src/conscious_entity/identity/` | Visitor Identity & Session Gating V1 + 本地 face signature：记录 encounter、intent、primary visitor、插入事件、安全开发者状态、InsightFace/ArcFace capture、私有 signature store 和本地历史匹配 |
+| `src/conscious_entity/body/` | 可选 body hardware bridge：ESP32-S3 telemetry cache、USB Serial connect/read/write、Dashboard teleop command protocol |
 | `src/conscious_entity/vision/runtime.py` | 可选 vision runtime：OpenCV/浏览器帧输入、YOLO person detection、presence event debounce |
 | `src/conscious_entity/audio/` | 可选 audio runtime：火山 STT/TTS 配置、stream id、协议封装 |
 
@@ -360,6 +361,17 @@ CREATE TABLE schema_version (
 | `POST` | `/api/v1/identity/config` | 设置运行期 identity gating 调试开关，例如 high-confidence auto-bind；重启后恢复默认 | 本地开发面板，当前无认证 |
 | `POST` | `/api/v1/identity/match` | 接收模拟或未来识别模块产生的 face / voice / combined match result | 本地开发面板，当前无认证 |
 | `POST` | `/api/v1/identity/confirm` | 确认或拒绝当前 candidate visitor | 本地开发面板，当前无认证 |
+| `GET` | `/api/v1/identity/face/status` | 查看本地 face identity provider、模型加载、signature store、最近 capture / match 状态 | 本地开发面板，当前无认证 |
+| `POST` | `/api/v1/identity/face/capture` | 从 vision runtime 最近一帧做本地 face capture、quality gate、embedding 和历史匹配，并可进入 identity gating | 本地开发面板，当前无认证 |
+| `POST` | `/api/v1/identity/face/enroll` | 将最近一次 accepted pending face capture 绑定到已有 visitor，并只把 signature reference 写入 visitor metadata | 本地开发面板，当前无认证 |
+| `GET` | `/api/v1/body/status` | 查看 ESP32-S3 telemetry cache：ToF、obstacle gate、motion、motor state、last ack/error | 本地开发面板，当前无认证 |
+| `POST` | `/api/v1/body/telemetry` | 接收 ESP32 JSON telemetry 并写入进程内缓存；主要供 serial bridge 或临时调试注入使用 | 本地开发面板，当前无认证 |
+| `GET` | `/api/v1/body/ports` | 列出 pyserial 可见串口，并返回当前 BodyBridge 状态 | 本地开发面板，当前无认证 |
+| `GET` | `/api/v1/body/bridge/status` | 查看 USB Serial BodyBridge 连接、rx/tx、最近 raw line/error/event | 本地开发面板，当前无认证 |
+| `POST` | `/api/v1/body/bridge/connect` | 连接 ESP32-S3 USB serial；默认 `115200` baud；会成为串口唯一所有者 | 本地开发面板，当前无认证 |
+| `POST` | `/api/v1/body/bridge/disconnect` | 断开 BodyBridge；断开前尝试发送 `motors off` | 本地开发面板，当前无认证 |
+| `POST` | `/api/v1/body/command` | 发送 allowlist 内离散调试命令：`arm`、`motors off`、`avoidance on/off`、`telemetry on/off`、`tof`、`status` | 本地开发面板，当前无认证 |
+| `WS` | `/api/v1/body/teleop` | Dashboard 键盘 teleop 通道；接收短 heartbeat drive intent，超时或断开时停机 | 本地开发面板，当前无认证 |
 | `GET` | `/api/v1/vision/status` | 查看可选视觉 runtime 状态、依赖、模型路径和最新 detections | 本地开发面板，当前无认证 |
 | `GET` | `/api/v1/vision/cameras` | 扫描本机 OpenCV 可打开的 camera index，用于现场选择可用通道 | 本地开发面板，当前无认证 |
 | `POST` | `/api/v1/vision/config` | 运行期切换 vision camera index；如 worker 已运行则释放旧摄像头并重启 | 本地开发面板，当前无认证 |
@@ -382,7 +394,7 @@ CREATE TABLE schema_version (
 - `/api/v1/dialog` 与 `/api/v1/audio/dialog` 返回的 `latency_record_id` 用于把后端 turn latency 和浏览器 presentation latency 关联起来。
 
 **Vision 事件边界：**
-- 当前视觉层只检测 YOLO `person` class，不做访客身份识别；下一优先级会在此基础上增加视觉身份 signature、质量门控和历史匹配。
+- Vision runtime 的实时 presence 层仍只检测 YOLO `person` class；身份识别不在每帧同步运行，只由开发者或后续 gating 在 intent 明确后触发 face capture。
 - 摄像头 index 可在开发者面板运行期切换；OpenCV 打开摄像头时优先尝试 macOS AVFoundation backend，再回退默认 backend，并在 status 中暴露 open attempts。
 - macOS 拒绝 Python/OpenCV 访问摄像头时，开发者面板可启用 Browser Camera：由已授权的浏览器采集画面并上传 JPEG frame，后端只做解码、YOLO 检测和 snapshot 发布。
 - 稳定进入、离开、长时间静默分别转换为已有 `USER_ENTERED`、`USER_LEFT`、`LONG_SILENCE_DETECTED`。
@@ -394,9 +406,19 @@ CREATE TABLE schema_version (
 - 当前正在对话时，不因为旁人出现或发声自动切换 active visitor；可记录 `interruption_event`，但不启用 group session。
 - 空闲 presence 不等于对话意图；只有文字或语音输入进入 turn loop 时才把 intent 标为 confirmed。
 - 识别结果通过结构化 `IdentityMatchResult` 进入 gating：默认 high confidence 只设置 candidate 并等待非强制确认；开发者可临时开启 `auto_bind_high_confidence`，但只在没有 primary visitor 且非 active dialogue 时自动绑定。
+- 本地 face signature 使用 InsightFace / ArcFace (`buffalo_l`)：capture 先做 no face / multi face / detection score / face size / blur / pose 质量门控；通过后生成 embedding 并与 `data/signatures/face/*.npz` 做本地 cosine matching。
+- Face embedding 只保存在私有 signature store；`visitor_profiles.metadata.identity.signatures.face[]` 只保存 `signature_id`、provider、reference、quality summary、created_at 和 status。
 - 开发者面板展示 runtime、decision、candidate、confidence level、latest match summary、confirmation state 和 interruption count；不展示原始人脸图、原始音频、embedding 向量或完整身份库。
-- 后续完整身份识别必须继续保持“非强制输入”：可以询问确认，但 visitor 不回答时仍继续当前对话，不因未确认身份阻断 turn loop。
+- 后续完整身份识别必须继续保持“非强制输入”：可以询问确认，但 visitor 不回答时仍继续当前对话，不因未确认身份阻断 turn loop。Voice signature、face/voice combined confidence 和自然确认表达仍是下一阶段。
 - 摄像头/YOLO 留在上位机；STM32 后续只接收事件、动作、灯光或电机命令，不接收视频流。
+
+**BodyBridge / Hardware Teleop 边界：**
+- BodyBridge 是开发者手动硬件调试通道，不进入 LLM、Expression、memory、state 或 policy。
+- 串口由后端 `BodySerialBridge` 单一持有；使用 Dashboard teleop 时不要同时打开 PlatformIO Monitor。
+- Dashboard 键盘 teleop 只发送短时 `drive` heartbeat；WebSocket 断开、250ms 无输入或 disconnect 时尝试 `motors off`。
+- `POST /api/v1/body/command` 只允许安全/调试 allowlist，不允许直接从 API 发送任意 `motor` 长时测试命令。
+- ESP32-S3 本地 ToF obstacle gate 仍是运动安全主闭环；Dashboard 的 `avoidance off` 只用于受控调试。
+- 安装硬件功能需 optional dependency：`pip install -e ".[api,hardware]"`；未安装 `pyserial` 时其他 API 与 Dashboard 仍可运行。
 
 **Audio 安全边界：**
 - Audio layer 只做输入/输出适配，不决定人格、不改状态规则、不写记忆规则。
@@ -428,8 +450,8 @@ OPERATOR_API_KEY=your_secret_here
 | 版本 | 身份策略 |
 |---|---|
 | 早期文本 MVP | 全部共用 `session_id="shared"`，无访客区分 |
-| 当前系统 | 开发者可创建匿名 `visitor_profiles`，把当前 session 绑定到 `visitor_id`；同一 visitor 的旧 session 可参与记忆召回；Identity & Session Gating V1 已支持结构化 match result、candidate、confirmation 和运行期 auto-bind 调试开关 |
-| 下一优先级 | 接入真实 face / voice signature capture、质量门控和历史匹配模块 |
+| 当前系统 | 开发者可创建匿名 `visitor_profiles`，把当前 session 绑定到 `visitor_id`；同一 visitor 的旧 session 可参与记忆召回；Identity & Session Gating V1 已支持结构化 match result、candidate、confirmation 和运行期 auto-bind 调试开关；本地 face signature capture、质量门控、私有向量库和 face historical matching 已接入 |
+| 下一优先级 | 接入 voice signature、face/voice combined confidence、自然确认表达、数据库污染测试和真实展场连续性观察 |
 | 后续展览阶段 | 多人 routing / 仲裁策略仍待现场测试；当前先收束为单 primary visitor session |
 
 **注：** 不引入账户注册或密码机制。匿名 `visitor_id` 是路由和连续性线索，不等于真实身份画像。
@@ -455,7 +477,7 @@ OPERATOR_API_KEY=your_secret_here
 - `episodic_memories.reflected` 标志只能从 0 改为 1，不可逆
 - `reflective_summaries.active` 标志：新反思生成时不删除旧记录，仅将旧记录的 active 置为 0
 - 展期全程不重置任何表，仅在展期结束时归档
-- Stranger 当前不保存原始音视频；视觉第一版只在内存中保留最新 JPEG frame / detections / recent events，presence 结果只作为已有系统事件进入状态路径；语音第一版只在内存中保留最近 transcript、TTS stream id 和 sanitized error。下一阶段若实现声纹/视觉识别，应优先保存可审计的 signature reference、质量摘要、置信度和确认状态，而不是把原始音视频直接暴露给开发者面板。
+- Stranger 当前不保存原始音视频；视觉 runtime 只在内存中保留最新 JPEG frame / detections / recent events，presence 结果只作为已有系统事件进入状态路径。Face identity 只持久化本地 embedding `.npz` 和 profile metadata reference，不向开发者面板暴露 raw image、face crop 或 embedding；语音第一版只在内存中保留最近 transcript、TTS stream id 和 sanitized error。后续声纹识别也应优先保存可审计的 signature reference、质量摘要、置信度和确认状态，而不是把原始音视频直接暴露给开发者面板。
 - 自动调参建议不得直接写回 YAML；必须先作为待确认记录进入运营者流程
 
 ---

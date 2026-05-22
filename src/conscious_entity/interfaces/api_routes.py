@@ -4,19 +4,35 @@ import asyncio
 import json
 import time
 import uuid
+from contextlib import suppress
 from datetime import datetime, timezone
 from typing import Any, Optional
 
 from fastapi import APIRouter, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, Response, StreamingResponse
 
+from conscious_entity.body import BodySerialBridge, BodyTelemetryStore
+from conscious_entity.body.protocol import (
+    BodyProtocolError,
+    build_drive_command,
+    drive_intent_from_payload,
+)
 from conscious_entity.core.config_loader import load_all_configs
 from conscious_entity.harness import get_harness_trace_store
-from conscious_entity.identity import IdentityMatchResult, IdentityMatchSignal, SessionDecision
+from conscious_entity.identity import (
+    FaceIdentityError,
+    IdentityMatchResult,
+    IdentityMatchSignal,
+    SessionDecision,
+)
 from conscious_entity.interfaces.api_models import (
+    BodyBridgeConnectRequest,
+    BodyCommandRequest,
     DialogRequest,
     EmbeddingConfigRequest,
     EmbeddingTestRequest,
+    FaceCaptureRequest,
+    FaceEnrollRequest,
     IdentityConfirmRequest,
     IdentityConfigRequest,
     IdentityMatchRequest,
@@ -36,6 +52,7 @@ from conscious_entity.interfaces.api_models import (
 from conscious_entity.interfaces.api_runtime import (
     _active_embedding_client,
     _active_llm_client,
+    _append_visitor_identity_signature,
     _blank_to_none,
     _client_from_settings,
     _conversation_export_payload,
@@ -113,6 +130,29 @@ def _identity_controller(request: Request):
     if controller is None:
         raise HTTPException(status_code=503, detail="Identity/session gating not initialised")
     return controller
+
+
+def _body_telemetry(request: Request) -> BodyTelemetryStore:
+    store = getattr(request.app.state, "body_telemetry", None)
+    if store is None:
+        store = BodyTelemetryStore()
+        request.app.state.body_telemetry = store
+    return store
+
+
+def _body_bridge(request_or_websocket: Request | WebSocket) -> BodySerialBridge:
+    bridge = getattr(request_or_websocket.app.state, "body_bridge", None)
+    if bridge is None:
+        bridge = BodySerialBridge(_body_telemetry(request_or_websocket))
+        request_or_websocket.app.state.body_bridge = bridge
+    return bridge
+
+
+def _face_identity_manager(request: Request):
+    manager = getattr(request.app.state, "face_identity_manager", None)
+    if manager is None:
+        raise HTTPException(status_code=503, detail="Face identity manager not initialised")
+    return manager
 
 
 def _identity_signal_from_request(
@@ -272,6 +312,115 @@ async def harness_trace_recent(limit: int = 20):
     }
 
 
+@router.get("/api/v1/body/status")
+async def body_status(request: Request):
+    return _body_telemetry(request).snapshot()
+
+
+@router.post("/api/v1/body/telemetry")
+async def body_telemetry_ingest(request: Request):
+    try:
+        payload = await request.json()
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"invalid body telemetry JSON: {exc}")
+    store = _body_telemetry(request)
+    try:
+        if isinstance(payload, list):
+            return store.ingest_many(payload)
+        return store.ingest(payload)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@router.get("/api/v1/body/ports")
+async def body_ports(request: Request):
+    bridge = _body_bridge(request)
+    return {
+        "ports": bridge.list_ports(),
+        "bridge": bridge.status(),
+    }
+
+
+@router.get("/api/v1/body/bridge/status")
+async def body_bridge_status(request: Request):
+    return _body_bridge(request).status()
+
+
+@router.post("/api/v1/body/bridge/connect")
+async def body_bridge_connect(body: BodyBridgeConnectRequest, request: Request):
+    bridge = _body_bridge(request)
+    try:
+        return await bridge.connect(body.port, baud=body.baud)
+    except (RuntimeError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@router.post("/api/v1/body/bridge/disconnect")
+async def body_bridge_disconnect(request: Request):
+    return await _body_bridge(request).disconnect()
+
+
+@router.post("/api/v1/body/command")
+async def body_command(body: BodyCommandRequest, request: Request):
+    bridge = _body_bridge(request)
+    try:
+        return await bridge.send_discrete_command(body.command)
+    except BodyProtocolError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+
+
+@router.websocket("/api/v1/body/teleop")
+async def body_teleop(websocket: WebSocket):
+    await websocket.accept()
+    bridge = _body_bridge(websocket)
+    status = bridge.status()
+    if not status.get("enabled"):
+        await websocket.send_json({"type": "error", "error": status.get("dependency")})
+        await websocket.close(code=1011)
+        return
+    if not status.get("connected"):
+        await websocket.send_json({"type": "error", "error": "body serial bridge is not connected"})
+        await websocket.close(code=1008)
+        return
+
+    moving = False
+    await websocket.send_json({"type": "ready", "bridge": bridge.status()})
+    try:
+        while True:
+            try:
+                payload = await asyncio.wait_for(websocket.receive_json(), timeout=0.25)
+            except asyncio.TimeoutError:
+                if moving:
+                    await bridge.send_stop()
+                    moving = False
+                    await websocket.send_json({"type": "ack", "command": "motors off", "reason": "teleop_timeout"})
+                continue
+
+            msg_type = str(payload.get("type") or "intent").lower()
+            if msg_type in {"kill", "stop"}:
+                await bridge.send_stop()
+                moving = False
+                await websocket.send_json({"type": "ack", "command": "motors off", "reason": msg_type})
+                continue
+
+            intent = drive_intent_from_payload(payload)
+            command = build_drive_command(intent)
+            await bridge.send_drive_intent(intent)
+            moving = intent.throttle != 0 or intent.turn != 0
+            await websocket.send_json({"type": "ack", "command": command})
+    except WebSocketDisconnect:
+        pass
+    except BodyProtocolError as exc:
+        await websocket.send_json({"type": "error", "error": str(exc)})
+    except RuntimeError as exc:
+        await websocket.send_json({"type": "error", "error": str(exc)})
+    finally:
+        with suppress(Exception):
+            await bridge.send_stop()
+
+
 @router.get("/api/v1/identity/status")
 async def identity_status(request: Request):
     controller = getattr(request.app.state, "identity_gating", None)
@@ -324,6 +473,95 @@ async def identity_confirm(body: IdentityConfirmRequest, request: Request):
     if context.get("session_decision") == SessionDecision.VISITOR_BOUND.value:
         await _bind_current_visitor_from_identity(request, context["primary_visitor_id"])
     return controller.status()
+
+
+@router.get("/api/v1/identity/face/status")
+async def identity_face_status(request: Request):
+    return _face_identity_manager(request).status()
+
+
+@router.post("/api/v1/identity/face/capture")
+async def identity_face_capture(request: Request, body: FaceCaptureRequest | None = None):
+    manager = _face_identity_manager(request)
+    controller = _identity_controller(request)
+    if not _face_capture_intent_allowed(controller.status()):
+        raise HTTPException(
+            status_code=409,
+            detail="Face capture requires confirmed dialogue intent; presence alone is not enough.",
+        )
+    vision = getattr(request.app.state, "vision_manager", None)
+    if vision is None:
+        raise HTTPException(status_code=503, detail="Vision runtime not initialised")
+    frame = vision.latest_frame_jpeg()
+    if frame is None:
+        raise HTTPException(status_code=400, detail="No vision frame available for face capture")
+
+    outcome = manager.capture_and_match(frame)
+    identity_status_payload = None
+    result = outcome.match_result
+    if (
+        (body.apply_to_gating if body is not None else True)
+        and outcome.accepted
+        and result is not None
+        and result.candidate_visitor_id is not None
+    ):
+        context = controller.apply_identity_match(result)
+        _update_visitor_identity_metadata(
+            request.app.state.conn,
+            result.candidate_visitor_id,
+            {
+                "latest_match": result.to_public_dict(),
+                "confirmation_state": context.get("confirmation_state", {}),
+            },
+        )
+        request.app.state.conn.commit()
+        if context.get("session_decision") == SessionDecision.VISITOR_BOUND.value:
+            await _bind_current_visitor_from_identity(request, context["primary_visitor_id"])
+        identity_status_payload = controller.status()
+
+    return {
+        "face_identity": manager.status(),
+        "capture": outcome.to_public_dict(),
+        "identity": identity_status_payload,
+    }
+
+
+def _face_capture_intent_allowed(identity_status: dict[str, Any]) -> bool:
+    status = identity_status.get("status") if isinstance(identity_status, dict) else None
+    if not isinstance(status, dict):
+        return False
+    return (
+        status.get("intent_status") == "confirmed_by_input"
+        or status.get("runtime_state") in {"in_dialogue", "identity_confirming", "interrupted"}
+    )
+
+
+@router.post("/api/v1/identity/face/enroll")
+async def identity_face_enroll(body: FaceEnrollRequest, request: Request):
+    visitor_id = _blank_to_none(body.visitor_id)
+    if visitor_id is None:
+        raise HTTPException(status_code=400, detail="visitor_id is required")
+    row = request.app.state.conn.execute(
+        "SELECT id FROM visitor_profiles WHERE id = ?",
+        (visitor_id,),
+    ).fetchone()
+    if row is None:
+        raise HTTPException(status_code=404, detail="visitor not found")
+    manager = _face_identity_manager(request)
+    try:
+        signature = manager.enroll_pending(visitor_id)
+    except FaceIdentityError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    _append_visitor_identity_signature(request.app.state.conn, visitor_id, signature)
+    request.app.state.conn.commit()
+    return {
+        "face_identity": manager.status(),
+        "signature": signature.to_public_dict(),
+        "visitor": _current_visitor_payload(
+            request,
+            getattr(request.app.state, "visitor_id", None),
+        ),
+    }
 
 
 @router.get("/api/v1/vision/status")

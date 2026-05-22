@@ -226,3 +226,4 @@ def test_vision_manager_processes_browser_frame(monkeypatch, tmp_path):
     metadata, jpeg = manager.stream_snapshot()
     assert metadata["source"] == "browser"
     assert jpeg == b"annotated-jpeg"
+    assert manager.latest_frame_jpeg() == b"annotated-jpeg"
