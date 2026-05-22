@@ -46,9 +46,10 @@ class ShopkeeperReplyService:
 
     def build_prompt(self, context: dict[str, Any]) -> str:
         """Build a safe future-LLM prompt without internal allocation logic."""
+        response_language = _response_language(context)
         safe_context = {
             "stage": context.get("stage"),
-            "response_language": _response_language(context),
+            "response_language": response_language,
             "participant_status": context.get("participant_status"),
             "next_action": context.get("next_action"),
             "answered_count": context.get("answered_count"),
@@ -60,7 +61,7 @@ class ShopkeeperReplyService:
             "assignment_present": bool(context.get("assignment")),
             "assigned_food_text": _assignment_food_text_for(
                 context.get("assignment"),
-                _response_language(context),
+                response_language,
             ),
             "chat_mode": context.get("chat_mode"),
             "food_gate_result": context.get("food_gate_result"),
@@ -81,7 +82,7 @@ class ShopkeeperReplyService:
             "如果 should_return_to_formal_question_now 为 true，才把话明确带回当前正式题。"
             "不要主动提出新的正式问题，除非 current_question_text 或 Food Gate 正在要求你问。"
             "如果 assigned_food_text 有值，只能照这个系统结果说，不许发明菜单。"
-            "可说出的出餐结果只限：汤 / Soup、沙拉 / Salad、艾苗汤 / Ai Miao soup、艾苗沙拉 / Ai Miao salad。"
+            f"{_assignment_result_instruction(response_language)}"
             "不要解释内部资料，不要替观众作答，不要生成新正式题。"
             "只输出店主下一句可被 TTS 朗读的话，不要 JSON、Markdown 或标签。"
             "\n\ncontext="
@@ -193,7 +194,7 @@ class ShopkeeperReplyService:
             return _with_question("第二个问题。", question_text)
         if stage in {"scoring", "farewell"}:
             if assignment_text:
-                return f"两个问题够了，我给你定的是：{assignment_text}。吃完猜猜我为什么给你这个东西？"
+                return f"问题够了，我要分给你：{assignment_text}。吃完你最好猜猜我为什么给你吃这个东西？"
             return "两个问题够了，厨房可以出餐了。"
         if stage == "assigned":
             if assignment_text:
@@ -316,6 +317,12 @@ def _response_language(context: dict[str, Any]) -> str:
     return "en" if context.get("response_language") == "en" else "zh"
 
 
+def _assignment_result_instruction(response_language: str) -> str:
+    if response_language == "en":
+        return "可说出的出餐结果只限：Soup, Salad, Ai Miao soup, Ai Miao salad。"
+    return "可说出的出餐结果只限：汤、沙拉、艾苗汤、艾苗沙拉。"
+
+
 def _clean_text(value: Any) -> str | None:
     if value is None:
         return None
@@ -331,10 +338,10 @@ def _short_echo(text: str, limit: int = 18) -> str:
 
 
 _ASSIGNMENT_FOOD_TEXT = {
-    "soup": "汤 / Soup",
-    "salad": "沙拉 / Salad",
-    "aimiao_soup": "艾苗汤 / Ai Miao soup",
-    "aimiao_salad": "艾苗沙拉 / Ai Miao salad",
+    "soup": "汤",
+    "salad": "沙拉",
+    "aimiao_soup": "艾苗汤",
+    "aimiao_salad": "艾苗沙拉",
 }
 
 _ASSIGNMENT_FOOD_TEXT_EN = {

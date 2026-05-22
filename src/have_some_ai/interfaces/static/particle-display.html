@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Have Some Ai Particle Surface</title>
+<link rel="stylesheet" href="/particle-display-assets/particle-display.css">
+</head>
+<body>
+<main id="particleSurface" class="particle-shell webgl-loading" aria-label="Have Some Ai particle surface">
+  <div class="ambient-field" aria-hidden="true">
+    <div class="fallback-halo"></div>
+    <div class="fallback-halo fallback-halo-wide"></div>
+    <div class="fallback-orb"></div>
+    <div class="fallback-ring"></div>
+    <div class="fallback-ring"></div>
+    <div class="fallback-noise"></div>
+  </div>
+  <div id="particleCanvasHost" class="particle-canvas-host" aria-hidden="true"></div>
+  <section class="particle-text-plane" aria-live="polite">
+    <article id="particleCue" class="particle-cue" hidden>
+      <p id="particleResultLine" class="particle-result-line"></p>
+      <h1 id="particleMainLine" class="particle-main-line"></h1>
+      <div id="particleOptionsLine" class="particle-options-line"></div>
+      <p id="particleSubLine" class="particle-sub-line"></p>
+    </article>
+  </section>
+</main>
+<script src="/particle-display-assets/particle-display.js"></script>
+</body>
+</html>

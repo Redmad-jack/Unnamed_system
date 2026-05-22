@@ -137,8 +137,8 @@ def _provider_capabilities(provider: str, stt_mode: str) -> dict[str, Any]:
                 "DOUBAO_TTS_ENDPOINT",
                 "wss://openspeech.bytedance.com/api/v3/tts/bidirection",
             ),
-            "tts_resource_id": os.getenv("DOUBAO_TTS_RESOURCE_ID", "seed-tts-2.0"),
-            "speaker": "zh_female_yingyujiaoxue_uranus_bigtts",
+            "tts_resource_id": os.getenv("DOUBAO_TTS_RESOURCE_ID", "seed-icl-2.0"),
+            "speaker": "S_ud9II0522",
         }
     return {}
 

@@ -262,8 +262,8 @@ def test_tts_start_session_payload_fixes_speaker_and_resource_id():
     session_len = int.from_bytes(frame[offset:offset + 4], "big")
     offset += 4
     assert session_len == len("session-long-id".encode("utf-8"))
-    assert DoubaoTTSConfig(api_key="tts-key").resource_id == "seed-tts-2.0"
-    assert payload["req_params"]["speaker"] == "zh_female_yingyujiaoxue_uranus_bigtts"
+    assert DoubaoTTSConfig(api_key="tts-key").resource_id == "seed-icl-2.0"
+    assert payload["req_params"]["speaker"] == "S_ud9II0522"
     assert payload["req_params"]["audio_params"]["format"] == "pcm"
     assert payload["req_params"]["audio_params"]["sample_rate"] == 24000
     assert payload["req_params"]["text"] == ""
@@ -275,7 +275,7 @@ def test_tts_headers_use_new_console_api_key_auth():
     headers = client.headers()
 
     assert headers["X-Api-Key"] == "tenant-api-key"
-    assert headers["X-Api-Resource-Id"] == "seed-tts-2.0"
+    assert headers["X-Api-Resource-Id"] == "seed-icl-2.0"
     assert headers["X-Api-Connect-Id"] == client.connect_id
     assert "X-Api-App-Id" not in headers
     assert "X-Api-App-Key" not in headers

@@ -337,7 +337,7 @@ HAVE_SOME_AI_RUBRIC_CONFIDENCE_THRESHOLD=0.55
 浏览器端会读取 `/api/v1/voice-config`：`aihubmix + file` 使用 MediaRecorder 录音并上传真实
 `mime_type`；`doubao + asr_tts_stream` 使用本地 `/conversation-stream` WebSocket。浏览器发送 binary PCM16 16k mono 音频块，后端聚合约 200ms 后送 Doubao ASR `bigmodel_async`；只消费新增 `definite=true` 分句。
 
-豆包模式下所有店主可听见回复都通过 Doubao TTS V3 `tts/bidirection` 播放，固定音色 `zh_female_yingyujiaoxue_uranus_bigtts`。TTS 输出 PCM16 24k mono；播放期间前后端 half-duplex 暂停 ASR 上行，避免把店主自己的声音识别成用户回答。豆包只负责 ASR/TTS，不闲聊、不判题、不打分、不分配食物。
+豆包模式下所有店主可听见回复都通过 Doubao TTS V3 `tts/bidirection` 播放，使用声音复刻资源 `seed-icl-2.0` 和固定艾苗音色 `S_ud9II0522`。TTS 输出 PCM16 24k mono；播放期间前后端 half-duplex 暂停 ASR 上行，避免把店主自己的声音识别成用户回答。豆包只负责 ASR/TTS，不闲聊、不判题、不打分、不分配食物。
 
 当前豆包 split 状态：
 
@@ -356,7 +356,7 @@ DOUBAO_API_KEY=your_volcengine_api_key_here
 DOUBAO_ASR_ENDPOINT=wss://openspeech.bytedance.com/api/v3/sauc/bigmodel_async
 DOUBAO_ASR_RESOURCE_ID=volc.seedasr.sauc.duration
 DOUBAO_TTS_ENDPOINT=wss://openspeech.bytedance.com/api/v3/tts/bidirection
-DOUBAO_TTS_RESOURCE_ID=seed-tts-2.0
+DOUBAO_TTS_RESOURCE_ID=seed-icl-2.0
 ```
 
 Claude / Anthropic 配置见下方 Shared Environment。Have Some "Ai" 只在 `FormalTurnRouter` 判定用户正在尝试回答正式 A/B 题时调用 Claude judge。chitchat、侧问、评论、unclear_speech 和 noise 都不进入 Claude judge，也不保存正式答案；chitchat 的前 1-2 回合可在话术层调用 Claude 生成 `reply_text`。

@@ -190,12 +190,27 @@ Exhibition System: Have Some "Ai"
 - [x] AI 店主运行语境注入机制（2026-05-11）：新增 `backend/prompts/shopkeeper_runtime_context.md` 和缓存 loader；仅注入 `ShopkeeperReplyService` 的自由闲聊 Claude prompt，`conversation-turn` / `conversation-audio` / `conversation-stream` 通过同一 Orchestrator 受益；Claude rubric、`ScoringEngine`、food assignment 和 `meal_*` 落库逻辑保持隔离。运行语境正文待用户提供后填入 prompt 文件；完整验证 `pytest` 302 passed
 - [x] Language Gate 开场语调整（2026-05-12）：豆包/店主固定开场语改为 `Hi. 你好～ Do you want to talk in 中文 or English?`；同步控制页、展示页 greeting 检测、README、结构文档和测试断言；完整验证 `pytest` 303 passed
 - [x] 正式题跑题口述闲聊修复（2026-05-17）：`FormalTurnRouter` 在默认进入 Claude A/B judge 前新增明显跑题实质句识别；正式题期间和当前题目无关的口述先进入 `chitchat`，不写 `meal_answers`、不调用 rubric、第 3 句仍按本地规则拉回当前题；完整验证 `pytest` 310 passed，`/display` 禁止入口扫描无命中，`index.html` / `display.html` HTML 解析通过
+- [x] `/display` 文本框溢出修复（2026-05-17）：展示页核心文本卡片不再固定死高度，新增 max-height 和 overflow containment；字幕、题目、选项、结果、错误态字号统一按原视觉约 70% 缩小；验证 `test_have_some_ai_api.py` 43 passed，`/display` 禁止入口扫描无命中，`/` 与 `/display` HTTP 200
+- [x] `/display` 不可见细节动画删减（2026-05-17）：移除 `system_speaking` 的嘴部开合 DOM/CSS/JS、双手撕扯姿态、膜面压痕和压力 timer；保留 `greeting_wave` 挥手、idle/audience 呼吸、膜层轻微波动和只读展示边界；验证 `test_have_some_ai_api.py` 43 passed，`/display` 禁止入口扫描无命中
+- [x] `/display` system_speaking 假走路（2026-05-17）：AI 说话态新增一次性 fake-walk，使用 CSS 变量组合位移、轻微上下起伏、翻身和手脚低幅度摆动；`greeting_wave` 仍优先于走路，挥手结束后如仍在 system 会重新触发走路；未新增 JS timer、后端状态或 display-state 字段；验证 `test_have_some_ai_api.py` 43 passed，HTML 解析通过，`/display` 禁止入口扫描无命中，`/health` 与 `/display` HTTP 200
+- [x] `/display` 正式题答题后挥手（2026-05-17）：控制页在正式题 accepted 且存在 A/B choice 后触发一次 `greeting_wave`，两道正式题各一次；触发时强制 audience/system 运动先让位，若后续 TTS 开始则在短保持窗口内继续让 greeting 优先，不新增后端状态或 display-state 字段；验证 `test_have_some_ai_api.py` 43 passed，HTML 解析通过，`/display` 禁止入口扫描无命中，`/health` 与 `/display` HTTP 200
+- [x] 艾苗声音复刻音色接入（2026-05-18）：豆包 TTS 改为声音复刻资源 `seed-icl-2.0` + 固定 speaker `S_ud9II0522`；`.env`、`.env.example`、README、`docs/HAVE_SOME_AI_STRUCTURE.md`、`docs/TECH_STACK.md` 与测试合同已同步；验证 `test_have_some_ai_voice.py` + `test_have_some_ai_api.py` 共 62 passed，真实 TTS WebSocket 调用返回 98,682 bytes PCM 并生成 `/private/tmp/aimiao_tts_test.wav`
+- [x] 出餐食物名语言收口（2026-05-21）：`ShopkeeperReplyService` 的中文出餐话术只说中文食物名，English session 只说 English food names；同步 prompt 约束、结构文档与测试合同；验证 `test_have_some_ai_chat.py` + `test_have_some_ai_conversation.py` 共 35 passed
+- [x] 独立 Three.js 粒子展示页（2026-05-21）：新增只读 `/particle-display` 和白名单 `/particle-display-assets/*`；复用本地 `three.module.js`，参考“陌生人”粒子球、外层环绕粒子、shell flow、CanvasTexture 光晕和 WebGL fallback；颜色固定为绿色系，运动只映射现有 `display-state` 的系统说话信号；未修改 `/display` 或控制页。验证 `pytest` 315 passed，本地 `/`、`/display`、`/particle-display` HTTP 200，Chrome CDP 桌面/移动 canvas 像素检查通过，speaking 帧差显著高于静默帧差
+- [x] `/particle-display` 视觉强化（2026-05-21）：中心粒子球放大增亮，新增大尺度倾斜星环粒子层；speaking 轮询降至 250ms，并修正 `speakingHold` 初始误触发，系统说话结束后保留 1200ms 动势；静默态保持低速低扰动，speaking 时立即提升光晕、尖刺、burst 和星环速度。验证 `pytest` 315 passed，粒子页禁止入口扫描无命中，Chrome CDP 确认 `webgl-ready` / `speakingSeen=true`，最终帧差静默约 0.82、speaking 约 11.59，绿色通道保持主导
+- [x] 粒子页真实 TTS speaking 响应修正（2026-05-21）：确认粒子页人工切换 `display-state` 会响应，实际问题在控制页收到豆包 `mic.resumed_after_tts` 后过早把展示状态切回非 speaking；改为按 `doubaoQueuedPlaybackMs() + 300ms` 推迟展示回落，并延后 audience resume，保证浏览器仍在播放系统语音时 `/particle-display` 继续看到 speaking 信号。验证 `test_have_some_ai_api.py` 47 passed、完整 `pytest` 315 passed、控制页内联脚本语法检查通过、粒子页禁止入口扫描无命中
+- [x] 粒子页真实控制页 TTS 验收修正（2026-05-22）：用控制页真实创建 participant 并走 `/conversation-stream` 验收，确认豆包 TTS WebSocket 有音频帧但异步 conversation 刷新会把 `display-state` 从 speaking 覆盖回普通 question；控制页现在在 `doubaoMicMutedForTts` 期间保持 `robot_speaking` / `avatar_system_speaking`，粒子页无需接入语音链路。验证控制页真实 TTS 收到 `mic.muted_for_tts`、`mic.resumed_after_tts` 和 16 个二进制音频帧，粒子 speaking 帧差约 6.44，绿色通道保持主导
+- [x] `/particle-display` 说话态大形变（2026-05-22）：将核心粒子球 speaking 动画从细密规则尖刺改为大块非规则塌陷/外扩；宏观半径约束为最低 `2/3R`、最高 `5/3R`，由多组随机方向 lobe 和宽频噪声驱动，细刺只保留为表面质感。验证 `test_have_some_ai_api.py` 48 passed，粒子脚本语法检查通过，Chrome CDP 截图确认 speaking 帧差约 13.03、静默约 0.85，绿色通道保持主导
+- [x] `/particle-display` speaking 降噪与星环固定（2026-05-22）：说话态不再提高粒子尺寸、亮度、glow、opacity、外层粒子速度或星环亮度；周围粒子和 shell flow 基本保持静默质感；`outerHaloGroup` 固定为水平星环，只保留环内粒子流动；核心大形变速度约减半，继续保持 `2/3R` 到 `5/3R` 的非规则形变范围。验证 `test_have_some_ai_api.py` 48 passed、完整 `pytest` 316 passed、粒子脚本语法检查通过，Chrome CDP 确认 speaking 可见高度从 359px 增至 552px，可见粒子量仅约 +3.5%，绿色通道保持主导
+- [x] `/particle-display` 纯文字展示层（2026-05-22）：将 `/display` 的观众可见文字渲染迁到粒子页：同样读取 `display-state`，支持唤醒文案、题目/选项和最终出餐结果；复用 `/display` 的文字位置和字号尺度，但改为白色纯文字，不带玻璃卡片、边框、装饰图或背景效果。验证 `test_have_some_ai_api.py` 49 passed、完整 `pytest` 317 passed、粒子脚本语法检查通过、禁止入口/敏感文案扫描无命中，Chrome headless DOM 验证 idle/question/result 三种状态文字拆分正确
+- [x] 实体按钮触发 New（2026-05-22）：新增 Arduino Nano 33 BLE Rev2 最小串口固件，按下 D2 按钮输出 `NEW`；控制页通过 Web Serial 监听 `NEW` 后复用现有 `newParticipant()`，创建 `Participant.public_code`，不新增后端业务入口、不修改 `/display`、不碰 `ConversationOrchestrator`、评分或食物分配。验证 `test_have_some_ai_api.py` + `test_have_some_ai_service.py` 共 57 passed，完整 `pytest` 316 passed
+- [x] 正式题闲聊泛词误判修补（2026-05-22）：确认 2026-05-17 的正式题跑题闲聊修复已在本地 `v1.0-have-some-ai`，但本地分支比 `origin/v1.0-have-some-ai` 领先 1 个提交；本次进一步收紧 `FormalTurnRouter`，避免“有/没有/yes/no”在长闲聊句中被当作正式选项语义，补充 AI 是非题场景回归测试。验证 `test_have_some_ai_conversation.py` 24 passed、完整 `pytest` 318 passed，路由脚本确认“旁边那个机器声音有点怪 / 我现在有点紧张 / 这个问题有点奇怪 / 我不想回答这个问题”进入 `chitchat`，“我没有向 ai 道过歉”仍为 `answer_attempt`
 
 ### 进行中（Work 2）
 
 - 语音层真实端到端联调：AIHubMix file-STT 已保留；豆包主链路已改为 ASR/TTS 分离 WebSocket，仍需用真实火山凭证和浏览器麦克风确认 ASR definite 分句、Claude judge、TTS PCM 播放、barge-in 和完整答题流程
 - 本地 8010 服务当前未监听；如需重新测试，运行 `./.venv/bin/python scripts/start_have_some_ai.py --port 8010`，再用 `lsof`、`/health`、`/api/v1/voice-config` 确认服务可达
-- 最近完整测试套件：`310 passed`
+- 最近完整测试套件：`318 passed`
 
 ### 下一步（Work 2）
 

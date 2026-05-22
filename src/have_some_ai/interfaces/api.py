@@ -289,6 +289,14 @@ async def display_page():
     return FileResponse(str(html_path), media_type="text/html")
 
 
+@app.get("/particle-display", include_in_schema=False)
+async def particle_display_page():
+    html_path = _static_dir() / "particle-display.html"
+    if not html_path.exists():
+        raise HTTPException(status_code=404, detail="Particle display page not found")
+    return FileResponse(str(html_path), media_type="text/html")
+
+
 @app.get("/display-assets/{filename}", include_in_schema=False)
 async def display_asset(filename: str):
     allowed_assets = {"avatar-film-texture.png", "avatar-film-overlay.png", "amhand.png"}
@@ -298,6 +306,21 @@ async def display_asset(filename: str):
     if not asset_path.exists():
         raise HTTPException(status_code=404, detail="Display asset not found")
     return FileResponse(str(asset_path), media_type="image/png")
+
+
+@app.get("/particle-display-assets/{asset_path:path}", include_in_schema=False)
+async def particle_display_asset(asset_path: str):
+    allowed_assets = {
+        "particle-display.css",
+        "particle-display.js",
+        "vendor/three.module.js",
+    }
+    if asset_path not in allowed_assets:
+        raise HTTPException(status_code=404, detail="Particle display asset not found")
+    file_path = _static_dir() / asset_path
+    if not file_path.exists():
+        raise HTTPException(status_code=404, detail="Particle display asset not found")
+    return FileResponse(str(file_path))
 
 
 @app.get("/health")

@@ -241,6 +241,8 @@
   <h1>Have Some "Ai"</h1>
   <span id="health" class="badge">connecting</span>
   <span id="voiceState" class="pill">voice idle</span>
+  <button id="hardwareButtonConnectBtn" onclick="connectHardwareButton()">Connect Button</button>
+  <span id="hardwareButtonState" class="pill">button disconnected</span>
   <span class="pill">AI-generated voice / AI 生成语音</span>
 </header>
 
@@ -249,7 +251,7 @@
     <section class="band">
       <div class="band-title">
         <span>Participant / 观众</span>
-        <button class="primary" onclick="newParticipant()">New</button>
+        <button id="newParticipantBtn" class="primary" onclick="newParticipant()">New</button>
       </div>
       <div class="band-body">
         <div class="grid-2">
@@ -393,9 +395,18 @@ let doubaoMicMutedForTts = false;
 let doubaoOutputSampleRate = 24000;
 let currentTtsDisplayText = '';
 let displaySpeechFallbackTimer = null;
+let displayAfterSpeechTimer = null;
+let displayAudienceResumeTimer = null;
 let displayAudienceSpeaking = false;
 let displayAudienceSpeakingTimer = null;
 let displayStandbyTimer = null;
+let displayFormalAnswerGreetingUntil = 0;
+let hardwareButtonPort = null;
+let hardwareButtonReader = null;
+let hardwareButtonBuffer = '';
+let hardwareButtonReadLoopActive = false;
+let hardwareButtonNewInProgress = false;
+let hardwareButtonLastTriggerAt = 0;
 
 const VAD = {
   calibrationMs: 600,
@@ -416,8 +427,14 @@ const DOUBAO_STREAM = {
 const DISPLAY_SPEECH_FALLBACK_MS = 20000;
 const DISPLAY_AUDIENCE_SPEECH_HOLD_MS = 1200;
 const DISPLAY_RESULT_HOLD_MS = 8000;
+const DISPLAY_FORMAL_ANSWER_GREETING_MS = 2300;
 const DISPLAY_WAKE_TEXT = '按按钮叫醒我\nPress the button to wake me';
 const DISPLAY_AVATAR_DEBUG = new URLSearchParams(window.location.search).has('avatarDebug');
+const HARDWARE_BUTTON = {
+  baudRate: 115200,
+  newCommand: 'NEW',
+  triggerCooldownMs: 1200,
+};
 
 const foodZh = {
   soup: '汤',
@@ -438,6 +455,182 @@ async function api(path, options = {}) {
     throw new Error(body.detail || response.statusText);
   }
   return response.json();
+}
+
+function setHardwareButtonState(text, tone = 'dim') {
+  const state = document.getElementById('hardwareButtonState');
+  if (!state) return;
+  state.textContent = text;
+  const colors = {
+    dim: 'var(--dim)',
+    green: 'var(--green)',
+    red: 'var(--red)',
+    gold: 'var(--gold)',
+  };
+  state.style.color = colors[tone] || colors.dim;
+}
+
+function updateHardwareButtonControls() {
+  const connectBtn = document.getElementById('hardwareButtonConnectBtn');
+  if (!connectBtn) return;
+  if (!('serial' in navigator)) {
+    connectBtn.disabled = true;
+    connectBtn.textContent = 'No Serial';
+    return;
+  }
+  connectBtn.disabled = Boolean(hardwareButtonPort);
+  connectBtn.textContent = hardwareButtonPort ? 'Button Connected' : 'Connect Button';
+}
+
+function initializeHardwareButtonControls() {
+  updateHardwareButtonControls();
+  if (!('serial' in navigator)) {
+    setHardwareButtonState('serial unsupported', 'dim');
+    console.info('hardware button serial unavailable: Web Serial is not supported');
+    return;
+  }
+  setHardwareButtonState('button disconnected', 'dim');
+  navigator.serial.addEventListener('disconnect', (event) => {
+    const disconnectedPort = event.port || event.target;
+    if (disconnectedPort === hardwareButtonPort) {
+      console.info('hardware button serial disconnected');
+      closeHardwareButtonPort('button disconnected');
+    }
+  });
+}
+
+async function connectHardwareButton() {
+  if (!('serial' in navigator)) {
+    setHardwareButtonState('serial unsupported', 'dim');
+    console.info('hardware button serial unavailable: Web Serial is not supported');
+    return;
+  }
+  if (hardwareButtonPort) {
+    setHardwareButtonState('button connected', 'green');
+    return;
+  }
+
+  unlockDoubaoPlaybackForGesture();
+  setHardwareButtonState('selecting button', 'gold');
+  try {
+    const port = await navigator.serial.requestPort();
+    await port.open({ baudRate: HARDWARE_BUTTON.baudRate });
+    hardwareButtonPort = port;
+    hardwareButtonReadLoopActive = true;
+    hardwareButtonBuffer = '';
+    setHardwareButtonState('button connected', 'green');
+    updateHardwareButtonControls();
+    console.info('hardware button serial connected', {
+      baudRate: HARDWARE_BUTTON.baudRate,
+    });
+    readHardwareButtonLoop(port);
+  } catch (error) {
+    hardwareButtonPort = null;
+    hardwareButtonReadLoopActive = false;
+    setHardwareButtonState('button unavailable', 'red');
+    updateHardwareButtonControls();
+    console.error('hardware button serial connection failed', error);
+  }
+}
+
+async function readHardwareButtonLoop(port) {
+  const decoder = new TextDecoder();
+  try {
+    while (port.readable && hardwareButtonReadLoopActive) {
+      hardwareButtonReader = port.readable.getReader();
+      try {
+        while (hardwareButtonReadLoopActive) {
+          const { value, done } = await hardwareButtonReader.read();
+          if (done) break;
+          if (value) {
+            readHardwareButtonText(decoder.decode(value, { stream: true }));
+          }
+        }
+      } finally {
+        hardwareButtonReader.releaseLock();
+        hardwareButtonReader = null;
+      }
+    }
+  } catch (error) {
+    if (hardwareButtonReadLoopActive) {
+      console.error('hardware button serial read failed', error);
+      setHardwareButtonState('button read failed', 'red');
+    }
+  } finally {
+    if (hardwareButtonPort === port) {
+      await closeHardwareButtonPort('button disconnected');
+    }
+  }
+}
+
+function readHardwareButtonText(text) {
+  hardwareButtonBuffer += text;
+  const lines = hardwareButtonBuffer.split(/\r?\n/);
+  hardwareButtonBuffer = lines.pop() || '';
+  if (hardwareButtonBuffer.length > 160) {
+    hardwareButtonBuffer = hardwareButtonBuffer.slice(-160);
+  }
+  for (const line of lines) {
+    handleHardwareButtonLine(line);
+  }
+}
+
+function handleHardwareButtonLine(rawLine) {
+  const line = String(rawLine || '').trim();
+  if (!line) return;
+  console.info('hardware button serial line', { line });
+  if (line === HARDWARE_BUTTON.newCommand) {
+    triggerHardwareNewParticipant(line);
+    return;
+  }
+  if (line.startsWith('READY')) {
+    setHardwareButtonState('button ready', 'green');
+  }
+}
+
+async function triggerHardwareNewParticipant(command) {
+  const now = Date.now();
+  if (hardwareButtonNewInProgress || now - hardwareButtonLastTriggerAt < HARDWARE_BUTTON.triggerCooldownMs) {
+    console.info('hardware button trigger ignored', {
+      command,
+      inProgress: hardwareButtonNewInProgress,
+    });
+    return;
+  }
+
+  hardwareButtonLastTriggerAt = now;
+  hardwareButtonNewInProgress = true;
+  setHardwareButtonState('button pressed', 'gold');
+  console.info('hardware button trigger: calling existing newParticipant()', { command });
+  try {
+    await newParticipant();
+    setHardwareButtonState(
+      currentParticipant?.public_code
+        ? `created ${currentParticipant.public_code}`
+        : 'participant created',
+      'green',
+    );
+  } catch (error) {
+    setHardwareButtonState('button trigger failed', 'red');
+    console.error('hardware button new participant failed', error);
+  } finally {
+    hardwareButtonNewInProgress = false;
+  }
+}
+
+async function closeHardwareButtonPort(stateText = 'button disconnected') {
+  hardwareButtonReadLoopActive = false;
+  const port = hardwareButtonPort;
+  hardwareButtonPort = null;
+  hardwareButtonBuffer = '';
+  if (hardwareButtonReader) {
+    try { await hardwareButtonReader.cancel(); } catch {}
+  }
+  if (port) {
+    try { await port.close(); } catch {}
+  }
+  setHardwareButtonState(stateText, 'dim');
+  updateHardwareButtonControls();
 }
 
 const DISPLAY_FIELDS = [
@@ -501,13 +694,14 @@ function createDisplayAvatarStateAdapter() {
 
   function withDisplayAvatarState(payload, signals = {}) {
     const isGreetingLanguageSelect = signals.isGreetingLanguageSelect ?? isGreetingDisplayActive();
+    const isGreeting = signals.isGreeting ?? isGreetingLanguageSelect;
     const isSystemSpeaking = signals.isSystemSpeaking ?? (
       payload.robot_active === true ||
       payload.mode === 'robot_speaking'
     );
     const isAudienceSpeaking = signals.isAudienceSpeaking ?? displayAudienceSpeaking;
     const avatarSignals = {
-      avatar_greeting: isGreetingLanguageSelect,
+      avatar_greeting: isGreeting,
       avatar_system_speaking: isSystemSpeaking,
       avatar_audience_speaking: isAudienceSpeaking && !isSystemSpeaking,
     };
@@ -516,6 +710,7 @@ function createDisplayAvatarStateAdapter() {
       console.debug('display avatar state', {
         state: resolvedState,
         source: signals.source || 'display_sync',
+        isGreeting,
         isGreetingLanguageSelect,
         isSystemSpeaking,
         isAudienceSpeaking,
@@ -562,6 +757,8 @@ function clearDisplayStandbyTimer() {
 
 function syncDisplayStandby() {
   clearDisplaySpeechFallback();
+  clearDisplayAfterSpeechTimer();
+  clearDisplayAudienceResumeTimer();
   clearDisplayAudienceSpeaking();
   clearDisplayStandbyTimer();
   currentTtsDisplayText = '';
@@ -586,6 +783,8 @@ function scheduleDisplayStandby(delayMs = DISPLAY_RESULT_HOLD_MS) {
 
 function syncDisplayIdle() {
   clearDisplaySpeechFallback();
+  clearDisplayAfterSpeechTimer();
+  clearDisplayAudienceResumeTimer();
   clearDisplayAudienceSpeaking();
   clearDisplayStandbyTimer();
   currentTtsDisplayText = '';
@@ -603,7 +802,7 @@ function syncDisplayIdle() {
   }));
 }
 
-function syncDisplayQuestion(robotActive = false) {
+function syncDisplayQuestion(robotActive = false, options = {}) {
   clearDisplayStandbyTimer();
   const questionText = currentDisplayQuestionText();
   if (!questionText) {
@@ -618,13 +817,16 @@ function syncDisplayQuestion(robotActive = false) {
     robot_active: robotActive,
   }, {
     source: robotActive ? 'question_speech' : 'question',
+    isGreeting: options.isGreeting,
     isGreetingLanguageSelect: isGreetingDisplayActive(),
     isSystemSpeaking: robotActive,
     isAudienceSpeaking: displayAudienceSpeaking,
   }));
 }
 
-function syncDisplayRobotSpeaking(text) {
+function syncDisplayRobotSpeaking(text, options = {}) {
+  clearDisplayAfterSpeechTimer();
+  clearDisplayAudienceResumeTimer();
   clearDisplayStandbyTimer();
   const displayText = displaySafeText(text) || currentDisplayQuestionText() || '';
   void updateDisplayState(withDisplayAvatarState({
@@ -635,6 +837,7 @@ function syncDisplayRobotSpeaking(text) {
     robot_active: true,
   }, {
     source: 'system_speaking',
+    isGreeting: options.isGreeting,
     isGreetingLanguageSelect: isGreetingDisplayActive(),
     isSystemSpeaking: true,
     isAudienceSpeaking: false,
@@ -642,6 +845,7 @@ function syncDisplayRobotSpeaking(text) {
 }
 
 function syncDisplayAfterSpeech() {
+  clearDisplayAfterSpeechTimer();
   clearDisplaySpeechFallback();
   currentTtsDisplayText = '';
   if (conversationState?.assignment) {
@@ -677,8 +881,41 @@ function syncDisplayResult(assignment) {
   scheduleDisplayStandby();
 }
 
+function isAcceptedFormalAnswerResult(result) {
+  const answeredCount = Number(result?.answered_count || 0);
+  const totalQuestions = Number(result?.total_questions || 2);
+  return (
+    result?.interpretation?.status === 'accepted' &&
+    Boolean(result?.interpretation?.choice) &&
+    answeredCount > 0 &&
+    answeredCount <= totalQuestions
+  );
+}
+
+function shouldKeepDisplayFormalAnswerGreeting() {
+  return performance.now() < displayFormalAnswerGreetingUntil;
+}
+
+function syncDisplayFormalAnswerGreeting(result) {
+  if (!isAcceptedFormalAnswerResult(result)) return false;
+  displayFormalAnswerGreetingUntil = performance.now() + DISPLAY_FORMAL_ANSWER_GREETING_MS;
+  const systemSpeakingAfterGreeting = Boolean(result?.reply_text && !result?.assignment);
+  void updateDisplayState(withDisplayAvatarState({
+    robot_active: systemSpeakingAfterGreeting,
+  }, {
+    source: `formal_answer_greeting_${result.answered_count}`,
+    isGreeting: true,
+    isGreetingLanguageSelect: false,
+    isSystemSpeaking: systemSpeakingAfterGreeting,
+    isAudienceSpeaking: false,
+  }));
+  return true;
+}
+
 function syncDisplayError() {
   clearDisplaySpeechFallback();
+  clearDisplayAfterSpeechTimer();
+  clearDisplayAudienceResumeTimer();
   clearDisplayStandbyTimer();
   currentTtsDisplayText = '';
   void updateDisplayState(withDisplayAvatarState({
@@ -716,14 +953,24 @@ function currentDisplayQuestionText() {
 }
 
 function syncDisplayTtsStart(text) {
+  clearDisplayAfterSpeechTimer();
+  clearDisplayAudienceResumeTimer();
   clearDisplayAudienceSpeaking();
   currentTtsDisplayText = displaySafeText(text);
-  if (shouldShowQuestionDuringTts()) {
-    syncDisplayQuestion(true);
-  } else {
-    syncDisplayRobotSpeaking(currentTtsDisplayText || conversationState?.reply_text || currentDisplayQuestionText());
-  }
+  syncDisplayCurrentTtsSpeaking();
   scheduleDisplaySpeechFallback();
+}
+
+function syncDisplayCurrentTtsSpeaking() {
+  const keepFormalAnswerGreeting = shouldKeepDisplayFormalAnswerGreeting();
+  if (shouldShowQuestionDuringTts()) {
+    syncDisplayQuestion(true, { isGreeting: keepFormalAnswerGreeting });
+  } else {
+    syncDisplayRobotSpeaking(
+      currentTtsDisplayText || conversationState?.reply_text || currentDisplayQuestionText(),
+      { isGreeting: keepFormalAnswerGreeting },
+    );
+  }
 }
 
 function shouldShowQuestionDuringTts() {
@@ -746,6 +993,44 @@ function clearDisplaySpeechFallback() {
   }
 }
 
+function scheduleDisplayAfterSpeech(delayMs = 0) {
+  clearDisplayAfterSpeechTimer();
+  const ms = Math.max(0, Number(delayMs) || 0);
+  if (ms <= 16) {
+    syncDisplayAfterSpeech();
+    return;
+  }
+  displayAfterSpeechTimer = window.setTimeout(() => {
+    displayAfterSpeechTimer = null;
+    syncDisplayAfterSpeech();
+  }, ms);
+}
+
+function clearDisplayAfterSpeechTimer() {
+  if (displayAfterSpeechTimer) {
+    clearTimeout(displayAfterSpeechTimer);
+    displayAfterSpeechTimer = null;
+  }
+}
+
+function scheduleDisplayAudienceResume(delayMs = 0) {
+  clearDisplayAudienceResumeTimer();
+  const ms = Math.max(0, Number(delayMs) || 0);
+  displayAudienceResumeTimer = window.setTimeout(() => {
+    displayAudienceResumeTimer = null;
+    if (doubaoStreamCaptureActive && !doubaoMicMutedForTts) {
+      setDisplayAudienceSpeaking(true);
+    }
+  }, ms);
+}
+
+function clearDisplayAudienceResumeTimer() {
+  if (displayAudienceResumeTimer) {
+    clearTimeout(displayAudienceResumeTimer);
+    displayAudienceResumeTimer = null;
+  }
+}
+
 function markDisplayAudienceSpeaking(holdMs = DISPLAY_AUDIENCE_SPEECH_HOLD_MS) {
   setDisplayAudienceSpeaking(true);
   if (displayAudienceSpeakingTimer) clearTimeout(displayAudienceSpeakingTimer);
@@ -759,6 +1044,7 @@ function setDisplayAudienceSpeaking(active) {
     clearTimeout(displayAudienceSpeakingTimer);
     displayAudienceSpeakingTimer = null;
   }
+  if (!active) clearDisplayAudienceResumeTimer();
   if (displayAudienceSpeaking === active) return;
   displayAudienceSpeaking = active;
   void updateDisplayState(withDisplayAvatarState({
@@ -1342,8 +1628,9 @@ async function handleDoubaoStreamMessage(event, config) {
   if (payload.type === 'mic.resumed_after_tts') {
     doubaoMicMutedForTts = false;
     setVoiceState('listening');
-    syncDisplayAfterSpeech();
-    if (doubaoStreamCaptureActive) setDisplayAudienceSpeaking(true);
+    const queuedDisplayMs = Math.max(900, doubaoQueuedPlaybackMs() + 300);
+    scheduleDisplayAfterSpeech(queuedDisplayMs);
+    if (doubaoStreamCaptureActive) scheduleDisplayAudienceResume(queuedDisplayMs + 50);
     return;
   }
   if (payload.type === 'tts.error') {
@@ -1436,6 +1723,8 @@ function releaseDoubaoStreamResources(reason = 'user_cancel') {
   clearTimeout(doubaoCloseTimer);
   doubaoCloseTimer = null;
   clearDisplaySpeechFallback();
+  clearDisplayAfterSpeechTimer();
+  clearDisplayAudienceResumeTimer();
   currentTtsDisplayText = '';
   clearDoubaoInterruptResetTimer();
   stopDoubaoPlayback(reason);
@@ -2002,8 +2291,13 @@ async function handleConversationResult(result, options = {}) {
       syncDisplayRobotSpeaking(result.reply_text);
     }
   } else if (!result.assignment) {
-    syncDisplayQuestion();
+    if (deferReplyDisplay && doubaoMicMutedForTts) {
+      syncDisplayCurrentTtsSpeaking();
+    } else {
+      syncDisplayQuestion();
+    }
   }
+  syncDisplayFormalAnswerGreeting(result);
   setVoiceState(`${result.stage} · ${result.answered_count}/${result.total_questions}`);
   if (playReplyAudio && result.reply_audio_base64) {
     await playAudioBase64(
@@ -2187,6 +2481,7 @@ function handleLanguageGateShortcut(event) {
 
 document.addEventListener('keydown', handleLanguageGateShortcut);
 
+initializeHardwareButtonControls();
 syncDisplayStandby();
 pollHealth();
 refreshQueue();

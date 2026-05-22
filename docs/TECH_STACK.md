@@ -167,7 +167,7 @@ Have Some "Ai" 双屏模式中，`/` 控制页承担真实录音、ASR/TTS、状
 | --- | --- |
 | AIHubMix OpenAI-compatible file STT | Have Some "Ai" 语音转文字，默认模型 `whisper-large-v3`，走 `/audio/transcriptions` |
 | OpenAI-compatible TTS | 非豆包 provider 的店主回复 fallback，默认模型 `gpt-4o-mini-tts` |
-| 火山引擎豆包 ASR 2.0 + TTS 2.0 | Have Some "Ai" 后端 WebSocket 分离接入：ASR 使用 `bigmodel_async` 常驻 session，只消费 `definite=true` 分句；TTS 使用 V3 双向流式 `tts/bidirection`，固定 Tina 老师 2.0 音色，输出 PCM 24k；正式 A/B/unclear 判题仍由 Claude rubric judge 执行，chitchat 可由 Claude 话术层生成 `reply_text` |
+| 火山引擎豆包 ASR 2.0 + TTS/ICL 2.0 | Have Some "Ai" 后端 WebSocket 分离接入：ASR 使用 `bigmodel_async` 常驻 session，只消费 `definite=true` 分句；TTS 使用 V3 双向流式 `tts/bidirection`，声音复刻资源 `seed-icl-2.0`，固定艾苗音色 `S_ud9II0522`，输出 PCM 24k；正式 A/B/unclear 判题仍由 Claude rubric judge 执行，chitchat 可由 Claude 话术层生成 `reply_text` |
 | sentence-transformers | Conscious Entity 语义记忆检索（Embedding），当前仍为 deferred，未安装为项目依赖 |
 
 Have Some "Ai" 的 AI 店主运行语境保存在 `backend/prompts/shopkeeper_runtime_context.md`，只作为 `ShopkeeperReplyService` 自由闲聊 system prompt 的附加上下文，不进入正式 A/B rubric、`ScoringEngine`、food assignment 或数据库写入决策。
@@ -254,7 +254,7 @@ DOUBAO_ASR_SAMPLE_RATE=16000
 DOUBAO_ASR_BITS=16
 DOUBAO_ASR_CHANNELS=1
 DOUBAO_TTS_ENDPOINT=wss://openspeech.bytedance.com/api/v3/tts/bidirection
-DOUBAO_TTS_RESOURCE_ID=seed-tts-2.0
+DOUBAO_TTS_RESOURCE_ID=seed-icl-2.0
 DOUBAO_TTS_AUDIO_FORMAT=pcm
 DOUBAO_TTS_SAMPLE_RATE=24000
 DOUBAO_TTS_SPEECH_RATE=0

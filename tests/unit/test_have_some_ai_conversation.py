@@ -280,9 +280,10 @@ def test_two_accepted_answers_assign_aimiao_soup():
         result = orchestrator.handle_turn(participant.id, "我选 A")
 
         assert result["stage"] == "farewell"
-        assert "我给你定的是" in result["reply_text"]
-        assert "吃完猜猜我为什么给你这个东西" in result["reply_text"]
-        assert "艾苗汤 / Ai Miao soup" in result["reply_text"]
+        assert "我要分给你" in result["reply_text"]
+        assert "吃完你最好猜猜我为什么给你吃这个东西" in result["reply_text"]
+        assert "艾苗汤" in result["reply_text"]
+        assert "Ai Miao soup" not in result["reply_text"]
         assert result["answered_count"] == 2
         assert result["next_action"] == "end_session"
         assert result["assignment"]["food_code"] == "aimiao_soup"
@@ -305,7 +306,8 @@ def test_assigned_turn_does_not_change_assignment():
 
         assert assigned["stage"] == "assigned"
         assert "换下一个人吧" in assigned["reply_text"]
-        assert "汤 / Soup" in assigned["reply_text"]
+        assert "汤" in assigned["reply_text"]
+        assert "Soup" not in assigned["reply_text"]
         assert assigned["answered_count"] == 2
         assert assigned["assignment"]["assignment_id"] == ready["assignment"]["assignment_id"]
         assert assigned["assignment"]["food_code"] == ready["assignment"]["food_code"]
@@ -430,6 +432,30 @@ def test_unrelated_formal_speech_enters_chitchat_without_rubric_and_is_limited()
         assert third["current_question_id"] == question["current_question_id"]
         assert repo.get_answers(participant.id) == []
         assert service._rubric_interpreter.calls == []
+    finally:
+        conn.close()
+
+
+def test_formal_chitchat_with_generic_yes_no_words_is_not_answer_attempt():
+    conn, service, orchestrator, repo = _conversation_stack(
+        [RubricInterpretation("A", 0.93, "清楚选择 A。", "Clear A.", "zh", {})],
+        rng_seed=7,
+    )
+    try:
+        participant = service.create_participant()
+        _enter_food_questions(orchestrator, participant.id)
+
+        accepted = orchestrator.handle_turn(participant.id, "我选 A")
+        first = orchestrator.handle_turn(participant.id, "旁边那个机器声音有点怪")
+        second = orchestrator.handle_turn(participant.id, "我现在有点紧张")
+
+        assert accepted["stage"] == "formal_question_2"
+        assert first["stage"] == "formal_question_2"
+        assert first["interpretation"] == {"route": "chitchat", "count": 1}
+        assert first["formal_chitchat_count"] == 1
+        assert second["formal_chitchat_count"] == 2
+        assert len(repo.get_answers(participant.id)) == 1
+        assert len(service._rubric_interpreter.calls) == 1
     finally:
         conn.close()
 

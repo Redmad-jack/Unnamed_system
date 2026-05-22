@@ -61,7 +61,7 @@ config/have_some_ai/
    - `salad`
    - `aimiao_soup`
    - `aimiao_salad`
-12. 店主说出固定出餐话术；中文为“两个问题够了，我给你定的是...”，English 为 “Two questions are enough. I assigned you...”
+12. 店主说出固定出餐话术；中文食物名只说中文，English food names stay English.
 13. 将分配结果写入工作人员队列
 14. 工作人员将队列项更新为 `preparing` 或 `served`
 15. 导出所有 Have Some "Ai" 数据
@@ -166,7 +166,7 @@ DOUBAO_ASR_RESOURCE_ID=volc.seedasr.sauc.duration
 DOUBAO_ASR_ENABLE_NONSTREAM=true
 DOUBAO_ASR_RESULT_TYPE=single
 DOUBAO_TTS_ENDPOINT=wss://openspeech.bytedance.com/api/v3/tts/bidirection
-DOUBAO_TTS_RESOURCE_ID=seed-tts-2.0
+DOUBAO_TTS_RESOURCE_ID=seed-icl-2.0
 DOUBAO_TTS_AUDIO_FORMAT=pcm
 DOUBAO_TTS_SAMPLE_RATE=24000
 ```
@@ -175,7 +175,7 @@ DOUBAO_TTS_SAMPLE_RATE=24000
 
 - `aihubmix + file`：使用 MediaRecorder 录音并上传真实 MIME，默认 `whisper-large-v3`，适合作为稳定 fallback。
 - `doubao + asr_tts_stream`：浏览器通过本地 `/conversation-stream` WebSocket 发送 binary PCM s16le 16k mono 音频块；后端保持一个 ASR `bigmodel_async` session，只消费新增 `utterances[].definite=true` 分句。
-- TTS 使用豆包 V3 双向流式 `/tts/bidirection`，固定音色 `zh_female_yingyujiaoxue_uranus_bigtts`，默认输出 PCM s16le 24k mono。
+- TTS 使用豆包 V3 双向流式 `/tts/bidirection`，使用声音复刻资源 `seed-icl-2.0` 和固定艾苗音色 `S_ud9II0522`，默认输出 PCM s16le 24k mono。
 - 新版控制台鉴权只使用 `X-Api-Key` 和 `X-Api-Resource-Id`；本项目读取共享 `DOUBAO_API_KEY`，或分别读取 `DOUBAO_ASR_API_KEY` / `DOUBAO_TTS_API_KEY` 作为 `X-Api-Key`。
 - TTS session 串行复用连接：每段 Orchestrator 文本 StartSession → TaskRequest → FinishSession，必须等 `SessionFinished=152` 后才开下一段。
 - 播放 TTS 时启用 half-duplex：后端发送 `mic.muted_for_tts` / `mic.resumed_after_tts`，TTS 期间不把麦克风音频继续上行到 ASR，避免店主声音被识别成用户回答。

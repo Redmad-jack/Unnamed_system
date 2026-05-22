@@ -61,7 +61,7 @@ def test_shopkeeper_prompt_excludes_internal_scoring_and_food_code_logic():
     assert "aimiao_soup" not in lowered
     assert "do not leak" not in lowered
     assert "艾苗汤" in prompt
-    assert "Ai Miao soup" in prompt
+    assert "Ai Miao soup" not in prompt
 
 
 def test_shopkeeper_reply_returns_to_required_question_before_two_answers():
@@ -132,7 +132,8 @@ def test_shopkeeper_reply_after_assigned_does_not_reinterpret_result():
     })
 
     assert "换下一个人吧" in result["reply_text"]
-    assert "沙拉 / Salad" in result["reply_text"]
+    assert "沙拉" in result["reply_text"]
+    assert "Salad" not in result["reply_text"]
     assert "因为" not in result["reply_text"]
 
 
@@ -150,9 +151,31 @@ def test_shopkeeper_farewell_uses_system_assignment_only():
         },
     })
 
-    assert "艾苗沙拉 / Ai Miao salad" in result["reply_text"]
+    assert "艾苗沙拉" in result["reply_text"]
+    assert "Ai Miao salad" not in result["reply_text"]
     assert "Some invented label" not in result["reply_text"]
-    assert "吃完猜猜我为什么给你这个东西" in result["reply_text"]
+    assert "吃完你最好猜猜我为什么给你吃这个东西" in result["reply_text"]
+
+
+def test_shopkeeper_farewell_uses_english_assignment_for_english_session():
+    service = ShopkeeperReplyService()
+
+    result = service.generate_reply({
+        "stage": "farewell",
+        "response_language": "en",
+        "participant_status": "assigned",
+        "answered_count": 2,
+        "total_questions": 2,
+        "assignment": {
+            "food_code": "aimiao_salad",
+            "food_label": "Some invented label",
+        },
+    })
+
+    assert "Ai Miao salad" in result["reply_text"]
+    assert "艾苗沙拉" not in result["reply_text"]
+    assert "Some invented label" not in result["reply_text"]
+    assert "I assigned you" in result["reply_text"]
 
 
 def test_shopkeeper_freeform_not_eating_chat_uses_llm_without_echoing_template():

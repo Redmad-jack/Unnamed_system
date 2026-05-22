@@ -76,6 +76,42 @@
     initial-value: -50%;
   }
 
+  @property --presence-motion-y {
+    syntax: "<percentage>";
+    inherits: true;
+    initial-value: 0%;
+  }
+
+  @property --presence-motion-scale {
+    syntax: "<number>";
+    inherits: true;
+    initial-value: 1;
+  }
+
+  @property --walk-x {
+    syntax: "<length-percentage>";
+    inherits: true;
+    initial-value: 0px;
+  }
+
+  @property --walk-y {
+    syntax: "<percentage>";
+    inherits: true;
+    initial-value: 0%;
+  }
+
+  @property --walk-face {
+    syntax: "<number>";
+    inherits: true;
+    initial-value: 1;
+  }
+
+  @property --walk-squash {
+    syntax: "<number>";
+    inherits: true;
+    initial-value: 1;
+  }
+
   html,
   body {
     width: 100%;
@@ -118,22 +154,14 @@
     --head-breath-x: 0%;
     --head-breath-lift: 0%;
     --avatar-head-rotation: 180deg;
-    --mouth-open: 0;
-    --mouth-opacity: 0;
-    --mouth-shadow-opacity: 0.16;
-    --mouth-shift-x: 0%;
-    --mouth-width-scale: 1;
-    --film-press: 0;
-    --left-dent-pressure: 0;
-    --right-dent-pressure: 0;
     --film-tremble-x: 0px;
     --film-tremble-y: 0px;
     --texture-tremble-x: 0px;
     --texture-tremble-y: 0px;
-    --left-dent-x: 43%;
-    --left-dent-y: 54%;
-    --right-dent-x: 57%;
-    --right-dent-y: 54%;
+    --walk-left-x: max(-14vw, -150px);
+    --walk-left-mid-x: max(-7.5vw, -81px);
+    --walk-right-x: min(14vw, 150px);
+    --walk-right-mid-x: min(6vw, 64px);
     transition:
       --silhouette-opacity 320ms ease,
       --silhouette-blur 320ms ease,
@@ -181,10 +209,6 @@
     --stress-opacity: 0.5;
     --stress-scale: 1.08;
     --stress-y: -53%;
-    --left-dent-x: 42%;
-    --left-dent-y: 54%;
-    --right-dent-x: 58%;
-    --right-dent-y: 54%;
   }
 
   .silhouette-stage[data-state="audience_speaking"] {
@@ -338,108 +362,32 @@
       radial-gradient(ellipse at 50% 45%, rgba(247, 255, 249, 0.32), rgba(205, 225, 213, 0.12) 36%, transparent 68%),
       linear-gradient(108deg, transparent 0 46%, rgba(31, 50, 42, 0.1) 47%, rgba(255, 255, 255, 0.12) 48%, transparent 51% 100%);
     filter: blur(12px);
-    opacity: calc(var(--stress-opacity) + var(--film-press) * 0.08);
+    opacity: var(--stress-opacity);
     transition: opacity 260ms ease, transform 260ms ease-out;
     z-index: 5;
   }
 
-  .membrane-dent,
-  .membrane-strain-lines {
-    position: absolute;
-    pointer-events: none;
-    opacity: 0;
-  }
-
-  .membrane-dent {
-    width: clamp(92px, 12vw, 172px);
-    aspect-ratio: 1.45;
-    border-radius: 999px;
-    background:
-      radial-gradient(ellipse at 46% 36%, rgba(255, 255, 255, 0.46), rgba(241, 252, 245, 0.18) 34%, transparent 68%),
-      radial-gradient(ellipse at 56% 64%, rgba(21, 38, 31, 0.18), transparent 62%),
-      linear-gradient(103deg, transparent 0 38%, rgba(255, 255, 255, 0.22) 48%, transparent 62% 100%);
-    box-shadow:
-      inset 0 0 26px rgba(255, 255, 255, 0.16),
-      inset 0 -18px 42px rgba(28, 48, 38, 0.12),
-      0 0 34px rgba(237, 250, 241, 0.16);
-    filter: blur(5px);
-    mix-blend-mode: soft-light;
-    transition: opacity 140ms ease-out, transform 140ms ease-out, filter 140ms ease-out;
-    z-index: 1;
-  }
-
-  .membrane-dent-left {
-    --dent-pressure: var(--left-dent-pressure);
-    left: var(--left-dent-x);
-    top: var(--left-dent-y);
-    opacity: calc(var(--dent-pressure) * 0.56);
-    transform:
-      translate(-50%, -50%)
-      rotate(-8deg)
-      scaleX(calc(0.84 + var(--dent-pressure) * 0.22))
-      scaleY(calc(0.68 + var(--dent-pressure) * 0.26));
-  }
-
-  .membrane-dent-right {
-    --dent-pressure: var(--right-dent-pressure);
-    left: var(--right-dent-x);
-    top: var(--right-dent-y);
-    opacity: calc(var(--dent-pressure) * 0.56);
-    transform:
-      translate(-50%, -50%)
-      rotate(8deg)
-      scaleX(calc(0.84 + var(--dent-pressure) * 0.22))
-      scaleY(calc(0.68 + var(--dent-pressure) * 0.26));
-  }
-
-  .membrane-strain-lines {
-    width: clamp(116px, 16vw, 242px);
-    height: clamp(74px, 9vw, 132px);
-    background:
-      repeating-linear-gradient(
-        99deg,
-        transparent 0 14px,
-        rgba(255, 255, 255, 0.2) 14px 15px,
-        rgba(42, 61, 52, 0.08) 16px 17px,
-        transparent 17px 32px
-      );
-    filter: blur(1.2px);
-    mix-blend-mode: soft-light;
-    -webkit-mask-image: radial-gradient(ellipse at 50% 50%, black 0 56%, transparent 76%);
-    mask-image: radial-gradient(ellipse at 50% 50%, black 0 56%, transparent 76%);
-    transition: opacity 150ms ease-out, transform 150ms ease-out;
-    z-index: 2;
-  }
-
-  .membrane-strain-lines-left {
-    --line-pressure: var(--left-dent-pressure);
-    left: var(--left-dent-x);
-    top: var(--left-dent-y);
-    opacity: calc(var(--line-pressure) * 0.28);
-    transform:
-      translate(-50%, -50%)
-      rotate(-13deg)
-      scaleX(calc(0.86 + var(--line-pressure) * 0.2));
-  }
-
-  .membrane-strain-lines-right {
-    --line-pressure: var(--right-dent-pressure);
-    left: var(--right-dent-x);
-    top: var(--right-dent-y);
-    opacity: calc(var(--line-pressure) * 0.28);
-    transform:
-      translate(-50%, -50%)
-      rotate(13deg)
-      scaleX(calc(0.86 + var(--line-pressure) * 0.2));
-  }
-
   .presence {
+    --presence-motion-y: 0%;
+    --presence-motion-scale: 1;
+    --walk-x: 0px;
+    --walk-y: 0%;
+    --walk-face: 1;
+    --walk-squash: 1;
     position: absolute;
     left: 50%;
     top: 46%;
     width: min(45vw, 620px);
     height: min(64vh, 680px);
-    transform: translate3d(-50%, var(--silhouette-y), 0) scale(var(--silhouette-scale));
+    transform:
+      translate3d(
+        calc(-50% + var(--walk-x)),
+        calc(var(--silhouette-y) + var(--presence-motion-y) + var(--walk-y)),
+        0
+      )
+      scale(calc(var(--silhouette-scale) * var(--presence-motion-scale)))
+      scaleX(var(--walk-face))
+      scaleY(var(--walk-squash));
     opacity: var(--silhouette-opacity);
     filter: blur(var(--silhouette-blur)) saturate(0) contrast(1.08);
     animation: avatar-presence-breathe var(--presence-breath-duration) ease-in-out infinite;
@@ -570,40 +518,6 @@
     transform: rotate(5deg);
   }
 
-  .avatar-mouth-shadow,
-  .avatar-mouth-opening {
-    left: 45.3%;
-    top: 16.5%;
-    width: 9.4%;
-    height: 2.2%;
-    border-radius: 999px;
-    transform-origin: 50% 50%;
-  }
-
-  .avatar-mouth-shadow {
-    background: rgba(17, 29, 24, 0.3);
-    box-shadow: 0 0 18px rgba(14, 28, 22, 0.16);
-    opacity: var(--mouth-shadow-opacity);
-    transform:
-      translate3d(var(--mouth-shift-x), 0, 0)
-      scaleX(var(--mouth-width-scale))
-      scaleY(calc(0.42 + var(--mouth-open) * 0.88));
-    transition: opacity 90ms ease, transform 90ms ease;
-    z-index: 4;
-  }
-
-  .avatar-mouth-opening {
-    background: rgba(9, 18, 15, 0.48);
-    box-shadow: 0 0 24px rgba(6, 18, 14, 0.18);
-    opacity: var(--mouth-opacity);
-    transform:
-      translate3d(var(--mouth-shift-x), 0, 0)
-      scaleX(var(--mouth-width-scale))
-      scaleY(calc(0.38 + var(--mouth-open) * 2.18));
-    transition: opacity 80ms ease, transform 80ms ease;
-    z-index: 5;
-  }
-
   .text-plane {
     position: absolute;
     left: 50%;
@@ -622,13 +536,14 @@
     --cue-decoration-size: clamp(79px, 10.8vw, 151px);
     position: relative;
     width: min(820px, 100%);
-    height: clamp(119px, 12.8vh, 165px);
+    min-height: clamp(119px, 12.8vh, 165px);
+    max-height: min(46vh, 360px);
     padding:
       clamp(22px, 2.8vw, 34px)
       clamp(25px, 3.7vw, 49px)
       clamp(22px, 3vw, 38px)
       clamp(92px, 14.4vw, 169px);
-    overflow: visible;
+    overflow: hidden;
     border: 1px solid rgba(244, 250, 247, 0.48);
     border-radius: clamp(25px, 3.1vw, 43px);
     background:
@@ -658,8 +573,9 @@
     display: flex;
     flex-direction: column;
     justify-content: center;
-    height: 100%;
+    max-height: calc(min(46vh, 360px) - clamp(44px, 5.8vw, 72px));
     min-height: 0;
+    overflow: hidden;
   }
 
   .prompt-cue-card__decoration {
@@ -732,17 +648,17 @@
 
   .result-line {
     display: none;
-    margin-bottom: 12px;
+    margin-bottom: 8px;
     color: rgba(42, 59, 51, 0.62);
-    font-size: clamp(12px, 1.05vw, 16px);
+    font-size: clamp(8.4px, 0.735vw, 11.2px);
     line-height: 1.28;
     font-weight: 430;
   }
 
   .main-line {
     color: rgba(20, 31, 26, 0.92);
-    font-size: clamp(22px, 2.4vw, 38px);
-    line-height: 1.14;
+    font-size: clamp(15.4px, 1.68vw, 26.6px);
+    line-height: 1.16;
     font-weight: 610;
     letter-spacing: 0;
     white-space: pre-line;
@@ -750,11 +666,11 @@
 
   .options-line {
     display: grid;
-    gap: clamp(6px, 0.8vw, 10px);
-    margin-top: clamp(14px, 1.6vw, 22px);
+    gap: clamp(4px, 0.56vw, 7px);
+    margin-top: clamp(10px, 1.12vw, 15px);
     color: rgba(27, 42, 35, 0.78);
-    font-size: clamp(15px, 1.28vw, 21px);
-    line-height: 1.22;
+    font-size: clamp(10.5px, 0.896vw, 14.7px);
+    line-height: 1.24;
     font-weight: 450;
   }
 
@@ -764,21 +680,21 @@
 
   .sub-line {
     display: none;
-    margin-top: 10px;
+    margin-top: 7px;
     color: var(--muted);
-    font-size: clamp(12px, 1.2vw, 18px);
+    font-size: clamp(8.4px, 0.84vw, 12.6px);
     line-height: 1.24;
     font-weight: 390;
   }
 
   .main-line.is-long {
-    font-size: clamp(18px, 1.9vw, 29px);
-    line-height: 1.18;
+    font-size: clamp(12.6px, 1.33vw, 20.3px);
+    line-height: 1.2;
   }
 
   .main-line.is-very-long {
-    font-size: clamp(15px, 1.48vw, 23px);
-    line-height: 1.22;
+    font-size: clamp(10.5px, 1.036vw, 16.1px);
+    line-height: 1.24;
   }
 
   .state-idle .main-line {
@@ -800,7 +716,7 @@
   }
 
   .state-result .main-line {
-    font-size: clamp(28px, 3.2vw, 52px);
+    font-size: clamp(19.6px, 2.24vw, 36.4px);
     line-height: 1;
     font-weight: 650;
   }
@@ -877,82 +793,53 @@
     will-change: transform, opacity;
   }
 
-  .silhouette-stage[data-state="system_speaking"] .avatar-mouth-shadow {
-    opacity: var(--mouth-shadow-opacity);
-  }
-
-  .silhouette-stage[data-state="system_speaking"] .avatar-mouth-opening {
-    opacity: var(--mouth-opacity);
-  }
-
-  .silhouette-stage[data-state="system_speaking"] .avatar-mouth-shadow,
-  .silhouette-stage[data-state="system_speaking"] .avatar-mouth-opening,
   .silhouette-stage[data-state="system_speaking"] .membrane-stress {
     will-change: transform, opacity;
   }
 
-  .silhouette-stage[data-state="system_speaking"] .avatar-upper-arm,
-  .silhouette-stage[data-state="system_speaking"] .avatar-forearm,
-  .silhouette-stage[data-state="system_speaking"] .avatar-hand {
-    opacity: 0.94;
+  .silhouette-stage[data-state="system_speaking"] .presence {
+    animation:
+      avatar-presence-breathe var(--presence-breath-duration) ease-in-out infinite,
+      avatar-system-fake-walk 5.2s cubic-bezier(0.45, 0, 0.18, 1) 1;
   }
 
   .silhouette-stage[data-state="system_speaking"] .avatar-left-upper-arm {
-    top: 32%;
-    left: 34%;
-    transform: rotate(58deg);
+    animation: avatar-system-left-upper-arm-walk 5.2s ease-in-out 1;
   }
 
   .silhouette-stage[data-state="system_speaking"] .avatar-left-forearm {
-    top: 42%;
-    left: 40%;
-    transform: rotate(80deg);
+    animation: avatar-system-left-forearm-walk 5.2s ease-in-out 1;
   }
 
   .silhouette-stage[data-state="system_speaking"] .avatar-left-hand {
-    top: 47%;
-    left: 46%;
-    transform: rotate(18deg) scale(1.12);
-    animation: avatar-tear-left-hand 2.4s ease-in-out infinite;
-    will-change: transform;
+    animation: avatar-system-left-hand-walk 5.2s ease-in-out 1;
   }
 
   .silhouette-stage[data-state="system_speaking"] .avatar-right-upper-arm {
-    top: 32%;
-    right: 34%;
-    transform: rotate(-58deg);
+    animation: avatar-system-right-upper-arm-walk 5.2s ease-in-out 1;
   }
 
   .silhouette-stage[data-state="system_speaking"] .avatar-right-forearm {
-    top: 42%;
-    right: 40%;
-    transform: rotate(-80deg);
+    animation: avatar-system-right-forearm-walk 5.2s ease-in-out 1;
   }
 
   .silhouette-stage[data-state="system_speaking"] .avatar-right-hand {
-    top: 47%;
-    right: 46%;
-    transform: rotate(-18deg) scale(1.12);
-    animation: avatar-tear-right-hand 2.4s ease-in-out infinite;
+    animation: avatar-system-right-hand-walk 5.2s ease-in-out 1;
+  }
+
+  .silhouette-stage[data-state="system_speaking"] .avatar-left-leg {
+    animation: avatar-system-left-leg-step 5.2s ease-in-out 1;
+  }
+
+  .silhouette-stage[data-state="system_speaking"] .avatar-right-leg {
+    animation: avatar-system-right-leg-step 5.2s ease-in-out 1;
+  }
+
+  .silhouette-stage[data-state="system_speaking"] .avatar-upper-arm,
+  .silhouette-stage[data-state="system_speaking"] .avatar-forearm,
+  .silhouette-stage[data-state="system_speaking"] .avatar-hand,
+  .silhouette-stage[data-state="system_speaking"] .avatar-leg {
     will-change: transform;
-  }
-
-  .silhouette-stage[data-state="system_speaking"] .membrane-dent,
-  .silhouette-stage[data-state="system_speaking"] .membrane-strain-lines {
-    will-change: transform, opacity;
-  }
-
-  .silhouette-stage[data-state="audience_speaking"] .avatar-mouth-opening {
-    opacity: 0;
-    transform: scaleY(0.42);
-    animation: none;
-    transition: opacity 40ms linear, transform 40ms linear;
-  }
-
-  .silhouette-stage[data-state="audience_speaking"] .avatar-mouth-shadow {
-    opacity: 0.12;
-    transform: scaleY(0.42);
-    transition: opacity 40ms linear, transform 40ms linear;
   }
 
   .silhouette-stage[data-state="audience_speaking"] .avatar-left-upper-arm {
@@ -1007,7 +894,7 @@
   }
 
   .state-error .main-line {
-    font-size: clamp(17px, 2.3vw, 32px);
+    font-size: clamp(11.9px, 1.61vw, 22.4px);
   }
 
   .avatar-dev-panel {
@@ -1068,10 +955,12 @@
 
   @keyframes avatar-presence-breathe {
     0%, 100% {
-      transform: translate3d(-50%, var(--silhouette-y), 0) scale(calc(var(--silhouette-scale) * var(--presence-breath-min)));
+      --presence-motion-y: 0%;
+      --presence-motion-scale: var(--presence-breath-min);
     }
     50% {
-      transform: translate3d(-50%, calc(var(--silhouette-y) + var(--presence-breath-lift)), 0) scale(calc(var(--silhouette-scale) * var(--presence-breath-max)));
+      --presence-motion-y: var(--presence-breath-lift);
+      --presence-motion-scale: var(--presence-breath-max);
     }
   }
 
@@ -1148,14 +1037,123 @@
     }
   }
 
-  @keyframes avatar-tear-left-hand {
-    0%, 100% { transform: rotate(18deg) translate3d(0, 0, 0) scale(1.12); }
-    50% { transform: rotate(28deg) translate3d(-6%, -4%, 0) scale(1.18); }
+  @keyframes avatar-system-fake-walk {
+    0%, 100% {
+      --walk-x: 0px;
+      --walk-y: 0%;
+      --walk-face: 1;
+      --walk-squash: 1;
+    }
+    12% {
+      --walk-x: var(--walk-left-mid-x);
+      --walk-y: -0.72%;
+      --walk-face: 1;
+      --walk-squash: 1;
+    }
+    24% {
+      --walk-x: var(--walk-left-x);
+      --walk-y: -0.08%;
+      --walk-face: 1;
+      --walk-squash: 1;
+    }
+    28% {
+      --walk-x: var(--walk-left-x);
+      --walk-y: 0.12%;
+      --walk-face: 0.12;
+      --walk-squash: 1.035;
+    }
+    32% {
+      --walk-x: var(--walk-left-x);
+      --walk-y: 0%;
+      --walk-face: -1;
+      --walk-squash: 1;
+    }
+    48% {
+      --walk-x: var(--walk-right-mid-x);
+      --walk-y: -0.82%;
+      --walk-face: -1;
+      --walk-squash: 1;
+    }
+    62% {
+      --walk-x: var(--walk-right-x);
+      --walk-y: -0.06%;
+      --walk-face: -1;
+      --walk-squash: 1;
+    }
+    66% {
+      --walk-x: var(--walk-right-x);
+      --walk-y: 0.1%;
+      --walk-face: -0.12;
+      --walk-squash: 1.035;
+    }
+    70% {
+      --walk-x: var(--walk-right-x);
+      --walk-y: 0%;
+      --walk-face: 1;
+      --walk-squash: 1;
+    }
+    84% {
+      --walk-x: var(--walk-right-mid-x);
+      --walk-y: -0.58%;
+      --walk-face: 1;
+      --walk-squash: 1;
+    }
   }
 
-  @keyframes avatar-tear-right-hand {
-    0%, 100% { transform: rotate(-18deg) translate3d(0, 0, 0) scale(1.12); }
-    50% { transform: rotate(-28deg) translate3d(6%, -4%, 0) scale(1.18); }
+  @keyframes avatar-system-left-upper-arm-walk {
+    0%, 100% { transform: rotate(16deg); }
+    12%, 48%, 84% { transform: rotate(24deg); }
+    24%, 62% { transform: rotate(8deg); }
+    32%, 70% { transform: rotate(18deg); }
+  }
+
+  @keyframes avatar-system-left-forearm-walk {
+    0%, 100% { transform: rotate(4deg); }
+    12%, 48%, 84% { transform: rotate(-8deg); }
+    24%, 62% { transform: rotate(13deg); }
+    32%, 70% { transform: rotate(3deg); }
+  }
+
+  @keyframes avatar-system-left-hand-walk {
+    0%, 100% { transform: rotate(-5deg); }
+    12%, 48%, 84% { transform: rotate(-13deg); }
+    24%, 62% { transform: rotate(7deg); }
+    32%, 70% { transform: rotate(-4deg); }
+  }
+
+  @keyframes avatar-system-right-upper-arm-walk {
+    0%, 100% { transform: rotate(-16deg); }
+    12%, 48%, 84% { transform: rotate(-8deg); }
+    24%, 62% { transform: rotate(-24deg); }
+    32%, 70% { transform: rotate(-18deg); }
+  }
+
+  @keyframes avatar-system-right-forearm-walk {
+    0%, 100% { transform: rotate(-4deg); }
+    12%, 48%, 84% { transform: rotate(-13deg); }
+    24%, 62% { transform: rotate(8deg); }
+    32%, 70% { transform: rotate(-3deg); }
+  }
+
+  @keyframes avatar-system-right-hand-walk {
+    0%, 100% { transform: rotate(5deg); }
+    12%, 48%, 84% { transform: rotate(-7deg); }
+    24%, 62% { transform: rotate(13deg); }
+    32%, 70% { transform: rotate(4deg); }
+  }
+
+  @keyframes avatar-system-left-leg-step {
+    0%, 100% { transform: rotate(3deg); }
+    12%, 48%, 84% { transform: translate3d(2%, -1.1%, 0) rotate(-5deg); }
+    24%, 62% { transform: translate3d(-1%, 0.5%, 0) rotate(8deg); }
+    32%, 70% { transform: rotate(3deg); }
+  }
+
+  @keyframes avatar-system-right-leg-step {
+    0%, 100% { transform: rotate(-3deg); }
+    12%, 48%, 84% { transform: translate3d(1%, 0.5%, 0) rotate(-8deg); }
+    24%, 62% { transform: translate3d(-2%, -1.1%, 0) rotate(5deg); }
+    32%, 70% { transform: rotate(-3deg); }
   }
 
   @media (aspect-ratio < 1 / 1) {
@@ -1163,6 +1161,10 @@
       --film-blur: 12px;
       --film-noise-opacity: 0.16;
       --film-highlight-opacity: 0.28;
+      --walk-left-x: max(-20vw, -100px);
+      --walk-left-mid-x: max(-10.8vw, -54px);
+      --walk-right-x: min(20vw, 100px);
+      --walk-right-mid-x: min(8.4vw, 42px);
     }
 
     .presence {
@@ -1178,7 +1180,8 @@
 
     .prompt-cue-card {
       --cue-decoration-size: clamp(68px, 25.2vw, 112px);
-      height: 112px;
+      min-height: 112px;
+      max-height: min(48vh, 300px);
       padding:
         20px
         clamp(20px, 6.3vw, 31px)
@@ -1255,19 +1258,24 @@
     .silhouette-stage[data-state="greeting_wave"] .avatar-right-hand,
     .silhouette-stage[data-state="greeting_wave"] .avatar-torso,
     .silhouette-stage[data-state="greeting_wave"] .avatar-head,
-    .silhouette-stage[data-state="greeting_wave"] .membrane-stress,
-    .silhouette-stage[data-state="system_speaking"] .avatar-left-hand,
-    .silhouette-stage[data-state="system_speaking"] .avatar-right-hand {
+    .silhouette-stage[data-state="greeting_wave"] .membrane-stress {
       animation-duration: 1ms;
       animation-iteration-count: 1;
     }
 
-    .membrane-stress {
-      filter: blur(8px);
+    .silhouette-stage[data-state="system_speaking"] .presence {
+      animation: avatar-presence-breathe 14s ease-in-out infinite;
     }
 
-    .membrane-dent {
-      filter: blur(4px);
+    .silhouette-stage[data-state="system_speaking"] .avatar-upper-arm,
+    .silhouette-stage[data-state="system_speaking"] .avatar-forearm,
+    .silhouette-stage[data-state="system_speaking"] .avatar-hand,
+    .silhouette-stage[data-state="system_speaking"] .avatar-leg {
+      animation: none;
+    }
+
+    .membrane-stress {
+      filter: blur(8px);
     }
   }
 </style>
@@ -1293,20 +1301,13 @@
           <div class="avatar-part avatar-upper-arm avatar-right-upper-arm"></div>
           <div class="avatar-part avatar-forearm avatar-right-forearm"></div>
           <div class="avatar-part avatar-hand avatar-right-hand"></div>
-          <div class="avatar-part avatar-mouth-shadow"></div>
-          <div class="avatar-part avatar-mouth-opening"></div>
         </div>
       </div>
       <div class="silhouette-layer membrane-main"></div>
       <div class="silhouette-layer membrane-texture"></div>
       <div class="silhouette-layer membrane-texture-overlay"></div>
       <div class="silhouette-layer membrane-surface"></div>
-      <div class="silhouette-layer membrane-stress">
-        <div class="membrane-dent membrane-dent-left"></div>
-        <div class="membrane-dent membrane-dent-right"></div>
-        <div class="membrane-strain-lines membrane-strain-lines-left"></div>
-        <div class="membrane-strain-lines membrane-strain-lines-right"></div>
-      </div>
+      <div class="silhouette-layer membrane-stress"></div>
     </section>
     <section class="text-plane" aria-live="polite">
       <article
@@ -1508,127 +1509,11 @@ function createSilhouetteStage(root) {
   });
   const classes = Object.values(classByState);
   let currentState = null;
-  let mouthTimer = null;
-  let mouthTick = 0;
-  let pressureTimer = null;
-  let pressureReleaseTimer = null;
-  let pressureRunning = false;
-  const reducedMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)');
-
-  function setClosedMouth() {
-    root.style.setProperty('--mouth-open', '0');
-    root.style.setProperty('--mouth-opacity', '0');
-    root.style.setProperty('--mouth-shadow-opacity', '0.14');
-    root.style.setProperty('--mouth-shift-x', '0%');
-    root.style.setProperty('--mouth-width-scale', '1');
-  }
-
-  function setMouthFrame() {
-    mouthTick += 1;
-    const reduced = reducedMotion?.matches === true;
-    // Temporary speech motion; replace these values with real volume input later.
-    const base = mouthTick % 4 === 0 ? 0.16 : 0.04;
-    const open = reduced ? 0.18 : Math.min(0.92, base + Math.random() * 0.78);
-    const opacity = reduced ? 0.2 : 0.18 + open * 0.56;
-    const shadowOpacity = reduced ? 0.22 : 0.2 + open * 0.28;
-    const shift = reduced ? 0 : (Math.random() - 0.5) * 1.8;
-    const width = reduced ? 1 : 0.96 + Math.random() * 0.16;
-    root.style.setProperty('--mouth-open', open.toFixed(2));
-    root.style.setProperty('--mouth-opacity', opacity.toFixed(2));
-    root.style.setProperty('--mouth-shadow-opacity', shadowOpacity.toFixed(2));
-    root.style.setProperty('--mouth-shift-x', `${shift.toFixed(2)}%`);
-    root.style.setProperty('--mouth-width-scale', width.toFixed(2));
-  }
-
-  function startMouthMotion() {
-    if (mouthTimer !== null) return;
-    setMouthFrame();
-    mouthTimer = window.setInterval(setMouthFrame, reducedMotion?.matches === true ? 320 : 160);
-  }
-
-  function stopMouthMotion() {
-    if (mouthTimer !== null) {
-      clearInterval(mouthTimer);
-      mouthTimer = null;
-    }
-    mouthTick = 0;
-    setClosedMouth();
-  }
-
-  function setFilmPressureRest() {
-    root.style.setProperty('--film-press', '0');
-    root.style.setProperty('--left-dent-pressure', '0');
-    root.style.setProperty('--right-dent-pressure', '0');
-    root.style.setProperty('--film-tremble-x', '0px');
-    root.style.setProperty('--film-tremble-y', '0px');
-    root.style.setProperty('--texture-tremble-x', '0px');
-    root.style.setProperty('--texture-tremble-y', '0px');
-  }
-
-  function setFilmPressureFrame() {
-    const reduced = reducedMotion?.matches === true;
-    const intensity = reduced ? 0.18 : 0.42 + Math.random() * 0.42;
-    const pattern = Math.random();
-    const left = pattern < 0.78 ? intensity : intensity * 0.32;
-    const right = pattern > 0.22 ? intensity * (0.82 + Math.random() * 0.18) : intensity * 0.28;
-    const trembleX = reduced ? 0 : (Math.random() - 0.5) * 2.2;
-    const trembleY = reduced ? 0 : (Math.random() - 0.5) * 1.6;
-    const textureTrembleX = trembleX * 0.22;
-    const textureTrembleY = trembleY * 0.22;
-    root.style.setProperty('--film-press', intensity.toFixed(2));
-    root.style.setProperty('--left-dent-pressure', left.toFixed(2));
-    root.style.setProperty('--right-dent-pressure', right.toFixed(2));
-    root.style.setProperty('--film-tremble-x', `${trembleX.toFixed(2)}px`);
-    root.style.setProperty('--film-tremble-y', `${trembleY.toFixed(2)}px`);
-    root.style.setProperty('--texture-tremble-x', `${textureTrembleX.toFixed(2)}px`);
-    root.style.setProperty('--texture-tremble-y', `${textureTrembleY.toFixed(2)}px`);
-    if (pressureReleaseTimer !== null) clearTimeout(pressureReleaseTimer);
-    pressureReleaseTimer = window.setTimeout(() => {
-      pressureReleaseTimer = null;
-      setFilmPressureRest();
-    }, reduced ? 180 : 100 + Math.random() * 200);
-  }
-
-  function scheduleFilmPressure(delayOverride = null) {
-    if (!pressureRunning || pressureTimer !== null) return;
-    const reduced = reducedMotion?.matches === true;
-    const delay = delayOverride ?? (reduced ? 1800 + Math.random() * 1200 : 650 + Math.random() * 1400);
-    pressureTimer = window.setTimeout(() => {
-      pressureTimer = null;
-      if (!pressureRunning) return;
-      setFilmPressureFrame();
-      scheduleFilmPressure();
-    }, delay);
-  }
-
-  function startFilmPressure() {
-    if (pressureRunning) return;
-    pressureRunning = true;
-    setFilmPressureRest();
-    scheduleFilmPressure(reducedMotion?.matches === true ? 520 : 220 + Math.random() * 180);
-  }
-
-  function stopFilmPressure() {
-    pressureRunning = false;
-    if (pressureTimer !== null) {
-      clearTimeout(pressureTimer);
-      pressureTimer = null;
-    }
-    if (pressureReleaseTimer !== null) {
-      clearTimeout(pressureReleaseTimer);
-      pressureReleaseTimer = null;
-    }
-    setFilmPressureRest();
-  }
 
   function update(avatarState, options = {}) {
     const nextState = classByState[avatarState] ? avatarState : AVATAR_STATES.IDLE_BREATHING;
     const restart = options.restart === true;
     if (nextState === currentState && !restart) return nextState;
-    if (nextState !== AVATAR_STATES.SYSTEM_SPEAKING) {
-      stopMouthMotion();
-      stopFilmPressure();
-    }
     root.classList.remove(...classes);
     if (restart) {
       root.dataset.state = 'restarting';
@@ -1636,22 +1521,14 @@ function createSilhouetteStage(root) {
     }
     root.classList.add(classByState[nextState]);
     root.dataset.state = nextState;
-    if (nextState === AVATAR_STATES.SYSTEM_SPEAKING) {
-      startMouthMotion();
-      startFilmPressure();
-    }
     currentState = nextState;
     return nextState;
   }
 
   function destroy() {
-    stopMouthMotion();
-    stopFilmPressure();
     currentState = null;
   }
 
-  setClosedMouth();
-  setFilmPressureRest();
   return { root, update, destroy };
 }
 

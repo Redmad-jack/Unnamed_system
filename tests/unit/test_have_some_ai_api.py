@@ -82,6 +82,26 @@ def test_display_page_returns_html(monkeypatch, tmp_path):
     assert 'id="promptCueCard"' in response.text
 
 
+def test_particle_display_page_returns_html(monkeypatch, tmp_path):
+    monkeypatch.setenv("HAVE_SOME_AI_DB_PATH", str(tmp_path / "meal.db"))
+
+    with TestClient(app) as client:
+        response = client.get("/particle-display")
+
+    assert response.status_code == 200
+    assert "text/html" in response.headers["content-type"]
+    assert 'id="particleSurface"' in response.text
+    assert 'id="particleCanvasHost"' in response.text
+    assert 'id="particleCue"' in response.text
+    assert 'id="particleMainLine"' in response.text
+    assert 'id="particleOptionsLine"' in response.text
+    assert 'id="particleResultLine"' in response.text
+    assert 'id="particleSubLine"' in response.text
+    assert 'class="fallback-halo"' in response.text
+    assert "/particle-display-assets/particle-display.css" in response.text
+    assert "/particle-display-assets/particle-display.js" in response.text
+
+
 def test_display_asset_serves_avatar_film_texture(monkeypatch, tmp_path):
     monkeypatch.setenv("HAVE_SOME_AI_DB_PATH", str(tmp_path / "meal.db"))
 
@@ -100,6 +120,27 @@ def test_display_asset_serves_avatar_film_texture(monkeypatch, tmp_path):
     assert prompt_decoration.status_code == 200
     assert "image/png" in prompt_decoration.headers["content-type"]
     assert prompt_decoration.content.startswith(b"\x89PNG\r\n\x1a\n")
+    assert missing.status_code == 404
+
+
+def test_particle_display_assets_are_local_and_whitelisted(monkeypatch, tmp_path):
+    monkeypatch.setenv("HAVE_SOME_AI_DB_PATH", str(tmp_path / "meal.db"))
+
+    with TestClient(app) as client:
+        css = client.get("/particle-display-assets/particle-display.css")
+        js = client.get("/particle-display-assets/particle-display.js")
+        three = client.get("/particle-display-assets/vendor/three.module.js")
+        missing = client.get("/particle-display-assets/vendor/react.production.min.js")
+
+    assert css.status_code == 200
+    assert "particle-shell" in css.text
+    assert js.status_code == 200
+    assert "GreenParticleRenderer" in js.text
+    assert "CanvasTexture" in js.text
+    assert "createOuterHalo" in js.text
+    assert "updateOuterHalo" in js.text
+    assert three.status_code == 200
+    assert "WebGLRenderer" in three.text
     assert missing.status_code == 404
 
 
@@ -244,6 +285,142 @@ def test_display_html_does_not_include_control_or_voice_entrypoints():
         assert item not in source
 
 
+def test_particle_display_only_uses_read_only_display_state():
+    paths = [
+        Path("src/have_some_ai/interfaces/static/particle-display.html"),
+        Path("src/have_some_ai/interfaces/static/particle-display.css"),
+        Path("src/have_some_ai/interfaces/static/particle-display.js"),
+    ]
+    source = "\n".join(path.read_text() for path in paths)
+
+    assert 'fetchJSON("/api/v1/display-state")' in source
+    for item in [
+        "getUserMedia",
+        "navigator.mediaDevices",
+        "conversation-stream",
+        "WebSocket",
+        "PATCH",
+        "POST",
+        "PUT",
+        "DELETE",
+        "staff-queue",
+        "/api/v1/participants",
+        "conversation-turn",
+        "/answers",
+        "/assign",
+        "/observations",
+        "/speech",
+        "voice-audio",
+        "conversation-audio",
+        "dashboard",
+        "debug",
+        "prompt",
+        "memory",
+        "database",
+        "queue",
+        "<button",
+    ]:
+        assert item not in source
+
+
+def test_particle_display_maps_speaking_state_without_emotion_palette():
+    source = Path("src/have_some_ai/interfaces/static/particle-display.js").read_text()
+
+    assert "function isSystemSpeaking" in source
+    assert "avatar_system_speaking" in source
+    assert "robot_speaking" in source
+    assert "robot_active" in source
+    assert "SPEAKING_SIGNALS" in source
+    assert "QUIET_SIGNALS" in source
+    assert "const SPEAKING_MIN_RADIUS_SCALE = 2 / 3" in source
+    assert "const SPEAKING_MAX_RADIUS_SCALE = 5 / 3" in source
+    assert "const CORE_SPEECH_TIME_SCALE = 0.5" in source
+    assert "function randomUnitVector" in source
+    assert "createDeformationLobes" in source
+    assert "largeDeformationField" in source
+    assert "function createParticleCue" in source
+    assert "function splitDisplayText" in source
+    assert 'mode !== "question" || lines.length < 2' in source
+    assert 'normalizedMode === "result"' in source
+    assert 'display_text: displayText = ""' in source
+    assert 'food_name: foodName = ""' in source
+    assert 'food_subtitle: foodSubtitle = ""' in source
+    for quiet_locked_signal in [
+        "brightness",
+        "orbitSpeed",
+        "shake",
+        "disorder",
+        "radiusPull",
+        "densityBias",
+        "breathe",
+        "breatheSpeed",
+        "particleSize",
+        "glow",
+        "opacityScale",
+        "haloSpeed",
+        "haloBrightness",
+        "haloSpread",
+        "haloWave",
+        "haloSize",
+    ]:
+        assert f"{quiet_locked_signal}: QUIET_SIGNALS.{quiet_locked_signal}" in source
+    assert "this.displayColor.lerp(this.quietColor, 0.6)" in source
+    assert "this.glowMaterial.opacity = clamp(current.glow * 0.95" in source
+    assert "this.outerHaloGroup.rotation.x = 0;" in source
+    assert "this.outerHaloGroup.rotation.y = 0;" in source
+    assert "this.outerHaloGroup.rotation.z = 0;" in source
+    assert "current.speaking * localBurst" not in source
+    assert "current.speaking * 0.22" not in source
+    assert "current.speaking * 0.026" not in source
+    assert "const POLL_MS = 250" in source
+    assert "const SPEAKING_HOLD_MS = 1200" in source
+    assert "haloSpeed" in source
+    assert "createOuterHalo" in source
+    assert "updateOuterHalo" in source
+    for stranger_emotion in [
+        "desperate",
+        "angry",
+        "confused",
+        "ashamed",
+        "curious",
+        "caring",
+        "positive_opening",
+        "fatigue_level",
+        "EMOTION_COLORS",
+    ]:
+        assert stranger_emotion not in source
+
+
+def test_particle_display_text_overlay_matches_display_text_scale_without_frame():
+    particle_html = Path("src/have_some_ai/interfaces/static/particle-display.html").read_text()
+    particle_css = Path("src/have_some_ai/interfaces/static/particle-display.css").read_text()
+
+    assert 'class="particle-text-plane"' in particle_html
+    assert 'class="particle-cue"' in particle_html
+    assert "bottom: clamp(54px, 8.2vh, 108px)" in particle_css
+    assert "width: min(900px, calc(100vw - 56px))" in particle_css
+    assert "width: min(820px, 100%)" in particle_css
+    assert "font-size: clamp(15.4px, 1.68vw, 26.6px)" in particle_css
+    assert "font-size: clamp(10.5px, 0.896vw, 14.7px)" in particle_css
+    assert "font-size: clamp(19.6px, 2.24vw, 36.4px)" in particle_css
+    assert "color: #fff" in particle_css
+    assert "text-shadow: none" in particle_css
+
+    framed_terms = [
+        "border:",
+        "border-radius",
+        "backdrop-filter",
+        "-webkit-backdrop-filter",
+        "box-shadow",
+        "background:",
+    ]
+    cue_block = particle_css[
+        particle_css.index(".particle-cue {"):particle_css.index(".particle-cue[hidden]")
+    ]
+    for term in framed_terms:
+        assert term not in cue_block
+
+
 def test_display_state_post_does_not_call_business_or_voice_services():
     source = inspect.getsource(have_some_ai_api.update_display_state)
 
@@ -300,6 +477,7 @@ def test_control_page_display_state_sync_uses_single_helper():
     assert "function withDisplayAvatarState" in source
     assert "function resolveDisplayAvatarState" in source
     assert "isGreetingLanguageSelect" in source
+    assert "isGreeting: options.isGreeting" in source
     assert "isSystemSpeaking" in source
     assert "isAudienceSpeaking" in source
     assert "DISPLAY_AVATAR_DEBUG" in source
@@ -308,9 +486,26 @@ def test_control_page_display_state_sync_uses_single_helper():
     assert "syncDisplayResult" in source
     assert "function displayChoiceText" in source
     assert "function syncDisplayTtsStart" in source
+    assert "function syncDisplayCurrentTtsSpeaking" in source
     assert "function shouldShowQuestionDuringTts" in source
     assert "deferReplyDisplay: useDoubaoStream" in source
+    assert "if (deferReplyDisplay && doubaoMicMutedForTts)" in source
     assert "DISPLAY_SPEECH_FALLBACK_MS" in source
+    assert "function scheduleDisplayAfterSpeech" in source
+    assert "function scheduleDisplayAudienceResume" in source
+    assert "const queuedDisplayMs = Math.max(900, doubaoQueuedPlaybackMs() + 300)" in source
+    assert "scheduleDisplayAfterSpeech(queuedDisplayMs)" in source
+    assert "scheduleDisplayAudienceResume(queuedDisplayMs + 50)" in source
+    assert "DISPLAY_FORMAL_ANSWER_GREETING_MS" in source
+    assert "function isAcceptedFormalAnswerResult" in source
+    assert "function syncDisplayFormalAnswerGreeting" in source
+    assert "function shouldKeepDisplayFormalAnswerGreeting" in source
+    assert "result?.interpretation?.status === 'accepted'" in source
+    assert "Boolean(result?.interpretation?.choice)" in source
+    assert "formal_answer_greeting_${result.answered_count}" in source
+    assert "syncDisplayFormalAnswerGreeting(result);" in source
+    assert "const keepFormalAnswerGreeting = shouldKeepDisplayFormalAnswerGreeting();" in source
+    assert "syncDisplayQuestion(true, { isGreeting: keepFormalAnswerGreeting })" in source
     assert "setDisplayAudienceSpeaking(true)" in source
     assert "avatar_greeting" in source
     assert "avatar_system_speaking" in source
@@ -322,6 +517,29 @@ def test_control_page_display_state_sync_uses_single_helper():
     assert "syncDisplayStandby();" in source
     assert "syncDisplayIdle();" in source
     assert "scheduleDisplayStandby();" in source
+
+
+def test_control_page_hardware_button_reuses_new_participant_flow():
+    source = Path("src/have_some_ai/interfaces/static/index.html").read_text()
+    sketch = Path(
+        "hardware/arduino/have_some_ai_new_button/have_some_ai_new_button.ino"
+    ).read_text()
+
+    assert 'id="newParticipantBtn"' in source
+    assert 'id="hardwareButtonConnectBtn"' in source
+    assert 'id="hardwareButtonState"' in source
+    assert "navigator.serial.requestPort()" in source
+    assert "const HARDWARE_BUTTON = {" in source
+    assert "newCommand: 'NEW'" in source
+    assert "function handleHardwareButtonLine" in source
+    assert "function triggerHardwareNewParticipant" in source
+    assert "await newParticipant();" in source
+    assert source.count("fetch('/api/v1/display-state'") == 1
+
+    assert "const int BUTTON_PIN = 2;" in sketch
+    assert "Serial.begin(BAUD_RATE);" in sketch
+    assert 'Serial.println("NEW");' in sketch
+    assert 'Serial.print("READY HAVE_SOME_AI_NEW_BUTTON' in sketch
 
 
 def test_display_html_has_avatar_animation_state_controller():
@@ -356,46 +574,62 @@ def test_display_html_has_avatar_animation_state_controller():
         "avatar-right-upper-arm",
         "avatar-right-forearm",
         "avatar-right-hand",
-        "avatar-mouth-shadow",
-        "avatar-mouth-opening",
         "membrane-texture",
         "membrane-texture-overlay",
-        "membrane-dent-left",
-        "membrane-dent-right",
-        "membrane-strain-lines-left",
-        "membrane-strain-lines-right",
+        "membrane-stress",
     ]:
         assert part in avatar_stage
     assert "avatar-greeting-hand-wave" in source
     assert "avatar-greeting-film-wave" in source
-    assert "avatar-tear-left-hand" in source
+    assert "avatar-system-fake-walk" in source
+    assert 'data-state="system_speaking"] .presence' in source
+    for system_walk_hook in [
+        "--walk-x",
+        "--walk-face",
+        "--presence-motion-y",
+        "avatar-system-left-upper-arm-walk",
+        "avatar-system-right-upper-arm-walk",
+        "avatar-system-left-leg-step",
+        "avatar-system-right-leg-step",
+    ]:
+        assert system_walk_hook in source
     assert "avatar-presence-breathe" in source
     assert "avatar-torso-breathe" in source
     assert "avatar-head-breathe" in source
-    assert '.silhouette-stage[data-state="audience_speaking"] .avatar-mouth-opening' in source
     assert "--presence-breath-duration" in source
     assert "animationend" in source
     assert "greetingReplay" in source
-    assert "--mouth-open" in source
-    assert "function startMouthMotion" in source
-    assert "function stopMouthMotion" in source
-    assert "window.setInterval(setMouthFrame, reducedMotion?.matches === true ? 320 : 160)" in source
-    assert "--film-press" in source
-    assert "--left-dent-pressure" in source
-    assert "function startFilmPressure" in source
-    assert "function stopFilmPressure" in source
-    assert "function setFilmPressureFrame" in source
-    assert "textureTrembleX" in source
-    assert "clearTimeout(pressureTimer)" in source
+    for removed_animation_hook in [
+        "avatar-mouth-shadow",
+        "avatar-mouth-opening",
+        "membrane-dent-left",
+        "membrane-dent-right",
+        "membrane-strain-lines-left",
+        "membrane-strain-lines-right",
+        "avatar-tear-left-hand",
+        "avatar-tear-right-hand",
+        "--mouth-open",
+        "--film-press",
+        "--left-dent-pressure",
+        "function startMouthMotion",
+        "function stopMouthMotion",
+        "function startFilmPressure",
+        "function stopFilmPressure",
+        "function setFilmPressureFrame",
+        "window.setInterval(setMouthFrame",
+        "clearInterval(mouthTimer)",
+        "clearTimeout(pressureTimer)",
+    ]:
+        assert removed_animation_hook not in source
     assert "@property --silhouette-scale" in source
     assert "contain: layout paint" in source
     assert "will-change: transform, opacity" in source
     assert "top 320ms cubic-bezier" in source
     assert "top 280ms cubic-bezier" in source
-    assert "scheduleFilmPressure(reducedMotion?.matches === true ? 520 : 220 + Math.random() * 180)" in source
     assert "root.classList.remove(...classes)" in source
-    assert source.index("stopMouthMotion();") < source.index("root.classList.remove(...classes)")
-    assert source.index("stopFilmPressure();") < source.index("root.classList.remove(...classes)")
+    assert source.index("if (includeGreeting && greetingActive)") < source.index("if (inputs.systemSpeaking)")
+    assert "event.animationName !== 'avatar-greeting-hand-wave'" in source
+    assert "!event.target.classList.contains('avatar-right-hand')" in source
     assert "function startRefreshLoop" in source
     assert "function stopRefreshLoop" in source
     assert "function pauseAvatarRuntime" in source
@@ -414,8 +648,6 @@ def test_display_html_has_avatar_animation_state_controller():
     assert "document.createElement('button')" in source
     assert "latestAvatarBusinessInputs" in source
     assert "latestAvatarAppliedInputs" in source
-    assert "Math.random" in source
-    assert "clearInterval(mouthTimer)" in source
     assert avatar_stage.index("silhouette-glow") < avatar_stage.index("silhouette-body")
     assert avatar_stage.index("silhouette-body") < avatar_stage.index("membrane-main")
     assert avatar_stage.index("membrane-main") < avatar_stage.index("membrane-texture")
@@ -466,7 +698,8 @@ def test_voice_config_exposes_doubao_stream_pcm_fields(monkeypatch, tmp_path):
     assert payload["provider_capabilities"]["credentials_configured"] is True
     assert payload["provider_capabilities"]["asr_credentials_configured"] is True
     assert payload["provider_capabilities"]["tts_credentials_configured"] is True
-    assert payload["provider_capabilities"]["speaker"] == "zh_female_yingyujiaoxue_uranus_bigtts"
+    assert payload["provider_capabilities"]["tts_resource_id"] == "seed-icl-2.0"
+    assert payload["provider_capabilities"]["speaker"] == "S_ud9II0522"
 
 
 def test_voice_config_marks_doubao_credentials_missing(monkeypatch, tmp_path):

@@ -176,6 +176,51 @@
 - 原因：把所有非关键词输入都送进 Claude judge 会把闲聊表现成 unclear 答题，破坏模式 B 的店主式互动边界
 - 如何应用：新增正式题路由规则时测试三件事：不调用 rubric、不写 `meal_answers`、第 3 次 chitchat 仍拉回当前题
 
+**L33：展示页核心文本必须同时控字号和控容器**
+- 规则：`/display` 的字幕、题目、选项、结果和错误文案调整字号时，要同步检查卡片 max-height / overflow containment
+- 原因：只缩小字体或只固定卡片高度都可能在长题干、双语文案或选项换行时让文字溢出玻璃卡片
+- 如何应用：改 `display.html` 文本样式后，至少跑 HTML 解析、展示页禁止入口扫描和 `/display` HTTP 检查
+
+**L34：看不清的展示页动作不要保留为运行时负担**
+- 规则：`/display` 的动画如果在现场尺度下不可读，优先删除对应 DOM/CSS/JS timer，而不是保留不可见细节
+- 原因：不可见动画会增加状态切换和性能成本，却不能改善观众感知
+- 如何应用：删减视觉动作时同步更新测试断言，确认挥手、呼吸、只读边界和状态 controller 仍保留
+
+**L35：`S_` 开头的豆包复刻音色要配 ICL resource**
+- 规则：调用 `S_` 开头的声音复刻 speaker 时，`X-Api-Resource-Id` / `DOUBAO_TTS_RESOURCE_ID` 应使用对应的 `seed-icl-*`，不要继续使用普通 `seed-tts-*`
+- 原因：普通 TTS resource 只支持官方 TTS 音色；复刻音色配错 resource 会导致 TTS 无声或 provider 失败
+- 如何应用：切换复刻音色时同时检查 `req_params.speaker`、`DOUBAO_TTS_RESOURCE_ID`、`/api/v1/voice-config` 和一次真实 TTS smoke test
+
+**L36：TTS stream finished 不等于浏览器播放 finished**
+- 规则：豆包流式 TTS 收到 `mic.resumed_after_tts` 后，展示状态回落必须等待浏览器端已排队 PCM 播放时间，而不是立刻切回非 speaking
+- 原因：服务端音频发送完可能早于浏览器实际播完；过早回落会让 `/display` 和 `/particle-display` 在可听见系统说话时已经静默
+- 如何应用：前端用 `doubaoQueuedPlaybackMs()` 计算展示回落延迟，粒子页只读 `display-state`，不直接连接语音链路
+
+**L37：流式 TTS speaking 状态不能被 conversation refresh 覆盖**
+- 规则：前端收到 `mic.muted_for_tts` 后，只要 `doubaoMicMutedForTts` 仍为 true，后续异步 conversation / question refresh 不得把 display-state 降回非 speaking
+- 原因：WebSocket 文本事件和 `refreshParticipantDetail()` 是异步交错的；TTS 已经开始时，稍后完成的 conversation 渲染可能覆盖 `robot_speaking`
+- 如何应用：`handleConversationResult(..., deferReplyDisplay: true)` 在 TTS mute 活跃期间应调用当前 TTS speaking 同步逻辑，而不是普通 `syncDisplayQuestion()`
+
+**L38：粒子说话态不要做成规则刺球**
+- 规则：`/particle-display` 的 speaking 动画应优先用大尺度、非规则的整体形变，核心半径目标保持在约 `2/3R` 到 `5/3R`，细尖刺只能作为次级表面质感
+- 原因：规则细刺会让视觉变成“榴莲”而不是被语音驱动的有机身体
+- 如何应用：核心球形变使用随机方向 lobe、宽频噪声和 speech burst 混合；避免只用纬度 band 或均匀周期函数驱动半径
+
+**L39：粒子 speaking 强度不要偷改亮度和周围层**
+- 规则：`/particle-display` 调 speaking 反应时，优先改核心形变；不要顺手提高 particle size、brightness、glow、opacity、outer halo 或 shell flow 强度
+- 原因：亮度、粒径和外层星环一起变化会让画面从“身体反应”变成全屏噪声，掩盖核心形变
+- 如何应用：speaking/quiet 的尺寸和亮度字段应显式锁定一致；外层星环如果需要稳定，应固定 group rotation，只让环内粒子沿路径流动
+
+**L40：复用展示文字时只复用文字合同**
+- 规则：把 `/display` 的观众文字搬到其他展示页面时，只复用 `display-state` 字段、换行拆分和字号尺度；不要复制卡片边框、背景、装饰图或控制入口
+- 原因：文字是观众信息合同，玻璃卡片和装饰是 `/display` 的视觉语境；粒子页需要纯文本贴在粒子之上
+- 如何应用：新增展示文字层时保持只读 `GET /api/v1/display-state`，question 模式按首行题目/后续选项拆分，result 模式显示结果标题和副标题
+
+**L41：正式题泛选项词不能吞掉闲聊**
+- 规则：`FormalTurnRouter` 匹配正式题选项语义时，`有`、`没有`、`yes`、`no` 这类泛词只能作为短直接回答匹配；不能在长句闲聊里做子串命中
+- 原因：AI/是非类问题很容易让观众闲聊句中的“有”误触发 `answer_attempt`，绕过 chitchat，现场表现为系统又像答题机器
+- 如何应用：先识别侧聊/跑题，再处理强选项语义；泛词匹配必须有回归测试确认不调用 rubric、不新增 `meal_answers`
+
 ---
 
 ## 待观察（尚未验证）

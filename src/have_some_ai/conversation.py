@@ -865,6 +865,15 @@ _SIDE_CHAT_TOKENS = {
     "聊天",
     "聊聊",
     "开玩笑",
+    "这个问题",
+    "问题有点",
+    "有点奇怪",
+    "很奇怪",
+    "不想回答",
+    "不想选",
+    "紧张",
+    "不舒服",
+    "不太舒服",
     "哈哈",
     "笑",
     "whatisthis",
@@ -1197,7 +1206,12 @@ def _looks_like_option_semantics(compact: str, current_question: dict[str, Any])
     }
     if compact in semantic_tokens:
         return True
-    return any(token and token in compact for token in _option_keywords(option_text))
+    keywords = _option_keywords(option_text)
+    generic_keywords = {"有", "没有", "yes", "no"}
+    strong_keywords = keywords - generic_keywords
+    if any(token and token in compact for token in strong_keywords):
+        return True
+    return compact in keywords & generic_keywords
 
 
 def _option_keywords(option_text: str) -> set[str]:

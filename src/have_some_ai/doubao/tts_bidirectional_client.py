@@ -30,8 +30,8 @@ from have_some_ai.doubao.tts_protocol import (
 
 
 _DEFAULT_ENDPOINT = "wss://openspeech.bytedance.com/api/v3/tts/bidirection"
-_DEFAULT_RESOURCE_ID = "seed-tts-2.0"
-_FIXED_SPEAKER = "zh_female_yingyujiaoxue_uranus_bigtts"
+_DEFAULT_RESOURCE_ID = "seed-icl-2.0"
+_FIXED_SPEAKER = "S_ud9II0522"
 
 
 @dataclass(frozen=True)
