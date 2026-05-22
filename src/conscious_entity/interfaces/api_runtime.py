@@ -139,6 +139,7 @@ async def lifespan(app: Any):
     app.state.prompts_dir = prompts_dir
     app.state.db_path = db
     app.state.loop_lock = asyncio.Lock()
+    app.state.first_unit_gate_enabled = _first_unit_gate_default(configs)
     app.state.llm_runtime_config = None
     app.state.embedding_runtime_config = None
     app.state.vision_manager = VisionManager(VisionConfig.from_env())
@@ -173,6 +174,8 @@ async def _run_dialog_turn(
 ):
     async with request.app.state.loop_lock:
         turn_metadata = dict(input_metadata or {})
+        if hasattr(request.app.state, "first_unit_gate_enabled"):
+            turn_metadata["first_unit_gate_enabled"] = bool(request.app.state.first_unit_gate_enabled)
         input_mode = str(turn_metadata.get("input_mode") or "text")
         identity_controller = getattr(request.app.state, "identity_gating", None)
         if identity_controller is not None:
@@ -232,6 +235,8 @@ async def _run_dialog_turn_progressive(
 
     async with request.app.state.loop_lock:
         turn_metadata = dict(input_metadata or {})
+        if hasattr(request.app.state, "first_unit_gate_enabled"):
+            turn_metadata["first_unit_gate_enabled"] = bool(request.app.state.first_unit_gate_enabled)
         input_mode = str(turn_metadata.get("input_mode") or "text")
         identity_controller = getattr(request.app.state, "identity_gating", None)
         if identity_controller is not None:
@@ -830,6 +835,12 @@ def _blank_to_none(value: Optional[str]) -> Optional[str]:
         return None
     cleaned = value.strip()
     return cleaned or None
+
+
+def _first_unit_gate_default(configs: dict[str, Any]) -> bool:
+    profile = configs.get("entity_profile", {}) if isinstance(configs, dict) else {}
+    gate = profile.get("first_unit_speech_gate", {}) if isinstance(profile, dict) else {}
+    return bool(gate.get("default_enabled", False)) if isinstance(gate, dict) else False
 
 
 def _env_llm_config() -> dict[str, Any]:

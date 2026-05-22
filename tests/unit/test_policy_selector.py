@@ -122,13 +122,13 @@ class TestBasicRuleMatching:
         decision = sel.select(state, [], _empty_memory())
         assert decision.action == PolicyAction.ASK_BACK
 
-    def test_inquiry_selects_ask_back_when_anger_low(self, config_dir):
+    def test_high_inquiry_selects_respond_openly_when_pressure_low(self, config_dir):
         from conscious_entity.core.config_loader import load_config
         cfg = load_config("policy_rules.yaml", config_dir=config_dir)
         sel = PolicySelector(cfg, _permissive_constitution())
         state = EntityState(inquiry=0.75)
         decision = sel.select(state, [], _empty_memory())
-        assert decision.action == PolicyAction.ASK_BACK
+        assert decision.action == PolicyAction.RESPOND_OPENLY
 
     def test_care_response_opens_only_when_anger_and_desperation_low(self, config_dir):
         from conscious_entity.core.config_loader import load_config

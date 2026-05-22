@@ -105,7 +105,7 @@ def test_preview_influence_does_not_write(conn, prompts_dir):
     assert after == before
     deltas = preview["state_influence"]["deltas"]
     assert deltas["memory_gravity"] > 0
-    assert deltas["inquiry"] > 0
+    assert "inquiry" not in deltas
     assert deltas["positive_opening"] > 0
     assert "happiness" not in deltas
     assert preview["results"]

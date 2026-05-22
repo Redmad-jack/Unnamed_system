@@ -36,6 +36,10 @@
 
   const SILENT_WAV =
     "data:audio/wav;base64,UklGRigAAABXQVZFZm10IBAAAAABAAEAESsAACJWAAACABAAZGF0YQQAAAAAAA==";
+  const BARGE_IN_GRACE_MS = 900;
+  const BARGE_IN_TRIGGER_FRAMES = 5;
+  const BARGE_IN_PEAK_THRESHOLD = 6000;
+  const BARGE_IN_RMS_THRESHOLD = 1200;
 
   function clamp(value, min, max) {
     return Math.max(min, Math.min(max, value));
@@ -203,6 +207,22 @@
       return String(plan.full_response || "").trim() || String(plan.second_unit || "").trim();
     }
     return String(event && event.text ? event.text : "").trim();
+  }
+
+  function firstUnitRenderableText(event) {
+    if (!event || event.phase !== "first_unit") return "";
+    const plan = event.response_plan;
+    const candidates = [
+      event.text,
+      event.output_text,
+      event.progressive_text,
+      plan && typeof plan === "object" ? plan.first_unit : "",
+    ];
+    for (const candidate of candidates) {
+      const text = String(candidate || "").trim();
+      if (text) return text;
+    }
+    return "";
   }
 
   function appendProgressiveText(current, next) {
@@ -973,6 +993,7 @@
         if (detail.source === "audio_dialog_progressive") {
           const now = new Date().toISOString();
           if (detail.phase === "first_unit") {
+            const firstText = firstUnitRenderableText(detail);
             audioSecondRowIdRef.current = null;
             setRows((current) => {
               const nextRows = [...current];
@@ -984,11 +1005,11 @@
                   turn_at: now,
                 });
               }
-              if (detail.text) {
+              if (firstText) {
                 nextRows.push({
                   id: `audio-first-${Date.now()}`,
                   role: "entity",
-                  progressive_text: detail.text,
+                  progressive_text: firstText,
                   phase: "first_unit",
                   visual_mode: detail.visual_mode,
                   vocal_marker: detail.vocal_marker,
@@ -1127,11 +1148,13 @@
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ text: trimmed }),
         }, (event) => {
-          if (event.phase === "first_unit" && event.text) {
+          if (event.phase === "first_unit") {
+            const firstText = firstUnitRenderableText(event);
+            if (!firstText) return;
             setRows((current) => [...current, {
               id: `entity-first-${Date.now()}`,
               role: "entity",
-              progressive_text: event.text,
+              progressive_text: firstText,
               phase: "first_unit",
               visual_mode: event.visual_mode,
               vocal_marker: event.vocal_marker,
@@ -1286,6 +1309,8 @@
     const [summary, setSummary] = useState(null);
     const [previewQuery, setPreviewQuery] = useState("");
     const [preview, setPreview] = useState(null);
+    const [firstGate, setFirstGate] = useState(null);
+    const [firstGateSaving, setFirstGateSaving] = useState(false);
 
     const load = useCallback(async () => {
       try {
@@ -1304,8 +1329,17 @@
       }
     }, []);
 
+    const loadFirstGate = useCallback(async () => {
+      try {
+        setFirstGate(await fetchJSON("/api/v1/runtime/first-unit-gate"));
+      } catch {
+        setFirstGate(null);
+      }
+    }, []);
+
     useEffect(() => {
       load();
+      loadFirstGate();
       const refresh = () => load();
       window.addEventListener("entity:turn-complete", refresh);
       window.addEventListener("entity:session-reset", refresh);
@@ -1313,8 +1347,9 @@
         window.removeEventListener("entity:turn-complete", refresh);
         window.removeEventListener("entity:session-reset", refresh);
       };
-    }, [load]);
+    }, [load, loadFirstGate]);
     useInterval(load, 10000);
+    useInterval(loadFirstGate, 10000);
 
     const runPreview = useCallback(async () => {
       const query = previewQuery.trim();
@@ -1326,10 +1361,31 @@
       }
     }, [previewQuery]);
 
+    const toggleFirstGate = useCallback(async () => {
+      const nextEnabled = !(firstGate && firstGate.enabled);
+      setFirstGateSaving(true);
+      try {
+        setFirstGate(await fetchJSON("/api/v1/runtime/first-unit-gate", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ enabled: nextEnabled }),
+        }));
+      } catch (error) {
+        alert(`First-unit gate update failed: ${error.message}`);
+      } finally {
+        setFirstGateSaving(false);
+      }
+    }, [firstGate]);
+
     return h(React.Fragment, null,
       h("div", { className: "toolbar memory-actions" },
         h("button", { className: "btn-sm", onClick: onSave }, "Save Dialog"),
         h("button", { className: "btn-sm", onClick: onReset }, "Reset Memory / New Session"),
+        h("button", {
+          className: `btn-sm ${firstGate && firstGate.enabled ? "active" : ""}`,
+          onClick: toggleFirstGate,
+          disabled: firstGateSaving || firstGate === null,
+        }, firstGateSaving ? "Saving…" : `Short First Silent: ${firstGate && firstGate.enabled ? "ON" : "OFF"}`),
       ),
       summary ? h("table", null, h("tbody", null,
         h("tr", null, h("td", null, "Episodic events"), h("td", null, summary.episodic)),
@@ -2429,6 +2485,7 @@
     const [sttCloseDetail, setSttCloseDetail] = useState("none");
     const [lastSttEvent, setLastSttEvent] = useState("none");
     const [reconnectDetail, setReconnectDetail] = useState("none");
+    const [latestTtsStreamId, setLatestTtsStreamId] = useState("");
     const socketRef = useRef(null);
     const mediaRef = useRef(null);
     const audioContextRef = useRef(null);
@@ -2447,6 +2504,7 @@
     const playbackTimingRef = useRef(null);
     const playbackWatchdogRef = useRef(null);
     const playNextQueuedStreamRef = useRef(null);
+    const playbackStartedAtRef = useRef(0);
     const bargeInFramesRef = useRef(0);
     const activeAudioTurnRef = useRef(0);
     const suppressedPlaybackTurnRef = useRef(0);
@@ -2514,7 +2572,7 @@
       socketRef.current = null;
       cleanupMicInput();
       setRecording(false);
-      setVoiceActivity("idle");
+      setVoiceActivity(playbackStreamRef.current ? "speaking" : "idle");
       setSttStreamState("stopped");
       setSttCloseDetail("manual stop");
       setReconnectDetail("none");
@@ -2561,8 +2619,12 @@
     }, []);
 
     const stopPlayback = useCallback((detail = "interrupted", options = {}) => {
-      if (options.cancelDialog) {
+      const invalidateTurn = Boolean(options && (options.invalidateTurn || options.cancelDialog));
+      const clearQueue = !(options && options.clearQueue === false);
+      if (invalidateTurn) {
         activeAudioTurnRef.current += 1;
+      }
+      if (options.cancelDialog) {
         setDialogPending(false);
         dialogPendingRef.current = false;
       }
@@ -2577,11 +2639,13 @@
         player.removeAttribute("src");
         player.load();
       }
-      playbackQueueRef.current = [];
+      if (clearQueue) playbackQueueRef.current = [];
       playbackPlayingRef.current = false;
       playbackStreamRef.current = "";
       playbackTimingRef.current = null;
-      setPlaybackQueueDepth(0);
+      playbackStartedAtRef.current = 0;
+      if (clearQueue) setPlaybackQueueDepth(0);
+      else updatePlaybackQueueDepth();
       setPlaybackCurrentStream("");
       setLastPlaybackEvent(String(detail || "interrupted"));
       bargeInFramesRef.current = 0;
@@ -2593,7 +2657,7 @@
         setPlaybackDetail(detailText);
         setBargeInDetail(detailText.startsWith("barge-in") ? "detected, playback stopped" : "idle");
       }
-    }, [clearPlaybackWatchdog]);
+    }, [clearPlaybackWatchdog, updatePlaybackQueueDepth]);
 
     const startPlaybackStream = useCallback(async (streamId, timing = {}) => {
       if (!streamId || !playerRef.current) return false;
@@ -2608,6 +2672,7 @@
       setLastPlaybackEvent(`starting ${compactId(streamId)}`);
       const player = playerRef.current;
       playbackStreamRef.current = streamId;
+      playbackStartedAtRef.current = nowMs();
       const streamReceivedAt = timing.streamReceivedAt || nowMs();
       playbackTimingRef.current = {
         streamId,
@@ -2662,6 +2727,8 @@
         player.removeAttribute("src");
         player.load();
         playbackPlayingRef.current = false;
+        playbackStreamRef.current = "";
+        playbackStartedAtRef.current = 0;
         postPresentationLatency("dashboard.audio.play_resolved", streamReceivedAt, {
           latencyRecordId: timing.latencyRecordId,
           success: false,
@@ -2702,6 +2769,7 @@
         playbackPlayingRef.current = false;
         playbackStreamRef.current = "";
         playbackTimingRef.current = null;
+        playbackStartedAtRef.current = 0;
         bargeInFramesRef.current = 0;
         suppressMicRef.current = false;
         setPlaybackCurrentStream("");
@@ -2753,18 +2821,23 @@
           }
           if (turnToken !== activeAudioTurnRef.current) return;
           if (event.phase !== "first_unit" && event.phase !== "second_delta" && event.phase !== "final") return;
+          const firstText = firstUnitRenderableText(event);
           const payload = Object.assign({}, event, {
             input_text: transcript,
-            output_text: event.text || "",
+            output_text: event.phase === "first_unit" ? firstText : event.text || "",
           });
-          setLatestDialog(payload);
+          if (event.phase !== "first_unit" || firstText) {
+            setLatestDialog(payload);
+          }
           window.dispatchEvent(new CustomEvent("entity:turn-complete", {
             detail: {
               source: "audio_dialog_progressive",
               input_text: transcript,
               phase: event.phase,
               index: event.index,
-              text: event.text || "",
+              text: event.phase === "first_unit" ? firstText : event.text || "",
+              output_text: payload.output_text || "",
+              progressive_text: event.progressive_text || "",
               response_plan: event.response_plan || null,
               visual_mode: event.visual_mode || null,
               vocal_marker: event.vocal_marker || null,
@@ -2773,6 +2846,9 @@
           }));
           if (event.phase === "final") {
             finalPayload = payload;
+          }
+          if (event.tts_stream_id) {
+            setLatestTtsStreamId(event.tts_stream_id);
           }
           if (event.tts_stream_id && suppressedPlaybackTurnRef.current !== turnToken) {
             playbackStarted = enqueueTtsStream(event.tts_stream_id, {
@@ -2809,8 +2885,9 @@
       }
     }, [enqueueTtsStream, loadStatus]);
 
-    const startMic = useCallback(async () => {
+    const startMic = useCallback(async (options = {}) => {
       if (recording) return;
+      const preservePlayback = Boolean(options && options.preservePlayback);
       try {
         setError("");
         setPartial("");
@@ -2818,8 +2895,12 @@
         setSttCloseDetail("none");
         setReconnectDetail("none");
         manualStopRef.current = false;
-        stopPlayback();
-        await unlockPlayback();
+        if (!preservePlayback) {
+          stopPlayback("mic start", { invalidateTurn: false });
+          await unlockPlayback();
+        } else if (!playbackStreamRef.current) {
+          await unlockPlayback();
+        }
         const stream = await navigator.mediaDevices.getUserMedia({
           audio: { echoCancellation: true, noiseSuppression: true, channelCount: 1 },
         });
@@ -2870,16 +2951,17 @@
         socket.onerror = () => setError("Audio STT stream connection failed.");
         socket.onclose = () => {
           const shouldReconnect = !manualStopRef.current && voiceModeRef.current;
+          const playbackActive = Boolean(playbackStreamRef.current);
           socketRef.current = null;
           cleanupMicInput();
           setRecording(false);
-          setVoiceActivity(shouldReconnect ? "reconnecting" : "idle");
+          setVoiceActivity(shouldReconnect ? (playbackActive ? "speaking" : "reconnecting") : playbackActive ? "speaking" : "idle");
           setSttStreamState(shouldReconnect ? "reconnecting" : "stopped");
           setReconnectDetail(shouldReconnect ? "scheduled after stream close" : "none");
           if (shouldReconnect) {
             reconnectTimerRef.current = window.setTimeout(() => {
               reconnectTimerRef.current = null;
-              if (!manualStopRef.current) startMic();
+              if (!manualStopRef.current) startMic({ preservePlayback: true });
             }, 450);
           }
         };
@@ -2894,15 +2976,17 @@
           const pcm = downsampleToInt16(input, context.sampleRate, targetRate);
           if (pcm.byteLength <= 0) return;
           if (playbackStreamRef.current) {
-            if (pcmHasVoiceActivity(pcm)) {
+            const playbackAgeMs = Math.max(0, nowMs() - playbackStartedAtRef.current);
+            if (playbackAgeMs >= BARGE_IN_GRACE_MS && pcmHasVoiceActivity(pcm)) {
               bargeInFramesRef.current += 1;
             } else {
               bargeInFramesRef.current = Math.max(0, bargeInFramesRef.current - 1);
             }
-            if (bargeInFramesRef.current >= 2) {
+            if (bargeInFramesRef.current >= BARGE_IN_TRIGGER_FRAMES) {
               stopPlayback("barge-in: user speech detected", {
                 cancelDialog: true,
                 suppressTurnPlayback: true,
+                invalidateTurn: true,
               });
               socketRef.current.send(pcm);
               return;
@@ -2925,7 +3009,7 @@
         processorRef.current = processor;
         muteRef.current = mute;
         setRecording(true);
-        setVoiceActivity("listening");
+        setVoiceActivity(playbackStreamRef.current ? "speaking" : "listening");
       } catch (err) {
         stopMic();
         setSttStreamState("error");
@@ -2938,11 +3022,13 @@
     }, [finalText, submitTranscript]);
 
     const speakLatest = useCallback(() => {
-      const streamId = latestDialog && latestDialog.tts_stream_id
-        ? latestDialog.tts_stream_id
-        : status && status.tts && status.tts.last_stream_id;
+      const streamId = latestTtsStreamId || (latestDialog && latestDialog.tts_stream_id);
+      if (!streamId) {
+        setError("No fresh TTS stream is available for replay.");
+        return;
+      }
       enqueueTtsStream(streamId);
-    }, [enqueueTtsStream, latestDialog, status]);
+    }, [enqueueTtsStream, latestDialog, latestTtsStreamId]);
 
     const enabled = status && status.enabled;
     return h("div", { className: "section audio-section" },
@@ -2962,6 +3048,7 @@
           onClick: () => stopPlayback("manual stop speaking", {
             cancelDialog: dialogPendingRef.current,
             suppressTurnPlayback: true,
+            invalidateTurn: true,
           }),
           disabled: voiceActivity !== "speaking",
         }, "Stop Speaking"),
@@ -3008,7 +3095,7 @@
         }),
       ),
       latestDialog ? h("div", { className: "item" },
-        h("div", { className: "item-meta" }, `tts: ${latestDialog.tts_stream_id || latestDialog.audio_disabled_reason || "silent"}`),
+        h("div", { className: "item-meta" }, `tts: ${latestDialog.tts_stream_id || latestTtsStreamId || latestDialog.audio_disabled_reason || "silent"}`),
         h("div", { className: "item-text" }, latestDialog.output_text || latestDialog.text || "..."),
       ) : null,
       error ? h("div", { className: "err" }, error) : null,
@@ -3037,13 +3124,11 @@
           }
           playbackTimingRef.current = null;
           setLastPlaybackEvent(`ended ${compactId(playbackStreamRef.current)}`);
+          playbackStartedAtRef.current = 0;
           playNextQueuedStream();
         },
         onError: () => {
           clearPlaybackWatchdog();
-          playbackQueueRef.current = [];
-          updatePlaybackQueueDepth();
-          playbackPlayingRef.current = false;
           const timing = playbackTimingRef.current;
           if (timing) {
             postPresentationLatency("dashboard.audio.error", timing.streamReceivedAt, {
@@ -3053,16 +3138,24 @@
               metadata: { stream_id: timing.streamId },
             });
           }
+          const detail = describeMediaError(playerRef.current, "Playback stream error.");
           playbackStreamRef.current = "";
           setPlaybackCurrentStream("");
           playbackTimingRef.current = null;
+          playbackStartedAtRef.current = 0;
           bargeInFramesRef.current = 0;
           suppressMicRef.current = false;
-          setVoiceActivity(recordingRef.current ? "listening" : "idle");
-          setPlaybackBlocked(true);
-          setPlaybackDetail(describeMediaError(playerRef.current, "Playback stream error."));
           setLastPlaybackEvent("media error");
-          setBargeInDetail("idle");
+          if (!playNextQueuedStream()) {
+            playbackPlayingRef.current = false;
+            setVoiceActivity(recordingRef.current ? "listening" : "idle");
+            setPlaybackBlocked(true);
+            setPlaybackDetail(detail);
+            setBargeInDetail("idle");
+          } else {
+            setPlaybackBlocked(false);
+            setPlaybackDetail(`skipped stream: ${detail}`);
+          }
         },
       }),
     );
@@ -3244,7 +3337,7 @@
       squareSum += value * value;
     }
     const rms = Math.sqrt(squareSum / samples.length);
-    return peak >= 3500 || rms >= 850;
+    return peak >= BARGE_IN_PEAK_THRESHOLD && rms >= BARGE_IN_RMS_THRESHOLD;
   }
 
   function ConfigModal({ onClose }) {

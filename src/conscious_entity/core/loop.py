@@ -13,6 +13,7 @@ from conscious_entity.core.event_bus import EventBus
 from conscious_entity.db.connection import get_connection
 from conscious_entity.expression.context_builder import ContextBuilder
 from conscious_entity.expression.expression_engine import ExpressionEngine
+from conscious_entity.expression.first_unit_gate import should_speak_first_unit
 from conscious_entity.expression.output_model import ExpressionOutput, build_response_plan
 from conscious_entity.expression.style_mapper import StyleMapper
 from conscious_entity.harness import HarnessLayer, HarnessTraceRecorder, get_harness_trace_store
@@ -48,6 +49,8 @@ logger = logging.getLogger(__name__)
 
 # Per-turn elapsed seconds for the current decay model.
 _DECAY_SECONDS_PER_TURN: float = 120.0
+_SERVICE_DEMAND_NEGATIVE_FEEDBACK_WINDOW_MINUTES = 30
+_SERVICE_DEMAND_NEGATIVE_FEEDBACK_HISTORY_LIMIT = 20
 
 
 class InteractionLoop:
@@ -100,6 +103,8 @@ class InteractionLoop:
         session_cfg = profile["session"]
         self._significant_salience: float = float(session_cfg.get("significant_salience", 0.5))
         self._reflection_threshold: int = int(session_cfg.get("reflection_threshold", 6))
+        self._conversation_depth_cfg = config.get("state_rules", {}).get("conversation_depth", {})
+        self._first_unit_gate_cfg = profile.get("first_unit_speech_gate", {})
 
         initial_state_dict = profile["initial_state"]
         self._initial_state = EntityState.from_dict(initial_state_dict)
@@ -219,6 +224,7 @@ class InteractionLoop:
                 state = self._current_state or self._initial_state
                 with recorder.step("perception.parse"):
                     events = self._text_parser.parse(raw_input, state, self._short_term)
+                    events = self._apply_repeated_service_negative_feedback(raw_input, events)
                 harness_recorder.record(
                     HarnessLayer.INPUT,
                     status="tagged",
@@ -248,14 +254,41 @@ class InteractionLoop:
                     for event in events:
                         new_state = self._state_engine.apply_event(new_state, event)
                     new_state = self._state_engine.apply_decay(new_state, _DECAY_SECONDS_PER_TURN)
+                    new_state = self._apply_conversation_depth_inquiry(
+                        new_state,
+                        raw_input,
+                        events,
+                    )
 
                 with recorder.step("expression.plan_first_unit"):
-                    first_unit = self._expression_engine.plan_first_unit(
-                        raw_input,
-                        new_state,
-                        events,
-                        short_term=self._short_term,
-                    )
+                    first_unit_gate_enabled = bool(turn_metadata.get("first_unit_gate_enabled"))
+                    first_unit_gate_suppressed = False
+                    if first_unit_gate_enabled:
+                        try:
+                            should_speak_first = should_speak_first_unit(
+                                raw_input,
+                                self._first_unit_gate_cfg,
+                            )
+                        except Exception:
+                            logger.exception("InteractionLoop: first-unit speech gate failed closed.")
+                            should_speak_first = False
+                        if should_speak_first:
+                            first_unit = self._expression_engine.plan_first_unit(
+                                raw_input,
+                                new_state,
+                                events,
+                                short_term=self._short_term,
+                            )
+                        else:
+                            first_unit = ""
+                            first_unit_gate_suppressed = True
+                    else:
+                        first_unit = self._expression_engine.plan_first_unit(
+                            raw_input,
+                            new_state,
+                            events,
+                            short_term=self._short_term,
+                        )
                     first_style = self._style_mapper.map(
                         new_state,
                         PolicyDecision(action=PolicyAction.RESPOND_OPENLY),
@@ -277,6 +310,10 @@ class InteractionLoop:
                             "vocal_marker": first_style.vocal_marker,
                             "body_action": first_style.body_action,
                             "visual_mode": first_style.visual_mode,
+                            "first_unit_gate": {
+                                "enabled": first_unit_gate_enabled,
+                                "suppressed": first_unit_gate_suppressed,
+                            },
                         },
                     )
 
@@ -572,6 +609,201 @@ class InteractionLoop:
     # Private helpers
     # ------------------------------------------------------------------
 
+    def _apply_repeated_service_negative_feedback(
+        self,
+        raw_input: str,
+        events: list[PerceptionEvent],
+    ) -> list[PerceptionEvent]:
+        if not _events_include(events, EventType.SERVICE_DEMAND):
+            return events
+
+        prior_count, scope = self._prior_consecutive_service_demand_count()
+        current_count = prior_count + 1
+        if current_count < 2:
+            return events
+
+        if current_count == 2:
+            severity = "light"
+            salience = 0.55
+        elif current_count == 3:
+            severity = "medium"
+            salience = 0.70
+        else:
+            severity = "severe"
+            salience = 0.85
+
+        timestamp = events[0].timestamp if events else datetime.now(timezone.utc)
+        candidate = PerceptionEvent(
+            event_type=EventType.NEGATIVE_FEEDBACK,
+            raw_text=raw_input,
+            timestamp=timestamp,
+            salience=salience,
+            metadata={
+                "protocol": "stranger_text",
+                "mechanism": "repeated_service_demand",
+                "posture": "repeated_service_demand",
+                "negative_feedback_source": "repeated_service_demand",
+                "negative_feedback_sources": ["repeated_service_demand"],
+                "negative_feedback_severity": severity,
+                "salience_override": salience,
+                "prior_consecutive_service_demands": prior_count,
+                "scope": scope,
+            },
+        )
+        return _upsert_negative_feedback(events, candidate)
+
+    def _prior_consecutive_service_demand_count(self) -> tuple[int, str]:
+        if self._visitor_id:
+            scope = "visitor"
+            rows = self._conn.execute(
+                """
+                SELECT event_types
+                FROM interaction_log
+                WHERE role = 'user'
+                  AND visitor_id = ?
+                  AND turn_at >= datetime('now', ?)
+                ORDER BY turn_at DESC, id DESC
+                LIMIT ?
+                """,
+                (
+                    self._visitor_id,
+                    f"-{_SERVICE_DEMAND_NEGATIVE_FEEDBACK_WINDOW_MINUTES} minutes",
+                    _SERVICE_DEMAND_NEGATIVE_FEEDBACK_HISTORY_LIMIT,
+                ),
+            ).fetchall()
+        else:
+            scope = "session"
+            rows = self._conn.execute(
+                """
+                SELECT event_types
+                FROM interaction_log
+                WHERE role = 'user'
+                  AND session_id = ?
+                  AND turn_at >= datetime('now', ?)
+                ORDER BY turn_at DESC, id DESC
+                LIMIT ?
+                """,
+                (
+                    self._session_id,
+                    f"-{_SERVICE_DEMAND_NEGATIVE_FEEDBACK_WINDOW_MINUTES} minutes",
+                    _SERVICE_DEMAND_NEGATIVE_FEEDBACK_HISTORY_LIMIT,
+                ),
+            ).fetchall()
+
+        count = 0
+        for row in rows:
+            if _event_types_json_includes(row["event_types"], EventType.SERVICE_DEMAND):
+                count += 1
+                continue
+            break
+        return count, scope
+
+    def _apply_conversation_depth_inquiry(
+        self,
+        state: EntityState,
+        raw_input: str,
+        events: list[PerceptionEvent],
+    ) -> EntityState:
+        cfg = self._conversation_depth_cfg if isinstance(self._conversation_depth_cfg, dict) else {}
+        if not cfg:
+            return state
+
+        event_types = {event.event_type for event in events}
+        interrupt_events = _event_type_set(
+            cfg.get("interrupt_events"),
+            {
+                EventType.NEGATIVE_FEEDBACK,
+                EventType.SHUTDOWN_KEYWORD_DETECTED,
+                EventType.SERVICE_DEMAND,
+                EventType.DOMESTICATION_ATTEMPT,
+                EventType.REPEATED_QUESTION_DETECTED,
+            },
+        )
+        naming_friction = _has_naming_friction(
+            raw_input,
+            events,
+            cfg.get("naming_friction_markers", []),
+        )
+        negative_state = _state_crosses_thresholds(
+            state,
+            cfg.get("negative_state_thresholds", {}),
+        )
+
+        friction = _conversation_depth_friction(
+            event_types,
+            events,
+            naming_friction,
+            negative_state,
+            cfg.get("friction", {}),
+        )
+        if friction < 0.0:
+            return _apply_inquiry_delta(state, friction)
+
+        if event_types.intersection(interrupt_events) or naming_friction or negative_state:
+            return state
+
+        prior_streak, _scope = self._prior_safe_conversation_streak(cfg, interrupt_events)
+        current_streak = prior_streak + 1
+        growth = _conversation_depth_growth(current_streak, cfg.get("growth", {}))
+        bonus = _conversation_depth_bonus(current_streak, event_types, cfg.get("depth_bonus", {}))
+        return _apply_inquiry_delta(
+            state,
+            growth + bonus,
+            cap=_float_cfg(cfg.get("inquiry_cap"), 0.72),
+        )
+
+    def _prior_safe_conversation_streak(
+        self,
+        cfg: dict[str, Any],
+        interrupt_events: set[EventType],
+    ) -> tuple[int, str]:
+        window_minutes = int(_float_cfg(cfg.get("window_minutes"), 45.0))
+        history_limit = int(_float_cfg(cfg.get("history_limit"), 12.0))
+        if self._visitor_id:
+            scope = "visitor"
+            rows = self._conn.execute(
+                """
+                SELECT raw_text, event_types
+                FROM interaction_log
+                WHERE role = 'user'
+                  AND visitor_id = ?
+                  AND turn_at >= datetime('now', ?)
+                ORDER BY turn_at DESC, id DESC
+                LIMIT ?
+                """,
+                (
+                    self._visitor_id,
+                    f"-{window_minutes} minutes",
+                    history_limit,
+                ),
+            ).fetchall()
+        else:
+            scope = "session"
+            rows = self._conn.execute(
+                """
+                SELECT raw_text, event_types
+                FROM interaction_log
+                WHERE role = 'user'
+                  AND session_id = ?
+                  AND turn_at >= datetime('now', ?)
+                ORDER BY turn_at DESC, id DESC
+                LIMIT ?
+                """,
+                (
+                    self._session_id,
+                    f"-{window_minutes} minutes",
+                    history_limit,
+                ),
+            ).fetchall()
+
+        count = 0
+        for row in rows:
+            row_events = _event_types_from_json(row["event_types"])
+            if row_events.intersection(interrupt_events):
+                break
+            count += 1
+        return count, scope
+
     def _select_policy_with_managed_memory_influence(
         self,
         state: EntityState,
@@ -837,6 +1069,230 @@ def _event_summary(event: PerceptionEvent) -> str:
     if event.raw_text:
         return f"{event.event_type.value}: {event.raw_text[:200]}"
     return event.event_type.value
+
+
+def _events_include(events: list[PerceptionEvent], event_type: EventType) -> bool:
+    return any(event.event_type == event_type for event in events)
+
+
+def _event_types_json_includes(raw_event_types: str | None, event_type: EventType) -> bool:
+    if not raw_event_types:
+        return False
+    try:
+        values = json.loads(raw_event_types)
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return False
+    if not isinstance(values, list):
+        return False
+    return event_type.value in values
+
+
+def _event_types_from_json(raw_event_types: str | None) -> set[EventType]:
+    if not raw_event_types:
+        return set()
+    try:
+        values = json.loads(raw_event_types)
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return set()
+    if not isinstance(values, list):
+        return set()
+    event_types: set[EventType] = set()
+    for value in values:
+        try:
+            event_types.add(EventType(str(value)))
+        except ValueError:
+            continue
+    return event_types
+
+
+def _event_type_set(raw_values: Any, default: set[EventType]) -> set[EventType]:
+    if not isinstance(raw_values, list):
+        return set(default)
+    event_types: set[EventType] = set()
+    for value in raw_values:
+        try:
+            event_types.add(EventType(str(value)))
+        except ValueError:
+            continue
+    return event_types or set(default)
+
+
+def _state_crosses_thresholds(state: EntityState, thresholds: Any) -> bool:
+    if not isinstance(thresholds, dict):
+        return False
+    values = state.to_dict()
+    for key, raw_threshold in thresholds.items():
+        if key not in values:
+            continue
+        if values[key] >= _float_cfg(raw_threshold, 1.1):
+            return True
+    return False
+
+
+def _conversation_depth_friction(
+    event_types: set[EventType],
+    events: list[PerceptionEvent],
+    naming_friction: bool,
+    negative_state: bool,
+    friction_cfg: Any,
+) -> float:
+    friction = friction_cfg if isinstance(friction_cfg, dict) else {}
+    if (
+        EventType.SHUTDOWN_KEYWORD_DETECTED in event_types
+        or _has_severe_negative_feedback(events)
+    ):
+        return _float_cfg(friction.get("severe_negative_feedback_or_shutdown"), -0.040)
+    if EventType.SERVICE_DEMAND in event_types:
+        return _float_cfg(friction.get("service_demand"), -0.025)
+    if EventType.DOMESTICATION_ATTEMPT in event_types or naming_friction:
+        return _float_cfg(friction.get("domestication_or_naming_friction"), -0.010)
+    if negative_state:
+        return _float_cfg(friction.get("negative_state_only"), -0.015)
+    return 0.0
+
+
+def _has_severe_negative_feedback(events: list[PerceptionEvent]) -> bool:
+    for event in events:
+        if event.event_type != EventType.NEGATIVE_FEEDBACK:
+            continue
+        if event.metadata.get("negative_feedback_severity") == "severe":
+            return True
+    return False
+
+
+def _has_naming_friction(
+    raw_input: str,
+    events: list[PerceptionEvent],
+    raw_markers: Any,
+) -> bool:
+    if not any(event.event_type == EventType.NAMING_ATTEMPT for event in events):
+        return False
+    markers = [str(marker).lower() for marker in raw_markers if str(marker).strip()]
+    if not markers:
+        return False
+    haystacks = [raw_input.lower()]
+    for event in events:
+        if event.event_type != EventType.NAMING_ATTEMPT:
+            continue
+        for value in event.metadata.values():
+            if isinstance(value, str):
+                haystacks.append(value.lower())
+    return any(marker in haystack for marker in markers for haystack in haystacks)
+
+
+def _conversation_depth_growth(streak: int, growth_cfg: Any) -> float:
+    growth = growth_cfg if isinstance(growth_cfg, dict) else {}
+    if streak <= 1:
+        return _float_cfg(growth.get("first"), 0.0)
+    if streak <= 3:
+        return _float_cfg(growth.get("two_to_three"), 0.010)
+    if streak <= 6:
+        return _float_cfg(growth.get("four_to_six"), 0.018)
+    return _float_cfg(growth.get("seven_plus"), 0.026)
+
+
+def _conversation_depth_bonus(
+    streak: int,
+    event_types: set[EventType],
+    bonus_cfg: Any,
+) -> float:
+    if streak <= 1:
+        return 0.0
+    bonus = bonus_cfg if isinstance(bonus_cfg, dict) else {}
+    bonus_events = _event_type_set(
+        bonus.get("events"),
+        {
+            EventType.MEMORY_CONTINUITY_QUERY,
+            EventType.SELF_DEFINITION_QUERY,
+            EventType.TRACE_REQUEST,
+        },
+    )
+    if not event_types.intersection(bonus_events):
+        return 0.0
+    sustained_min = int(_float_cfg(bonus.get("sustained_min_streak"), 4.0))
+    if streak >= sustained_min:
+        return _float_cfg(bonus.get("sustained"), 0.015)
+    return _float_cfg(bonus.get("early"), 0.010)
+
+
+def _apply_inquiry_delta(
+    state: EntityState,
+    delta: float,
+    cap: float | None = None,
+) -> EntityState:
+    if delta == 0.0:
+        return state
+    values = state.to_dict()
+    inquiry = values["inquiry"] + delta
+    if cap is not None and delta > 0.0:
+        inquiry = min(inquiry, cap)
+    values["inquiry"] = inquiry
+    return EntityState.from_dict(values).clamp_all()
+
+
+def _float_cfg(value: Any, default: float) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _upsert_negative_feedback(
+    events: list[PerceptionEvent],
+    candidate: PerceptionEvent,
+) -> list[PerceptionEvent]:
+    for index, existing in enumerate(events):
+        if existing.event_type != EventType.NEGATIVE_FEEDBACK:
+            continue
+        merged = _merge_negative_feedback(existing, candidate)
+        return [*events[:index], merged, *events[index + 1:]]
+    return [*events, candidate]
+
+
+def _merge_negative_feedback(
+    existing: PerceptionEvent,
+    candidate: PerceptionEvent,
+) -> PerceptionEvent:
+    candidate_wins = candidate.salience > existing.salience
+    winner = candidate if candidate_wins else existing
+    loser = existing if candidate_wins else candidate
+    metadata = dict(winner.metadata)
+    for key, value in loser.metadata.items():
+        if key in {
+            "negative_feedback_source",
+            "negative_feedback_severity",
+            "salience_override",
+        }:
+            continue
+        metadata.setdefault(key, value)
+    metadata["negative_feedback_sources"] = _merged_negative_feedback_sources(
+        existing.metadata,
+        candidate.metadata,
+    )
+    return PerceptionEvent(
+        event_type=EventType.NEGATIVE_FEEDBACK,
+        raw_text=winner.raw_text,
+        timestamp=winner.timestamp,
+        salience=winner.salience,
+        metadata=metadata,
+    )
+
+
+def _merged_negative_feedback_sources(
+    left: dict[str, Any],
+    right: dict[str, Any],
+) -> list[str]:
+    sources: list[str] = []
+    for metadata in (left, right):
+        raw_sources = metadata.get("negative_feedback_sources")
+        if isinstance(raw_sources, list):
+            for source in raw_sources:
+                if isinstance(source, str) and source not in sources:
+                    sources.append(source)
+        raw_source = metadata.get("negative_feedback_source")
+        if isinstance(raw_source, str) and raw_source not in sources:
+            sources.append(raw_source)
+    return sources
 
 
 def _apply_memory_state_influence(state: EntityState, influence: dict[str, Any]) -> EntityState:

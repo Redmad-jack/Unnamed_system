@@ -38,6 +38,7 @@ from conscious_entity.interfaces.api_models import (
     IdentityConfigRequest,
     IdentityMatchRequest,
     IdentityMatchSignalRequest,
+    FirstUnitGateRequest,
     LLMConfigRequest,
     ManagedMemoryCommitRequest,
     ManagedMemoryProposeRequest,
@@ -67,6 +68,7 @@ from conscious_entity.interfaces.api_runtime import (
     _env_embedding_config,
     _env_llm_config,
     _enrich_identity_context_locked,
+    _first_unit_gate_default,
     _json_dict,
     _llm_settings_from_request,
     _log_curation,
@@ -1485,6 +1487,22 @@ async def config_all(request: Request):
     return request.app.state.configs
 
 
+@router.get("/api/v1/runtime/first-unit-gate")
+async def runtime_first_unit_gate(request: Request):
+    enabled = getattr(
+        request.app.state,
+        "first_unit_gate_enabled",
+        _first_unit_gate_default(getattr(request.app.state, "configs", {})),
+    )
+    return {"enabled": bool(enabled)}
+
+
+@router.post("/api/v1/runtime/first-unit-gate")
+async def runtime_first_unit_gate_update(body: FirstUnitGateRequest, request: Request):
+    request.app.state.first_unit_gate_enabled = bool(body.enabled)
+    return {"enabled": bool(request.app.state.first_unit_gate_enabled)}
+
+
 @router.get("/api/v1/config/llm")
 async def config_llm(request: Request):
     return _public_llm_config(request)
@@ -1589,6 +1607,7 @@ async def config_reload(request: Request):
         request.app.state.configs = configs
         request.app.state.conn = conn
         request.app.state.session_id = session_id
+        request.app.state.first_unit_gate_enabled = _first_unit_gate_default(configs)
         _rebuild_loop(request, llm_client, embedding_client)
 
     return {"status": "reloaded", "note": "short-term memory was restored from the current session"}

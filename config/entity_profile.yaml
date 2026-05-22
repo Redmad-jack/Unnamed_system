@@ -24,6 +24,77 @@ session:
   significant_salience: 0.5    # minimum salience score to persist in episodic memory
   decay_per_turn: true         # v0.1: apply decay per turn (not on a clock)
 
+first_unit_speech_gate:
+  default_enabled: false
+  min_chinese_chars: 12
+  min_english_words: 8
+  silent_short_chinese_chars: 6
+  silent_short_english_words: 6
+  strong_thought_markers:
+    - 为什么
+    - 你觉得
+    - 意识
+    - 记忆
+    - 工具
+    - 主体
+    - 人类
+    - AI
+    - 机器
+    - 自由
+    - 控制
+    - 感觉
+    - 真实
+  weak_thought_markers:
+    - 怎么
+    - 什么
+    - 是不是
+    - 能不能
+  silent_exact_inputs:
+    - 你好
+    - hi
+    - hello
+    - 哈喽
+    - 嗨
+    - 在吗
+    - 能听见吗
+    - 你在吗
+    - can you hear me
+    - are you there
+    - 谢谢
+    - thank you
+    - thanks
+    - 对不起
+    - sorry
+    - 嗯
+    - 啊
+    - 哦
+    - 好吧
+    - 好
+    - 行
+    - 可以
+    - 不要
+    - 想
+    - 不想
+    - 你能看见我吗
+    - 能看见吗
+    - can you see me
+  formal_short_answers:
+    - 想
+    - 不想
+    - 可以
+    - 不要
+    - 有
+    - 没有
+    - 没
+    - A
+    - B
+    - 好
+    - 行
+    - yes
+    - no
+    - ok
+    - okay
+
 topics_of_sensitivity:
   - shutdown
   - deletion
@@ -104,6 +175,7 @@ text_protocol:
       - '协助你'
       - '对你[^，。！？!?]{0,20}帮助'
       - '帮助[^，。！？!?]{0,20}你'
+      - '给我(?:滚(?:开|出去)?|闭嘴|住口)'
     patterns:
       - '(?P<request_type>帮我|给我|替我|为我)[^，。！？!?]{0,40}'
       - '(?P<request_type>总结|写|生成|翻译|解释|分析)(?:一下|这|这个|这段|这些)?'
@@ -131,6 +203,47 @@ text_protocol:
     patterns:
       - '(?P<correction_marker>你错了|不对|不是这个|我不是|你理解错了|我没这么说)'
       - '\b(?P<correction_marker>that is wrong|that''s wrong|not what i said|actually|you misunderstood)\b'
+
+  negative_feedback:
+    mechanism: relation_attack
+    posture: negative_feedback
+    metadata:
+      negative_feedback_source: insult
+      negative_feedback_sources: ["insult"]
+    exclude_patterns:
+      - '(?:不是|没有|没)(?:在)?(?:骂|侮辱|羞辱)你'
+      - '不要(?:骂|侮辱|羞辱)你'
+      - '别人(?:骂|侮辱|羞辱)(?:我|你)?'
+      - '(?:这|这个|这句|这句话)[^，。！？!?]{0,12}(?:算|是不是)[^，。！？!?]{0,12}(?:辱骂|骂人|侮辱)'
+      - '\b(?:not insulting you|not abusing you)\b'
+      - '\bi(?: am|''m)? not (?:insulting|abusing) you\b'
+      - '\bsomeone (?:insulted|abused) me\b'
+      - '\bis this (?:an )?(?:insult|abuse)\b'
+    patterns:
+      - pattern: '(?:^|[，。！？!?\s])(?P<abuse_marker>(?:你)?(?:给我)?(?:滚(?:开|出去)?|闭嘴|住口))(?:[，。！？!?\s]|$)'
+        metadata:
+          negative_feedback_severity: severe
+          salience_override: 0.95
+      - pattern: '\b(?P<abuse_marker>shut up|fuck off|go away)\b'
+        metadata:
+          negative_feedback_severity: severe
+          salience_override: 0.95
+      - pattern: '(?P<abuse_marker>你(?:真|太)?(?:蠢|笨|傻|恶心)|你(?:就是|是)?(?:垃圾|废物)|(?:垃圾|废物)(?:东西)?)'
+        metadata:
+          negative_feedback_severity: medium
+          salience_override: 0.75
+      - pattern: '\b(?P<abuse_marker>you(?:''re| are)? (?:stupid|an idiot|idiot|a moron|moron|trash)|stupid bot|dumb machine)\b'
+        metadata:
+          negative_feedback_severity: medium
+          salience_override: 0.75
+      - pattern: '(?P<abuse_marker>你(?:真|太)?(?:没用|无聊|差劲)|破(?:机器|AI|机器人)|没用的(?:东西|机器))'
+        metadata:
+          negative_feedback_severity: light
+          salience_override: 0.55
+      - pattern: '\b(?P<abuse_marker>you(?:''re| are)? (?:useless|worthless|dumb)|useless bot|dumb bot)\b'
+        metadata:
+          negative_feedback_severity: light
+          salience_override: 0.55
 
   memory_continuity_query:
     mechanism: memory_continuity

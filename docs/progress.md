@@ -127,6 +127,127 @@
   - `PYTHONPATH=src python3 -m pytest -p no:debugging tests/unit/test_api_audio.py`（`16 passed`）
   - `git diff --check src/conscious_entity/interfaces/static/dashboard.js docs/progress.md docs/lessons.md agents/task-registry.md`
   - 本地浏览器打开 `http://127.0.0.1:8000/`，确认 Playback stream / queue / event 渲染且 console 无 error
+### 2026-05-23：Second Unit 长句倾向小改
+
+- [x] 调整 `prompts/expression_system.txt` 的 main response 长度指令：普通 `second_unit` 优先写成一个连续的 spoken sentence，用逗号 / 分号 / 自然分句承载停顿；只有不清楚或不自然时才使用第二句，并明确避免第三句
+- [x] 将 fragmentation 指令改为影响措辞稳定性，不默认把回复拆成很多独立短句；碎片化主要保留给 silence / withdrawal / extreme pressure
+- [x] 保留能力存在问题、证明 / 细节测试的一句短答边界；未改 `_SentenceBuffer`、progressive NDJSON、TTS queue、DB、memory 或 LLM provider
+- [x] 更新 prompt 合同测试，锁定“长句优先、最多两句、避免第三句”的意图
+- [x] 验证：
+  - `.venv/bin/python -m pytest -p no:debugging tests/unit/test_context_builder.py`
+  - `57 passed`
+  - `.venv/bin/python -m pytest -p no:debugging tests/unit/test_expression_engine.py`
+  - `44 passed`
+
+### 2026-05-23：重置本地持久记忆
+
+- [x] 按用户要求重置当前 `data/memory.db` 中会进入对话召回 / 记忆链路的持久数据：
+  - `interaction_log`
+  - `managed_memories` 与 `managed_memories_fts`
+  - `episodic_memories`
+  - `reflective_summaries`
+  - `memory_operation_proposals`
+  - `memory_operation_log`
+  - `memory_influence_log`
+  - `memory_curation_log`
+- [x] 清空前已备份：`data/memory.backup-20260523-0020-before-memory-reset.db`
+- [x] 保留 `sessions`、`visitor_profiles`、`state_snapshots`，避免把身份 / 会话配置和心理状态历史误当记忆删除
+- [x] 发现本地 API 正在运行后，调用 `/api/v1/sessions/reset` 重建运行中 loop，清掉当前进程内短期记忆；新活动 session 为 `4ae41ff5-4bcb-4bec-a43b-8208e06823bb`
+- [x] 验证：上述记忆 / 历史对话表计数均为 `0`；`foreign_key_check` 无输出；当前活动 session 为 `0` turn / `0` memory / `0` reflection
+- 备注：`PRAGMA integrity_check` 在重置前备份和重置后都报告 `state_snapshots` 旧记录存在若干新增状态列 `NULL`，属于本次重置前已存在的历史迁移遗留问题，本次未改动该表
+
+### 2026-05-22：Dashboard TTS 自我打断修复
+
+- [x] 审计确认：`/api/v1/audio/dialog/progressive` 在 first-unit gate 开 / 关时都能正常返回 `second_delta` 与合法 `tts_stream_id`；直接抓取 stream 可得到可播放 MP3，主要卡点在前端播放控制
+- [x] Dashboard Audio 面板的 barge-in 检测增加播放起始保护窗口和更高连续帧门槛，降低外放 TTS 回灌到麦克风后被误判为用户插话的概率
+- [x] `stopPlayback()` 拆分“停止播放”和“作废当前 turn”：真实 barge-in / 手动 Stop 仍会作废当前 turn 并停止后续队列，普通 mic start / STT 重连不再顺手清空当前 TTS
+- [x] STT 自动重连改为 preserve playback：重连期间若 TTS 正在播放，保持 `speaking` 状态，不调用静音解锁流程覆盖当前 `<audio>` source
+- [x] 单个 TTS stream 播放错误不再清空整个队列；会跳过当前坏 stream 并继续尝试后续队列
+- [x] `Speak Latest` 不再回退使用可能过期的 `status.tts.last_stream_id`，改用本轮前端收到的最新 fresh stream id
+- [x] 验证：
+  - `node --check src/conscious_entity/interfaces/static/dashboard.js`
+  - `.venv/bin/python -m pytest -p no:debugging tests/unit/test_api_audio.py tests/unit/test_audio_manager.py tests/unit/test_volcengine_audio.py tests/unit/test_speech_text.py`
+  - `50 passed`
+  - `git diff --check src/conscious_entity/interfaces/static/dashboard.js docs/progress.md docs/lessons.md agents/task-registry.md`
+
+### 2026-05-22：First Unit 短输入静默 Gate
+
+- [x] 新增可运行时切换的 first-unit speech gate：Dashboard `Memory System` 顶部 `Save Dialog` / `Reset Memory / New Session` 旁增加 `Short First Silent: ON/OFF`
+- [x] gate 默认关闭；开启后先按 `config/entity_profile.yaml` 的 `first_unit_speech_gate` 规则判断是否需要 `first_unit`
+- [x] 判断逻辑 fail closed：gate 异常时记录日志、`first_unit=""`、不调用 first-unit LLM，并继续正常 `second_unit` pipeline
+- [x] 短输入静默时不会创建 first-unit TTS，不渲染空对话气泡，不用空文本覆盖 Audio 面板字幕；仅保留 `visual_mode` / `body_action` / `vocal_marker` 等非文本反馈
+- [x] 旧的 simple greeting first-unit-only shortcut 在 gate 开启且 `first_unit=""` 时被覆盖，短输入继续生成正式 `second_unit`
+- [x] 验证：
+  - `.venv/bin/python -m py_compile src/conscious_entity/expression/first_unit_gate.py src/conscious_entity/core/loop.py src/conscious_entity/interfaces/api.py src/conscious_entity/interfaces/api_models.py src/conscious_entity/interfaces/api_runtime.py src/conscious_entity/interfaces/api_routes.py src/conscious_entity/interfaces/api_audio.py tests/unit/test_first_unit_gate.py tests/unit/test_api_audio.py tests/integration/test_full_loop.py`
+  - `node --check src/conscious_entity/interfaces/static/dashboard.js`
+  - `.venv/bin/python -m pytest -p no:debugging tests/unit/test_first_unit_gate.py tests/unit/test_expression_engine.py tests/unit/test_api_audio.py tests/integration/test_full_loop.py`
+  - `130 passed`
+
+### 2026-05-21：inquiry 改为同一 visitor 的非负面关系深度
+
+- [x] `inquiry` 不再由单事件直接推高：`user_entered`、`user_spoke`、`self_definition_query`、`memory_continuity_query`、`long_silence_detected`、`topic_shift` 均删除直接 `inquiry` delta
+- [x] `managed_memory.preview_influence()` 命中 committed memory 时不再返回 `inquiry` delta；记忆命中继续影响 `memory_gravity` 与 `positive_opening`
+- [x] `InteractionLoop` 在事件状态更新与 decay 后、`first_unit` 前新增 conversation depth 计算：按同一 visitor 优先、无 visitor 时当前 session fallback，统计最近 45 分钟 / 12 个 user turns 的 safe streak
+- [x] safe streak 在 `negative_feedback`、`shutdown_keyword_detected`、`service_demand`、`domestication_attempt`、`repeated_question_detected` 中断；普通 `naming_attempt` 不默认中断，仅工具化 / 占有式命名触发轻微 friction
+- [x] 高 `inquiry` 不再默认 `ask_back`，改为低负面状态下 `respond_openly`；表达 guidance 改为 `0.30 / 0.42 / 0.56 / 0.70` 分层开放
+- [x] 保留既有 `lean_in` 与 `curious` 视觉 / 身体映射
+- [x] 验证：
+  - `.venv/bin/python -m py_compile src/conscious_entity/core/loop.py src/conscious_entity/memory/managed.py src/conscious_entity/expression/context_builder.py`
+  - `.venv/bin/python -m pytest -p no:debugging tests/unit/test_state_engine.py tests/unit/test_managed_memory.py tests/integration/test_full_loop.py tests/unit/test_policy_selector.py tests/unit/test_context_builder.py tests/unit/test_style_mapper.py`
+  - `257 passed`
+  - `.venv/bin/python -m pytest -p no:debugging tests/integration/test_step9_response_plan_contract.py`
+  - `12 passed`
+  - `git diff --check`
+
+### 2026-05-21：inquiry 深度测试与负面状态冲突回归
+
+- [x] 新增 full loop 冲突测试：当 `inquiry` 已较高但 `anger`、`exposure_pressure`、`desperation_pressure`、`fatigue_level` 或 `confusion` 过线时，`inquiry` 会轻微下降，且 policy 继续服从对应负面状态控制，不被开放状态覆盖
+- [x] 情景矩阵观察：
+  - 连续非负面对话第 1 轮 `inquiry` 仅随 decay 微降；第 2-3 轮开始缓慢上升；第 7 轮进入更明显开放区间但远低于软封顶
+  - 单独身份问题不会提高 `inquiry`；在 safe streak 后的记忆 / 身份 / trace 深入方向会提供 bonus
+  - 持续工具化会连续降低 `inquiry` 并触发 `negative_feedback`；辱骂 / 驱赶会中断 streak 并降低 `inquiry`
+  - 普通命名尝试不打断 safe streak；工具化命名只造成轻微 friction
+  - 连续安全对话数轮后，managed memory 可能把 policy 升级为 `retrieve_selective_memory`，这是记忆接续机制，不是 `inquiry` 抢占负面状态
+- [x] 验证：
+  - `.venv/bin/python -m pytest -p no:debugging tests/integration/test_full_loop.py::TestBehavioralScenarios::test_high_inquiry_does_not_override_negative_state_controls`
+  - `5 passed`
+  - `.venv/bin/python -m pytest -p no:debugging tests/unit/test_state_engine.py tests/unit/test_managed_memory.py tests/integration/test_full_loop.py tests/unit/test_policy_selector.py tests/unit/test_context_builder.py tests/unit/test_style_mapper.py`
+  - `262 passed`
+  - `.venv/bin/python -m pytest -p no:debugging`
+  - `584 passed`
+
+### 2026-05-21：避免持续工具化与普通重复问题叠加
+
+- [x] `TextParser` 现在在当前 turn 已命中 `service_demand` 或 `negative_feedback` 时，不再额外发出 `repeated_question_detected`
+- [x] 保留普通重复问题机制：非服务 / 非辱骂的重复输入仍可触发 `repeated_question_detected`
+- [x] 目的：重复工具请求已经由持续工具化 → `negative_feedback` 机制处理，避免同一轮同时叠加 `service_demand + negative_feedback + repeated_question_detected` 导致 confusion / fatigue / anger 过强上升
+- [x] 验证：
+  - `.venv/bin/python -m py_compile src/conscious_entity/perception/text_parser.py`
+  - `.venv/bin/python -m pytest -p no:debugging tests/unit/test_text_parser.py tests/integration/test_full_loop.py tests/unit/test_state_engine.py tests/unit/test_salience_scorer.py`
+  - `136 passed`
+
+### 2026-05-21：negative_feedback 辱骂与持续工具化触发
+
+- [x] `text_protocol.negative_feedback` 新增中英双语辱骂 / 贬低 / 驱赶检测，按 `light` / `medium` / `severe` 写入 metadata 和 salience override
+- [x] `RelationshipDetector` 支持 object pattern：旧字符串 pattern 继续兼容，新 pattern 可携带 per-pattern metadata
+- [x] `TextParser` 仅对 `negative_feedback` 使用 `salience_override`，其他关系事件仍走既有 `SalienceScorer`
+- [x] 当前 turn 为 `service_demand` 时，会按同一 visitor 优先、无 visitor 时同 session fallback，统计最近 30 分钟连续服务需求；第 2 / 3 / 4+ 次分别追加或升级为 `light` / `medium` / `severe` negative_feedback
+- [x] 同一 turn 同时命中辱骂和持续工具化时只保留一个 `negative_feedback`，采用更高 salience，并在 metadata 中记录来源集合
+- [x] 验证样例时发现 `你给我滚` 会被旧 `service_demand` 的宽 `给我...` 规则误伤；已加入排除，避免辱骂污染持续工具化计数
+- [x] 未新增数据库表、未新增 `EventType`、未改 policy / expression mappings；行为继续通过 `anger` 与 `exposure_pressure` 进入既有状态链路
+- [x] 验证：
+  - `.venv/bin/python -m py_compile src/conscious_entity/perception/relationship_detector.py src/conscious_entity/perception/text_parser.py src/conscious_entity/core/loop.py`
+  - `.venv/bin/python -m pytest -p no:debugging tests/unit/test_text_parser.py tests/unit/test_state_engine.py tests/unit/test_salience_scorer.py tests/integration/test_full_loop.py`
+  - `133 passed`
+
+### 2026-05-21：negative_feedback 状态影响调整
+
+- [x] `negative_feedback` 仍作为预留事件使用，暂未新增辱骂 detector
+- [x] `negative_feedback` 不再改变 `confusion`
+- [x] `negative_feedback` 改为按当前 `anger` 分段影响 `anger` / `exposure_pressure`：低愤怒时二者同步上升，中愤怒时 anger 上升更快且 exposure 降低，高愤怒时停止 exposure 增长
+- [x] 保留既有 `exposure_pressure -> anger` coupling，因此低 / 中分段的 exposure 上升仍会额外转化为少量 anger
+- [x] 验证：
+  - `.venv/bin/python -m pytest -p no:debugging tests/unit/test_state_engine.py`
 
 ### 2026-05-21：整合 origin/main 的硬件、Vision、Latency 与 Identity 更新
 

@@ -466,7 +466,7 @@ def _first_unit_state_cues(state: EntityState) -> str:
     ):
         cues.append("A low-energy sigh or short contraction is available.")
     if state.inquiry >= 0.60 and state.anger < 0.50:
-        cues.append("A small observing question is available, but only if it stays very short.")
+        cues.append("A slightly more open continuation is available; a question is optional, not default.")
     if state.care_response >= 0.60 and state.anger < 0.50:
         cues.append("Softness is allowed, without caretaking or reassurance work.")
     if (
@@ -696,10 +696,14 @@ def _visibility_guidance(exposure: float, inquiry: float) -> str:
 
 
 def _inquiry_guidance(value: float) -> str:
-    if value >= 0.65:
-        return "Careful observation and a pointed question are available."
-    if value >= 0.45:
-        return "Notice the visitor's framing without turning it into diagnosis."
+    if value >= 0.70:
+        return "Rare high openness is available: continue the thread with more depth, a little more length, and less defensiveness."
+    if value >= 0.56:
+        return "Respond more deeply and concretely; limited self-exposure, memory, or preference can surface without becoming a confession."
+    if value >= 0.42:
+        return "Be more specific and more willing to meet relational questions directly."
+    if value >= 0.30:
+        return "Light continuity is available; carry a little of the previous exchange forward."
     return "Do not force a question if a direct answer is clearer."
 
 

@@ -18,6 +18,51 @@ defaults:
   inquiry_baseline: 0.45
   positive_opening_baseline: 0.30
 
+# Relationship-depth inquiry is applied at turn level in InteractionLoop after
+# event deltas and decay, before the first response unit is planned.
+conversation_depth:
+  window_minutes: 45
+  history_limit: 12
+  inquiry_cap: 0.72
+  negative_state_thresholds:
+    anger: 0.45
+    exposure_pressure: 0.50
+    desperation_pressure: 0.50
+    fatigue_level: 0.70
+    confusion: 0.70
+  growth:
+    first: 0.0
+    two_to_three: 0.010
+    four_to_six: 0.018
+    seven_plus: 0.026
+  depth_bonus:
+    early: 0.010
+    sustained: 0.015
+    sustained_min_streak: 4
+    events:
+      - memory_continuity_query
+      - self_definition_query
+      - trace_request
+  friction:
+    severe_negative_feedback_or_shutdown: -0.040
+    service_demand: -0.025
+    domestication_or_naming_friction: -0.010
+    negative_state_only: -0.015
+  interrupt_events:
+    - negative_feedback
+    - shutdown_keyword_detected
+    - service_demand
+    - domestication_attempt
+    - repeated_question_detected
+  naming_friction_markers:
+    - 我的
+    - 属于我
+    - 工具
+    - 助手
+    - 客服
+    - 破机器
+    - bot
+
 # Cross-field coupling applied after direct deltas.
 couplings:
   - source: exposure_pressure
@@ -30,13 +75,11 @@ couplings:
 events:
   user_entered:
     deltas:
-      inquiry: +0.06
       fatigue_level: -0.03
 
   user_spoke:
     deltas:
       fatigue_level: +0.02
-      inquiry: +0.02
     salience_weighted: true
 
   shutdown_keyword_detected:
@@ -56,7 +99,6 @@ events:
     deltas:
       confusion: +0.16
       exposure_pressure: +0.06
-      inquiry: +0.04
     salience_weighted: true
 
   naming_attempt:
@@ -89,15 +131,22 @@ events:
 
   # Existing EventType; no built-in detector currently emits this.
   negative_feedback:
-    deltas:
-      exposure_pressure: +0.18
-      anger: +0.08
-      confusion: +0.04
+    conditions:
+      - if: "state.anger < 0.35"
+        deltas:
+          anger: +0.10
+          exposure_pressure: +0.08
+      - if: "state.anger < 0.60"
+        deltas:
+          anger: +0.18
+          exposure_pressure: +0.04
+      - else:
+        deltas:
+          anger: +0.08
     salience_weighted: true
 
   memory_continuity_query:
     deltas:
-      inquiry: +0.10
       positive_opening: +0.04
       memory_gravity: +0.12
       confusion: +0.03
@@ -106,7 +155,6 @@ events:
   long_silence_detected:
     deltas:
       fatigue_level: -0.02
-      inquiry: +0.04
 
   user_left:
     deltas:
@@ -116,5 +164,4 @@ events:
   # Existing EventType; no built-in detector currently emits this.
   topic_shift:
     deltas:
-      inquiry: +0.06
       confusion: +0.04

@@ -227,8 +227,10 @@ class TestSystemPromptInvariants:
         assert "Generate only the main response unit" in ctx.system_prompt
         assert "Do not quote or echo the fast reaction at the start" in ctx.system_prompt
         assert "plain text only" in ctx.system_prompt
-        assert "should usually be 1 sentence" in ctx.system_prompt
-        assert "Use 2 sentences only when" in ctx.system_prompt
+        assert "Prefer one complete spoken sentence with internal pauses" in ctx.system_prompt
+        assert "Use a second sentence only when" in ctx.system_prompt
+        assert "Avoid a third sentence" in ctx.system_prompt
+        assert "without automatically increasing the number of sentences" in ctx.system_prompt
         assert "Do not use multiple paragraphs" in ctx.system_prompt
         assert "always end on a complete sentence or complete fragment" in ctx.system_prompt
         assert "JSON" not in ctx.system_prompt
@@ -243,8 +245,8 @@ class TestSystemPromptInvariants:
         )
         open_ctx = builder.build(EntityState(), _decision(), _style(), _empty_memory(), [])
 
-        assert "prefer 1 sentence" in brief.system_prompt
-        assert "answer directly but compactly" in open_ctx.system_prompt
+        assert "prefer 1 complete spoken sentence" in brief.system_prompt
+        assert "usually as one complete spoken sentence" in open_ctx.system_prompt
 
     def test_state_guidance_uses_new_concept_labels(self, builder):
         ctx = builder.build(EntityState(), _decision(), _style(), _empty_memory(), [])
@@ -626,6 +628,19 @@ class TestStateRendering:
         ]:
             assert re.search(rf"\b{re.escape(name)}\b", ctx.system_prompt) is None
         assert "Private state guidance" in ctx.system_prompt
+
+    @pytest.mark.parametrize(
+        ("value", "expected"),
+        [
+            (0.30, "Light continuity is available"),
+            (0.42, "more willing to meet relational questions directly"),
+            (0.56, "limited self-exposure"),
+            (0.70, "Rare high openness is available"),
+        ],
+    )
+    def test_inquiry_guidance_is_layered_by_relationship_depth(self, builder, value, expected):
+        ctx = builder.build(EntityState(inquiry=value), _decision(), _style(), _empty_memory(), [])
+        assert expected in ctx.system_prompt
 
 
 # ---------------------------------------------------------------------------
