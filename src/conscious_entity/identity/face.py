@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib.util
 import json
 import math
+import threading
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -289,15 +290,16 @@ class FaceSignatureStore:
         self.root = root
 
     def status(self) -> dict[str, Any]:
+        records = self._all_records()
+        active_count = len([record for record in records if record.status == "active"])
         return {
             "path": str(self.root),
-            "signature_count": self.count(),
+            "signature_count": active_count,
+            "inactive_signature_count": len(records) - active_count,
         }
 
     def count(self) -> int:
-        if not self.root.exists():
-            return 0
-        return len(list(self.root.glob("*.npz")))
+        return len([record for record in self._all_records() if record.status == "active"])
 
     def save(self, visitor_id: str, capture: FaceCapture) -> IdentitySignatureReference:
         cleaned = _blank_to_none(visitor_id)
@@ -334,6 +336,47 @@ class FaceSignatureStore:
         )
 
     def list_records(self) -> list[FaceSignatureRecord]:
+        return [record for record in self._all_records() if record.status == "active"]
+
+    def deactivate(self, *, visitor_id: str, signature_id: str) -> IdentitySignatureReference:
+        cleaned_visitor = _blank_to_none(visitor_id)
+        cleaned_signature = _blank_to_none(signature_id)
+        if cleaned_visitor is None or cleaned_signature is None:
+            raise FaceIdentityError("visitor_id and signature_id are required.")
+        path = self.root / f"{cleaned_signature}.npz"
+        if not path.exists():
+            raise FaceIdentityError("Face signature not found.")
+        np = _import_required("numpy", "numpy")
+        record = self._load_record(path)
+        if record.visitor_id != cleaned_visitor:
+            raise FaceIdentityError("Face signature does not belong to visitor.")
+        metadata = {
+            "signature_id": record.signature_id,
+            "visitor_id": record.visitor_id,
+            "provider": record.provider,
+            "model_name": record.model_name,
+            "reference": record.reference,
+            "quality_summary": _public_metadata(record.quality_summary),
+            "created_at": record.created_at,
+            "status": "inactive",
+            "updated_at": _now_iso(),
+        }
+        np.savez_compressed(
+            path,
+            embedding=_normalize_embedding(record.embedding),
+            metadata=json.dumps(metadata, ensure_ascii=False),
+        )
+        return IdentitySignatureReference(
+            modality="face",
+            signature_id=record.signature_id,
+            provider=record.provider,
+            reference=record.reference,
+            quality_summary=metadata["quality_summary"],
+            created_at=record.created_at,
+            status="inactive",
+        )
+
+    def _all_records(self) -> list[FaceSignatureRecord]:
         if not self.root.exists():
             return []
         records: list[FaceSignatureRecord] = []
@@ -342,8 +385,7 @@ class FaceSignatureStore:
                 record = self._load_record(path)
             except Exception:
                 continue
-            if record.status == "active":
-                records.append(record)
+            records.append(record)
         return records
 
     def match(
@@ -409,26 +451,38 @@ class FaceIdentityManager:
         self.provider = provider or InsightFaceArcFaceProvider(config)
         self.store = store or FaceSignatureStore(config.signature_dir)
         self.gating_config = gating_config or IdentityGatingConfig()
+        self._lock = threading.Lock()
         self._pending_capture: FaceCapture | None = None
         self._last_capture: FaceCaptureOutcome | None = None
         self._last_enrolled: IdentitySignatureReference | None = None
+        self._auto_capture_in_flight = False
+        self._auto_capture_cooldown_seconds = 6.0
+        self._last_auto_capture_started_at: str | None = None
+        self._last_auto_capture_finished_at: str | None = None
+        self._last_auto_capture_reason: str | None = None
 
     def status(self) -> dict[str, Any]:
         model = self.provider.model_status()
+        with self._lock:
+            pending_capture = self._pending_capture
+            last_capture = self._last_capture
+            last_enrolled = self._last_enrolled
+            auto_capture = self._auto_capture_status_locked()
         return {
             "enabled": bool(model.get("dependencies", {}).get("available")),
             "config": self.config.to_public_dict(),
             "model": model,
             "store": self.store.status(),
-            "pending_capture": self._pending_capture.to_public_dict()
-            if self._pending_capture
+            "pending_capture": pending_capture.to_public_dict()
+            if pending_capture
             else None,
-            "last_capture": self._last_capture.to_public_dict()
-            if self._last_capture
+            "last_capture": last_capture.to_public_dict()
+            if last_capture
             else None,
-            "last_enrolled": self._last_enrolled.to_public_dict()
-            if self._last_enrolled
+            "last_enrolled": last_enrolled.to_public_dict()
+            if last_enrolled
             else None,
+            "auto_capture": auto_capture,
         }
 
     def capture_and_match(self, image_bytes: bytes) -> FaceCaptureOutcome:
@@ -436,14 +490,16 @@ class FaceIdentityManager:
             candidates = self.provider.extract(image_bytes)
         except FaceIdentityError as exc:
             outcome = FaceCaptureOutcome(False, str(exc))
-            self._last_capture = outcome
-            self._pending_capture = None
+            with self._lock:
+                self._last_capture = outcome
+                self._pending_capture = None
             return outcome
         accepted, reason, candidate = self._select_candidate(candidates)
         if not accepted or candidate is None:
             outcome = FaceCaptureOutcome(False, reason)
-            self._last_capture = outcome
-            self._pending_capture = None
+            with self._lock:
+                self._last_capture = outcome
+                self._pending_capture = None
             return outcome
 
         capture = FaceCapture(
@@ -462,17 +518,65 @@ class FaceIdentityManager:
             matches=matches,
             match_result=match_result,
         )
-        self._pending_capture = capture
-        self._last_capture = outcome
+        with self._lock:
+            self._pending_capture = capture
+            self._last_capture = outcome
         return outcome
 
     def enroll_pending(self, visitor_id: str) -> IdentitySignatureReference:
-        if self._pending_capture is None:
+        with self._lock:
+            pending_capture = self._pending_capture
+        if pending_capture is None:
             raise FaceIdentityError("No accepted pending face capture is available for enrollment.")
-        reference = self.store.save(visitor_id, self._pending_capture)
-        self._last_enrolled = reference
-        self._pending_capture = None
+        reference = self.store.save(visitor_id, pending_capture)
+        with self._lock:
+            self._last_enrolled = reference
+            if self._pending_capture is pending_capture:
+                self._pending_capture = None
         return reference
+
+    def deactivate_signature(self, *, visitor_id: str, signature_id: str) -> IdentitySignatureReference:
+        return self.store.deactivate(visitor_id=visitor_id, signature_id=signature_id)
+
+    def start_auto_capture(self) -> tuple[bool, str | None]:
+        with self._lock:
+            if self._auto_capture_in_flight:
+                return False, "capture_in_flight"
+            remaining = self._auto_capture_cooldown_remaining_locked()
+            if remaining > 0:
+                return False, "capture_cooldown"
+            self._auto_capture_in_flight = True
+            self._last_auto_capture_started_at = _now_iso()
+            self._last_auto_capture_reason = "started"
+            return True, None
+
+    def finish_auto_capture(self, reason: str) -> None:
+        with self._lock:
+            self._auto_capture_in_flight = False
+            self._last_auto_capture_finished_at = _now_iso()
+            self._last_auto_capture_reason = reason
+
+    def _auto_capture_status_locked(self) -> dict[str, Any]:
+        return {
+            "in_flight": self._auto_capture_in_flight,
+            "cooldown_seconds": self._auto_capture_cooldown_seconds,
+            "cooldown_remaining_seconds": round(
+                self._auto_capture_cooldown_remaining_locked(), 2
+            ),
+            "last_started_at": self._last_auto_capture_started_at,
+            "last_finished_at": self._last_auto_capture_finished_at,
+            "last_reason": self._last_auto_capture_reason,
+        }
+
+    def _auto_capture_cooldown_remaining_locked(self) -> float:
+        if self._last_auto_capture_started_at is None:
+            return 0.0
+        try:
+            started = datetime.fromisoformat(self._last_auto_capture_started_at)
+        except ValueError:
+            return 0.0
+        elapsed = (datetime.now(timezone.utc) - started).total_seconds()
+        return max(0.0, self._auto_capture_cooldown_seconds - elapsed)
 
     def _select_candidate(
         self,

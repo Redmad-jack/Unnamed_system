@@ -232,6 +232,9 @@ class IdentitySessionStatus:
     waiting_for_identity_confirmation: bool = False
     interruption_count: int = 0
     latest_match: dict[str, Any] | None = None
+    capture_in_flight: bool = False
+    last_capture_rejection: dict[str, Any] | None = None
+    last_natural_confirmation: dict[str, Any] | None = None
     confirmation_state: dict[str, Any] = field(default_factory=lambda: {
         "status": "none",
         "candidate_visitor_id": None,
@@ -256,6 +259,14 @@ class IdentitySessionStatus:
             "waiting_for_identity_confirmation": self.waiting_for_identity_confirmation,
             "interruption_count": self.interruption_count,
             "latest_match": _public_metadata(self.latest_match) if self.latest_match else None,
+            "visitor_memory_allowed": self.primary_visitor_id is not None,
+            "capture_in_flight": self.capture_in_flight,
+            "last_capture_rejection": _public_metadata(self.last_capture_rejection)
+            if self.last_capture_rejection
+            else None,
+            "last_natural_confirmation": _public_metadata(self.last_natural_confirmation)
+            if self.last_natural_confirmation
+            else None,
             "confirmation_state": _public_metadata(self.confirmation_state),
             "last_decision": self.last_decision.value,
             "last_event": self.last_event,
@@ -517,6 +528,51 @@ class VisitorSessionGatingController:
             )
             return self._identity_context_locked()
 
+    def record_face_capture_diagnostic(
+        self,
+        *,
+        in_flight: bool | None = None,
+        rejection_reason: str | None = None,
+        accepted: bool | None = None,
+        source: str = "manual",
+    ) -> dict[str, Any]:
+        with self._lock:
+            if in_flight is not None:
+                self._status.capture_in_flight = bool(in_flight)
+            if rejection_reason:
+                self._status.last_capture_rejection = {
+                    "reason": rejection_reason,
+                    "source": source,
+                    "updated_at": _now_iso(),
+                }
+            elif accepted:
+                self._status.last_capture_rejection = None
+            self._touch_locked()
+            return self._identity_context_locked()
+
+    def record_natural_confirmation(
+        self,
+        *,
+        status: str,
+        text: str,
+        candidate_visitor_id: str | None = None,
+    ) -> dict[str, Any]:
+        with self._lock:
+            self._status.last_natural_confirmation = {
+                "status": status,
+                "candidate_visitor_id": candidate_visitor_id or self._status.candidate_visitor_id,
+                "text_preview": str(text).strip()[:80],
+                "updated_at": _now_iso(),
+            }
+            self._touch_locked()
+            self._append_event_locked(
+                "natural_identity_confirmation",
+                self._status.last_decision,
+                f"Natural identity confirmation parsed as {status}.",
+                self._status.last_natural_confirmation,
+            )
+            return self._identity_context_locked()
+
     def handle_system_event(self, event_type: EventType) -> dict[str, Any]:
         with self._lock:
             if event_type == EventType.USER_ENTERED:
@@ -630,6 +686,14 @@ class VisitorSessionGatingController:
             if self._status.latest_match
             else None,
             "confirmation_state": _public_metadata(self._status.confirmation_state),
+            "visitor_memory_allowed": self._status.primary_visitor_id is not None,
+            "capture_in_flight": self._status.capture_in_flight,
+            "last_capture_rejection": _public_metadata(self._status.last_capture_rejection)
+            if self._status.last_capture_rejection
+            else None,
+            "last_natural_confirmation": _public_metadata(self._status.last_natural_confirmation)
+            if self._status.last_natural_confirmation
+            else None,
         }
 
     def _public_status_locked(self) -> dict[str, Any]:

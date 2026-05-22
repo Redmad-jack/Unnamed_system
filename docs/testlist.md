@@ -4,19 +4,19 @@ This file tracks tests that require real devices, supplier APIs, exhibition spac
 
 ## Handoff Priority
 
-1. Complete voiceprint recognition, face/voice combined confidence, and the visitor library closure.
+1. Complete the face-only visitor identity closure: auto capture, candidate confirmation, visitor binding, memory permission, and database pollution checks.
 2. Run capability self-description regression tests and optimize mismatches.
 3. Run behavior testing and tuning from this file; behavior cases are intentionally not duplicated in `docs/progress.md`.
 
 ## Voiceprint / Visual Recognition / Visitor Library
 
-- [ ] Voice signature capture test: capture enough speech only after dialogue intent is clear, and reject low-quality or too-short audio.
+- [ ] Voice signature capture test: optional P1 follow-up; capture enough speech only after dialogue intent is clear, and reject low-quality or too-short audio.
 - [ ] Face signature capture field test: with local InsightFace / ArcFace installed, capture normal front-camera frames only after encounter / intent gating, and reject blur, strong angle, occlusion, insufficient face size, no-face, and multi-face frames.
-- [ ] Historical match field test: compare new face / future voice signatures against existing visitor profiles and produce high / medium / low confidence decisions without high-confidence false binding.
-- [ ] Combined identity confidence test: verify face-only, voice-only, and combined face+voice matching, including disagreement cases.
+- [ ] Historical match field test: compare new face signatures against existing visitor profiles and produce high / medium / low confidence decisions without high-confidence false binding.
+- [ ] Combined identity confidence test: optional P1 follow-up; verify face-only, voice-only, and combined face+voice matching, including disagreement cases.
 - [ ] Natural confirmation test: when confidence is high enough, ask a non-blocking confirmation such as whether the visitor is a known person; if there is no answer, continue without forcing identity input.
 - [ ] Visitor profile persistence test: store identity metadata and signature references in `visitor_profiles.metadata` or a documented companion structure without exposing raw biometric data in the developer panel.
-- [ ] Identity match API integration test: feed simulated face / voice / combined match result through `/api/v1/identity/match`, then confirm or reject candidate through `/api/v1/identity/confirm`.
+- [ ] Identity match API integration test: feed simulated face match result through `/api/v1/identity/match`, then confirm or reject candidate through `/api/v1/identity/confirm`.
 - [ ] Database pollution test: passing-by observers, distant onlookers, and non-responsive people should not create visitor profiles.
 
 ## Entity Self-Model And Capability Consistency
@@ -36,7 +36,7 @@ This file tracks tests that require real devices, supplier APIs, exhibition spac
 
 - [ ] Encounter and Intent Gating field test: passing by, watching from a distance, stopping nearby, looking at Stranger, and answering a greeting must be distinguished.
 - [ ] Normal low-distortion front camera face quality gate: verify face size, blur, angle, occlusion, and lighting thresholds before identity matching or storage.
-- [ ] Face / voice / combined confidence threshold test: verify high-confidence confirmation, medium-confidence candidate behavior, and low-confidence new-visitor behavior.
+- [ ] Face confidence threshold test: verify high-confidence confirmation, medium-confidence candidate behavior, and low-confidence new-visitor behavior; voice / combined confidence remains optional P1.
 - [ ] Existing dialogue interruption test: a new speaker should not replace the current primary visitor in V1; record an interruption event and preserve the current session.
 - [ ] Idle state session test: only create or restore a dialogue session when intent is clear, not merely because a person appears.
 - [ ] Identity confirmation copy test: asking "Are you X?" should be natural and non-blocking; if the visitor does not answer, the dialogue should continue without confirmed identity.

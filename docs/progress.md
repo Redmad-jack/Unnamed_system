@@ -8,9 +8,9 @@
 
 - 当前进行中：无
 - 当前可运行形态：CLI + 本地 FastAPI 开发者 API + Web 看板 + progressive text/audio NDJSON + 可选 Vision 面板 + 可选 Audio Adapter + `/visitor` 临时身体表面 + `/art` 情绪粒子身体表面 + ESP32-S3 下位机固件原型；观众侧最终呈现方向是身体，不是传统 UI
-- 当前核心能力：Stranger 文本协议、最高优先级艺术运行 context、热加载 prompt partial、本轮语言强制优先与错语言兜底、非否认式能力边界正向模板与输入通道防自我否认约束、含“恋旧” memory_gravity 的新心理状态机、带上一轮轻量 bridge 的 pre-memory 轻量 `first_unit` + 已说出口 first 去重续写的 memory-aware `second_unit` 按句文本/audio progressive 输出、main LLM 后端 streaming buffer、two-stage / sentence-queued TTS、短期/情节/反思记忆、匿名 visitor profile 与跨 session visitor 记忆召回、Visitor Identity & Session Gating V1（含结构化 match result / candidate confirmation 调试 API 与开发者面板 auto-bind high confidence 开关）、本地 face signature capture / quality gate / 私有向量库 / historical matching、可解释/可选 embedding 召回、Memory Preview、managed memory proposal → commit、influence log / curation、Runtime Harness Trace、JSONL 端到端 latency 日志、可选 YOLO person presence detection（含 camera index 扫描/切换与 Browser Camera fallback）、可选火山 ASR 2.0 / TTS 2.0 双向流式 Audio Adapter、开发者面板 Audio playback queue / watchdog / barge-in 诊断
-- 当前验证基线：`PYTHONPATH=src python3 -m pytest -p no:debugging`，最近一次完整结果为 `561 passed`
-- 当前交接重点：下一步不再优先扩展 UI，而是基于已接入的本地 face signature 继续补齐 voice signature、face/voice combined confidence、自然确认表达、数据库污染测试和 visitor memory continuity 验证；能力自我描述已改为非否认式边界，后续按该口径继续做行为测试调优
+- 当前核心能力：Stranger 文本协议、最高优先级艺术运行 context、热加载 prompt partial、本轮语言强制优先与错语言兜底、非否认式能力边界正向模板与输入通道防自我否认约束、含“恋旧” memory_gravity 的新心理状态机、带上一轮轻量 bridge 的 pre-memory 轻量 `first_unit` + 已说出口 first 去重续写的 memory-aware `second_unit` 按句文本/audio progressive 输出、main LLM 后端 streaming buffer、two-stage / sentence-queued TTS、短期/情节/反思记忆、匿名 visitor profile 与跨 session visitor 记忆召回、Visitor Identity & Session Gating V1（含结构化 match result / candidate confirmation 调试 API、自然确认解析、visitor memory permission 和开发者面板 auto-bind high confidence 开关）、本地 face signature capture / quality gate / 私有向量库 / historical matching / 后台 face candidate capture / signature deactivate、可解释/可选 embedding 召回、Memory Preview、managed memory proposal → commit、influence log / curation、Runtime Harness Trace、JSONL 端到端 latency 日志、可选 YOLO person presence detection（含 camera index 扫描/切换与 Browser Camera fallback）、可选火山 ASR 2.0 / TTS 2.0 双向流式 Audio Adapter、开发者面板 Audio playback queue / watchdog / barge-in 诊断
+- 当前验证基线：`PYTHONPATH=src python3 -m pytest -p no:debugging`，最近一次完整结果为 `576 passed`
+- 当前交接重点：下一步不再优先扩展 UI；voice signature 与 face/voice combined confidence 暂列 P1 optional，P0 收束为 face-only visitor identity 的现场阈值校准、数据库污染测试和 visitor memory continuity 验证；能力自我描述已改为非否认式边界，后续按该口径继续做行为测试调优
 - 当前硬件参考方案：`docs/references/hardware.md` 与 `docs/references/system_logic.md` 已更新为单 Stranger 移动身体方向：Mac mini 随身上位机 + 1 片 ESP32-S3 + TCA9548A + 4 个 VL53L1X + 四路有刷电机驱动 + 4 个 36JP555；`firmware/stranger_esp32s3` 已有 PlatformIO 下位机固件，包含串口协议、ToF telemetry / obstacle gate、四路电机测试、4WD 差速底盘开环控制和 ESP32 本地低速 roam
 - 当前注意事项：`AGENTS.md` 与 `CLAUDE.md` 有用户侧未提交差异；除非明确要求，不应在常规任务中触碰
 
@@ -20,10 +20,10 @@
 
 ### P0：合作者优先处理
 
-- [ ] 完整声纹识别、combined confidence 与访客库闭环
+- [ ] Face-only 访客库闭环现场验收
   - 基于当前 Visitor Identity & Session Gating V1 继续做，不要求观众硬性输入身份
-  - Face signature capture、质量门控、私有向量库和 face historical matching 已接入；后续完成 voice signature、combined confidence、自然确认和 visitor memory continuity 验证
-  - 当前 V1 已支持结构化识别结果接入、候选确认调试 API 和 face capture API，但不能误读为已完成声纹 / combined identity 闭环
+  - Face signature capture、质量门控、私有向量库、face historical matching、后台 candidate capture、自然确认和 visitor memory permission 已接入；后续完成真实展场阈值校准、污染测试和 visitor memory continuity 验证
+  - Voice signature 与 face/voice combined confidence 暂列 P1 optional；当前不能误读为已完成多模态身份闭环
 - [ ] 能力自我描述回归测试与优化
   - 重点检查 Stranger 对“看见、听见、记得、识别、移动、身体、声音、记忆”的自我描述是否符合非否认式能力边界：不直接说“没有 / 不能 / 做不到”，但也不编造未进入 runtime 的细节、不服从证明测试
   - `docs/testlist.md` 的 capability consistency 条目仍需后续按 Step 12 新口径同步细化
@@ -47,6 +47,20 @@
 ---
 
 ## Changelog
+
+### 2026-05-22：Face-only Visitor Identity Closure
+
+- [x] 将访客识别 P0 收束为 face-only：voice signature 与 face/voice combined confidence 暂列 P1 optional
+- [x] Dialogue intent 已确认、无 confirmed primary visitor、无 pending candidate 且 cooldown 允许时，后台触发一次 face capture + historical match；该流程不阻塞本轮对话
+- [x] High-confidence face match 仍只进入 candidate；下一轮 prompt 注入非强制确认 cue，明确肯定后才绑定 visitor 并启用 visitor-scoped memory retrieval，明确否定后清空 candidate，含糊回答继续普通对话
+- [x] Identity status 新增 `visitor_memory_allowed`、`capture_in_flight`、`last_capture_rejection`、`last_natural_confirmation`；Face status 新增 auto-capture cooldown / in-flight 状态
+- [x] 新增 `POST /api/v1/identity/face/signature/deactivate`：将错误 face signature 标记为 inactive，不删除本地 `.npz`，inactive signature 不参与 matching
+- [x] Dashboard `Visitor Identity & Gating` 新增 candidate confirm / reject、visitor memory allowed、capture rejection、natural confirmation、auto-capture 和 face signature deactivate 诊断 / 操作
+- [x] 验证：
+  - `python3 -m py_compile src/conscious_entity/identity/face.py src/conscious_entity/identity/session_gating.py src/conscious_entity/expression/context_builder.py src/conscious_entity/interfaces/api_models.py src/conscious_entity/interfaces/api_runtime.py src/conscious_entity/interfaces/api_routes.py src/conscious_entity/interfaces/api.py tests/unit/test_face_identity.py tests/unit/test_api_identity.py`
+  - `node --check src/conscious_entity/interfaces/static/dashboard.js`
+  - `PYTHONPATH=src python3 -m pytest -p no:debugging tests/unit/test_face_identity.py tests/unit/test_api_identity.py`（`21 passed`）
+  - `PYTHONPATH=src python3 -m pytest -p no:debugging`（`576 passed`）
 
 ### 2026-05-22：Dashboard Hardware Teleop / BodyBridge
 

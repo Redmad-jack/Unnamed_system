@@ -33,6 +33,7 @@ from conscious_entity.interfaces.api_models import (
     EmbeddingTestRequest,
     FaceCaptureRequest,
     FaceEnrollRequest,
+    FaceSignatureDeactivateRequest,
     IdentityConfirmRequest,
     IdentityConfigRequest,
     IdentityMatchRequest,
@@ -60,10 +61,12 @@ from conscious_entity.interfaces.api_runtime import (
     _curation_query_reflective,
     _curation_table,
     _curation_text,
+    _deactivate_visitor_identity_signature,
     _embedding_client_from_settings,
     _embedding_settings_from_request,
     _env_embedding_config,
     _env_llm_config,
+    _enrich_identity_context_locked,
     _json_dict,
     _llm_settings_from_request,
     _log_curation,
@@ -426,7 +429,11 @@ async def identity_status(request: Request):
     controller = getattr(request.app.state, "identity_gating", None)
     if controller is None:
         return {"enabled": False, "error": "Identity/session gating not initialised"}
-    return controller.status()
+    payload = controller.status()
+    status = payload.get("status") if isinstance(payload, dict) else None
+    if isinstance(status, dict) and hasattr(request.app.state, "conn"):
+        _enrich_identity_context_locked(request.app.state.conn, status)
+    return payload
 
 
 @router.post("/api/v1/identity/config")
@@ -497,6 +504,12 @@ async def identity_face_capture(request: Request, body: FaceCaptureRequest | Non
         raise HTTPException(status_code=400, detail="No vision frame available for face capture")
 
     outcome = manager.capture_and_match(frame)
+    controller.record_face_capture_diagnostic(
+        in_flight=False,
+        accepted=outcome.accepted,
+        rejection_reason=None if outcome.accepted else outcome.reason,
+        source="manual",
+    )
     identity_status_payload = None
     result = outcome.match_result
     if (
@@ -561,6 +574,35 @@ async def identity_face_enroll(body: FaceEnrollRequest, request: Request):
             request,
             getattr(request.app.state, "visitor_id", None),
         ),
+    }
+
+
+@router.post("/api/v1/identity/face/signature/deactivate")
+async def identity_face_signature_deactivate(
+    body: FaceSignatureDeactivateRequest,
+    request: Request,
+):
+    visitor_id = _blank_to_none(body.visitor_id)
+    signature_id = _blank_to_none(body.signature_id)
+    if visitor_id is None or signature_id is None:
+        raise HTTPException(status_code=400, detail="visitor_id and signature_id are required")
+    manager = _face_identity_manager(request)
+    try:
+        signature = manager.deactivate_signature(
+            visitor_id=visitor_id,
+            signature_id=signature_id,
+        )
+    except FaceIdentityError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    _deactivate_visitor_identity_signature(
+        request.app.state.conn,
+        visitor_id,
+        signature_id,
+    )
+    request.app.state.conn.commit()
+    return {
+        "face_identity": manager.status(),
+        "signature": signature.to_public_dict(),
     }
 
 

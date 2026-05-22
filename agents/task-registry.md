@@ -45,6 +45,21 @@ Status values: `in_progress`, `done`
 
 | File | Agent | Status | Started |
 |------|-------|--------|---------|
+| src/conscious_entity/identity/face.py | Codex | done | 2026-05-22 19:04 CST |
+| src/conscious_entity/identity/session_gating.py | Codex | done | 2026-05-22 19:04 CST |
+| src/conscious_entity/expression/context_builder.py | Codex | done | 2026-05-22 19:04 CST |
+| src/conscious_entity/interfaces/api_models.py | Codex | done | 2026-05-22 19:04 CST |
+| src/conscious_entity/interfaces/api_runtime.py | Codex | done | 2026-05-22 19:04 CST |
+| src/conscious_entity/interfaces/api_routes.py | Codex | done | 2026-05-22 19:04 CST |
+| src/conscious_entity/interfaces/api.py | Codex | done | 2026-05-22 19:04 CST |
+| src/conscious_entity/interfaces/static/dashboard.js | Codex | done | 2026-05-22 19:04 CST |
+| tests/unit/test_face_identity.py | Codex | done | 2026-05-22 19:04 CST |
+| tests/unit/test_api_identity.py | Codex | done | 2026-05-22 19:04 CST |
+| tests/unit/test_vision_runtime.py | Codex | done | 2026-05-22 19:04 CST |
+| docs/APP_FLOW.md | Codex | done | 2026-05-22 19:04 CST |
+| docs/BACKEND_STRUCTURE.md | Codex | done | 2026-05-22 19:04 CST |
+| docs/progress.md | Codex | done | 2026-05-22 19:04 CST |
+| docs/testlist.md | Codex | done | 2026-05-22 19:04 CST |
 | src/conscious_entity/interfaces/static/dashboard.js | Codex | done | 2026-05-22 17:53 CST |
 | agents/task-registry.md | Codex | done | 2026-05-22 17:53 CST |
 | src/conscious_entity/body/__init__.py | Codex | done | 2026-05-22 05:52 CST |

@@ -364,6 +364,7 @@ CREATE TABLE schema_version (
 | `GET` | `/api/v1/identity/face/status` | 查看本地 face identity provider、模型加载、signature store、最近 capture / match 状态 | 本地开发面板，当前无认证 |
 | `POST` | `/api/v1/identity/face/capture` | 从 vision runtime 最近一帧做本地 face capture、quality gate、embedding 和历史匹配，并可进入 identity gating | 本地开发面板，当前无认证 |
 | `POST` | `/api/v1/identity/face/enroll` | 将最近一次 accepted pending face capture 绑定到已有 visitor，并只把 signature reference 写入 visitor metadata | 本地开发面板，当前无认证 |
+| `POST` | `/api/v1/identity/face/signature/deactivate` | 将错误 face signature 标记为 inactive；不删除本地 `.npz`，inactive signature 不参与 matching | 本地开发面板，当前无认证 |
 | `GET` | `/api/v1/body/status` | 查看 ESP32-S3 telemetry cache：ToF、obstacle gate、motion、motor state、last ack/error | 本地开发面板，当前无认证 |
 | `POST` | `/api/v1/body/telemetry` | 接收 ESP32 JSON telemetry 并写入进程内缓存；主要供 serial bridge 或临时调试注入使用 | 本地开发面板，当前无认证 |
 | `GET` | `/api/v1/body/ports` | 列出 pyserial 可见串口，并返回当前 BodyBridge 状态 | 本地开发面板，当前无认证 |
@@ -394,7 +395,7 @@ CREATE TABLE schema_version (
 - `/api/v1/dialog` 与 `/api/v1/audio/dialog` 返回的 `latency_record_id` 用于把后端 turn latency 和浏览器 presentation latency 关联起来。
 
 **Vision 事件边界：**
-- Vision runtime 的实时 presence 层仍只检测 YOLO `person` class；身份识别不在每帧同步运行，只由开发者或后续 gating 在 intent 明确后触发 face capture。
+- Vision runtime 的实时 presence 层仍只检测 YOLO `person` class；身份识别不在每帧同步运行，只在 dialogue intent 已确认、无 confirmed primary visitor、无 pending candidate 且 cooldown 允许时触发一次后台 face capture，或由开发者手动触发。
 - 摄像头 index 可在开发者面板运行期切换；OpenCV 打开摄像头时优先尝试 macOS AVFoundation backend，再回退默认 backend，并在 status 中暴露 open attempts。
 - macOS 拒绝 Python/OpenCV 访问摄像头时，开发者面板可启用 Browser Camera：由已授权的浏览器采集画面并上传 JPEG frame，后端只做解码、YOLO 检测和 snapshot 发布。
 - 稳定进入、离开、长时间静默分别转换为已有 `USER_ENTERED`、`USER_LEFT`、`LONG_SILENCE_DETECTED`。
@@ -405,11 +406,12 @@ CREATE TABLE schema_version (
 - V1 每个 session 只有一个 `primary_visitor_id`；未确认身份时继续使用当前 session 的 unidentified scope。
 - 当前正在对话时，不因为旁人出现或发声自动切换 active visitor；可记录 `interruption_event`，但不启用 group session。
 - 空闲 presence 不等于对话意图；只有文字或语音输入进入 turn loop 时才把 intent 标为 confirmed。
-- 识别结果通过结构化 `IdentityMatchResult` 进入 gating：默认 high confidence 只设置 candidate 并等待非强制确认；开发者可临时开启 `auto_bind_high_confidence`，但只在没有 primary visitor 且非 active dialogue 时自动绑定。
+- 识别结果通过结构化 `IdentityMatchResult` 进入 gating：默认 high confidence 只设置 candidate 并等待非强制确认；candidate 未确认时不允许使用该 visitor 的个人记忆。开发者可临时开启 `auto_bind_high_confidence`，但只在没有 primary visitor 且非 active dialogue 时自动绑定。
 - 本地 face signature 使用 InsightFace / ArcFace (`buffalo_l`)：capture 先做 no face / multi face / detection score / face size / blur / pose 质量门控；通过后生成 embedding 并与 `data/signatures/face/*.npz` 做本地 cosine matching。
 - Face embedding 只保存在私有 signature store；`visitor_profiles.metadata.identity.signatures.face[]` 只保存 `signature_id`、provider、reference、quality summary、created_at 和 status。
-- 开发者面板展示 runtime、decision、candidate、confidence level、latest match summary、confirmation state 和 interruption count；不展示原始人脸图、原始音频、embedding 向量或完整身份库。
-- 后续完整身份识别必须继续保持“非强制输入”：可以询问确认，但 visitor 不回答时仍继续当前对话，不因未确认身份阻断 turn loop。Voice signature、face/voice combined confidence 和自然确认表达仍是下一阶段。
+- 自然确认由 rule-based parser 处理明确肯定 / 否定：肯定后绑定 visitor 并重建 loop，使 visitor-scoped memory retrieval 生效；否定后清空 candidate；含糊回答不阻断 turn loop。
+- 开发者面板展示 runtime、decision、candidate、confidence level、latest match summary、confirmation state、visitor memory allowed、capture rejection 和 interruption count；不展示原始人脸图、原始音频、embedding 向量或完整身份库。
+- 后续完整身份识别必须继续保持“非强制输入”：可以询问确认，但 visitor 不回答时仍继续当前对话，不因未确认身份阻断 turn loop。Voice signature 与 face/voice combined confidence 暂列 P1 optional。
 - 摄像头/YOLO 留在上位机；STM32 后续只接收事件、动作、灯光或电机命令，不接收视频流。
 
 **BodyBridge / Hardware Teleop 边界：**
@@ -450,8 +452,8 @@ OPERATOR_API_KEY=your_secret_here
 | 版本 | 身份策略 |
 |---|---|
 | 早期文本 MVP | 全部共用 `session_id="shared"`，无访客区分 |
-| 当前系统 | 开发者可创建匿名 `visitor_profiles`，把当前 session 绑定到 `visitor_id`；同一 visitor 的旧 session 可参与记忆召回；Identity & Session Gating V1 已支持结构化 match result、candidate、confirmation 和运行期 auto-bind 调试开关；本地 face signature capture、质量门控、私有向量库和 face historical matching 已接入 |
-| 下一优先级 | 接入 voice signature、face/voice combined confidence、自然确认表达、数据库污染测试和真实展场连续性观察 |
+| 当前系统 | 开发者可创建匿名 `visitor_profiles`，把当前 session 绑定到 `visitor_id`；同一 visitor 的旧 session 可参与记忆召回；Identity & Session Gating V1 已支持结构化 match result、candidate、confirmation、运行期 auto-bind 调试开关、后台 face candidate capture、自然确认解析、face signature deactivate 和 visitor memory permission 状态；本地 face signature capture、质量门控、私有向量库和 face historical matching 已接入 |
+| 下一优先级 | 做 face-only 现场阈值校准、数据库污染测试和真实展场 visitor memory continuity 观察；voice signature 与 face/voice combined confidence 暂列 P1 optional |
 | 后续展览阶段 | 多人 routing / 仲裁策略仍待现场测试；当前先收束为单 primary visitor session |
 
 **注：** 不引入账户注册或密码机制。匿名 `visitor_id` 是路由和连续性线索，不等于真实身份画像。

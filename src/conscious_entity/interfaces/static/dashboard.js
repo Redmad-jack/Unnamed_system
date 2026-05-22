@@ -1872,6 +1872,7 @@
     const [saving, setSaving] = useState(false);
     const [configSaving, setConfigSaving] = useState(false);
     const [configError, setConfigError] = useState("");
+    const [identitySaving, setIdentitySaving] = useState(false);
     const [faceSaving, setFaceSaving] = useState(false);
     const [faceError, setFaceError] = useState("");
     const current = visitorData && visitorData.visitor ? visitorData.visitor : null;
@@ -1885,6 +1886,10 @@
     const faceCapture = faceIdentityData && faceIdentityData.last_capture ? faceIdentityData.last_capture : null;
     const facePending = faceIdentityData && faceIdentityData.pending_capture ? faceIdentityData.pending_capture : null;
     const faceMatch = faceCapture && Array.isArray(faceCapture.matches) && faceCapture.matches.length ? faceCapture.matches[0] : null;
+    const faceAuto = faceIdentityData && faceIdentityData.auto_capture ? faceIdentityData.auto_capture : {};
+    const currentFaceSignatures = current && current.metadata && current.metadata.identity && current.metadata.identity.signatures && Array.isArray(current.metadata.identity.signatures.face)
+      ? current.metadata.identity.signatures.face
+      : [];
 
     const loadKnown = useCallback(async () => {
       setKnown(await fetchJSON("/api/v1/visitors?limit=80").catch(() => []));
@@ -1986,6 +1991,46 @@
       }
     }, [current, onSaved, loadKnown]);
 
+    const confirmCandidate = useCallback(async (accepted) => {
+      setIdentitySaving(true);
+      setConfigError("");
+      try {
+        await fetchJSON("/api/v1/identity/confirm", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ accepted }),
+        });
+        await onSaved();
+        await loadKnown();
+        if (accepted) {
+          window.dispatchEvent(new CustomEvent("entity:session-reset"));
+        }
+      } catch (error) {
+        setConfigError(error.message);
+      } finally {
+        setIdentitySaving(false);
+      }
+    }, [onSaved, loadKnown]);
+
+    const deactivateFaceSignature = useCallback(async (signatureId) => {
+      if (!current || !signatureId) return;
+      setFaceSaving(true);
+      setFaceError("");
+      try {
+        await fetchJSON("/api/v1/identity/face/signature/deactivate", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ visitor_id: current.id, signature_id: signatureId }),
+        });
+        await onSaved();
+        await loadKnown();
+      } catch (error) {
+        setFaceError(error.message);
+      } finally {
+        setFaceSaving(false);
+      }
+    }, [current, onSaved, loadKnown]);
+
     return h("div", { className: "section" },
       h("div", { className: "section-title" }, "Visitor Identity & Gating"),
       h("table", null, h("tbody", null,
@@ -1993,11 +2038,14 @@
         h("tr", null, h("td", null, "Scope"), h("td", null, current ? "same visitor sessions included in retrieval" : "current session only")),
         status ? h("tr", null, h("td", null, "Primary visitor"), h("td", null, status.primary_visitor_id || "unknown")) : null,
         status ? h("tr", null, h("td", null, "Candidate"), h("td", null, status.candidate_visitor_id || "none")) : null,
+        status ? h("tr", null, h("td", null, "Visitor memory"), h("td", null, status.visitor_memory_allowed ? "allowed" : "blocked until confirmed")) : null,
         status ? h("tr", null, h("td", null, "Runtime"), h("td", null, status.runtime_state || "—")) : null,
         status ? h("tr", null, h("td", null, "Session decision"), h("td", null, status.last_decision || "—")) : null,
         status ? h("tr", null, h("td", null, "Encounter / intent"), h("td", null, `${status.encounter_status || "—"} · ${status.intent_status || "—"}`)) : null,
         status ? h("tr", null, h("td", null, "Identity"), h("td", null, `${status.identity_status || "—"} · face ${status.face_confidence_level || "none"} · voice ${status.voice_confidence_level || "none"} · combined ${status.combined_confidence_level || "none"}`)) : null,
         status ? h("tr", null, h("td", null, "Waiting confirm"), h("td", null, status.waiting_for_identity_confirmation ? "yes" : "no")) : null,
+        status ? h("tr", null, h("td", null, "Last rejection"), h("td", null, status.last_capture_rejection ? `${status.last_capture_rejection.reason || "rejected"} · ${status.last_capture_rejection.source || "capture"}` : "none")) : null,
+        status ? h("tr", null, h("td", null, "Natural confirm"), h("td", null, status.last_natural_confirmation ? `${status.last_natural_confirmation.status || "—"} · ${status.last_natural_confirmation.candidate_visitor_id || "none"}` : "none")) : null,
         status ? h("tr", null, h("td", null, "Interruptions"), h("td", null, status.interruption_count || 0)) : null,
         h("tr", null, h("td", null, "Auto-bind"), h("td", null, autoBind ? "high confidence on" : "high confidence off")),
       )),
@@ -2020,6 +2068,16 @@
           onClick: toggleAutoBind,
           title: "Only auto-binds high-confidence candidates when no primary visitor exists and dialogue is not active.",
         }, configSaving ? "Saving…" : `Auto-bind ${autoBind ? "On" : "Off"}`),
+        h("button", {
+          className: "btn-sm",
+          disabled: identitySaving || !status || !status.candidate_visitor_id,
+          onClick: () => confirmCandidate(true),
+        }, identitySaving ? "Working…" : "Confirm Candidate"),
+        h("button", {
+          className: "btn-sm",
+          disabled: identitySaving || !status || !status.candidate_visitor_id,
+          onClick: () => confirmCandidate(false),
+        }, "Reject Candidate"),
       ),
       configError ? h("div", { className: "err" }, configError) : null,
       h("div", { className: "item" },
@@ -2028,6 +2086,7 @@
           h("tr", null, h("td", null, "Provider"), h("td", null, `${faceModel.provider || "insightface_arcface"} · ${faceModel.model_name || "buffalo_l"}`)),
           h("tr", null, h("td", null, "Model"), h("td", null, faceModel.loaded ? "loaded" : (faceModel.disabled_reason || "not loaded"))),
           h("tr", null, h("td", null, "Signature store"), h("td", null, `${faceStore.signature_count || 0} face signature(s)`)),
+          h("tr", null, h("td", null, "Auto capture"), h("td", null, faceAuto.in_flight ? "running" : `idle · cooldown ${faceAuto.cooldown_remaining_seconds || 0}s`)),
           h("tr", null, h("td", null, "Pending capture"), h("td", null, facePending ? `${facePending.capture_id} · ${facePending.quality_summary ? JSON.stringify(facePending.quality_summary) : "quality ok"}` : "none")),
           h("tr", null, h("td", null, "Last capture"), h("td", null, faceCapture ? `${faceCapture.accepted ? "accepted" : "rejected"} · ${faceCapture.reason}` : "none")),
           h("tr", null, h("td", null, "Last match"), h("td", null, faceMatch ? `${faceMatch.visitor_id} · ${faceMatch.level} · ${faceMatch.score}` : "none")),
@@ -2036,6 +2095,18 @@
           h("button", { className: "btn-sm", disabled: faceSaving || !faceIdentityData, onClick: captureFace }, faceSaving ? "Working…" : "Capture Face"),
           h("button", { className: "btn-sm", disabled: faceSaving || !current || !facePending, onClick: enrollFace }, "Enroll Current"),
         ),
+        currentFaceSignatures.length ? h("div", { className: "card-list compact-list" },
+          currentFaceSignatures.slice(0, 4).map((item) => h("button", {
+            key: item.signature_id || item.reference,
+            className: `session-item ${item.status === "inactive" ? "" : "active"}`,
+            disabled: faceSaving || item.status === "inactive",
+            onClick: () => deactivateFaceSignature(item.signature_id),
+            title: "Deactivate this face signature. It will not delete the private .npz file.",
+          },
+            h("div", { className: "session-title" }, h("span", null, item.signature_id || "face signature"), h("span", null, item.status || "active")),
+            h("div", { className: "session-meta" }, item.reference || "local reference redacted"),
+          )),
+        ) : null,
         faceError ? h("div", { className: "err" }, faceError) : null,
       ),
       known.length ? h("div", { className: "card-list compact-list" },

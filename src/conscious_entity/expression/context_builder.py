@@ -120,6 +120,7 @@ class ContextBuilder:
         state_block = self._render_state(state)
         memory_block = self._render_memories(retrieved_memories)
         input_context_block = self._render_input_context(short_term)
+        identity_confirmation_block = self._render_identity_confirmation_context(short_term)
         current_turn_cues = self._render_current_turn_cues(short_term)
         already_spoken_block = _render_already_spoken_first_unit(already_spoken_first_unit)
         runtime_context_block = self._render_runtime_context()
@@ -146,6 +147,8 @@ class ContextBuilder:
         ]
         if input_context_block:
             sections.append(input_context_block)
+        if identity_confirmation_block:
+            sections.append(identity_confirmation_block)
         if current_turn_cues:
             sections.append(current_turn_cues)
         if already_spoken_block:
@@ -167,6 +170,8 @@ class ContextBuilder:
             prompt_partials.extend(["policy_instruction", "style_hints"])
             if input_context_block:
                 prompt_partials.append("input_context")
+            if identity_confirmation_block:
+                prompt_partials.append("identity_confirmation_context")
             if current_turn_cues:
                 prompt_partials.append("current_turn_cues")
             if already_spoken_block:
@@ -301,6 +306,32 @@ class ContextBuilder:
         if metadata.get("input_mode") != "voice_transcript":
             return ""
         return _load_prompt(self._input_context_path)
+
+    def _render_identity_confirmation_context(self, short_term: ShortTermMemory) -> str:
+        latest_user = _latest_user_entry(short_term)
+        if latest_user is None:
+            return ""
+        metadata = getattr(latest_user, "metadata", {}) or {}
+        if not isinstance(metadata, dict):
+            return ""
+        identity = metadata.get("identity_session")
+        if not isinstance(identity, dict):
+            return ""
+        if not identity.get("waiting_for_identity_confirmation"):
+            return ""
+        candidate = str(identity.get("candidate_display_name") or identity.get("candidate_visitor_id") or "").strip()
+        if not candidate:
+            return ""
+        return _section(
+            "Visitor identity confirmation cue:",
+            "\n".join([
+                f"Face recognition produced a high-confidence candidate: {candidate}.",
+                "Treat this as a candidate, not a fact.",
+                "You may briefly and naturally ask whether they are this person or whether you have met before.",
+                "Do not force identity input; if the visitor ignores it, continue the ordinary conversation.",
+                "Do not use personal memories for this candidate until the identity is confirmed.",
+            ]),
+        )
 
     def _render_current_turn_cues(self, short_term: ShortTermMemory) -> str:
         latest_user = _latest_user_entry(short_term)

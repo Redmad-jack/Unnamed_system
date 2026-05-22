@@ -14,10 +14,12 @@ from conscious_entity.identity import (
     VisitorSessionGatingController,
 )
 from conscious_entity.interfaces import api
+from conscious_entity.interfaces import api_runtime
 from conscious_entity.interfaces import api_routes
 from conscious_entity.interfaces.api_models import (
     FaceCaptureRequest,
     FaceEnrollRequest,
+    FaceSignatureDeactivateRequest,
     IdentityConfirmRequest,
     IdentityConfigRequest,
     IdentityMatchRequest,
@@ -219,6 +221,62 @@ def test_identity_confirm_binds_current_session_and_rebuilds_loop(monkeypatch):
     conn.close()
 
 
+def test_natural_identity_confirmation_accepts_and_binds(monkeypatch):
+    conn = _db()
+    _ensure_visitor_profile(conn, "visitor-k", display_name="K")
+    controller = VisitorSessionGatingController(session_id="current")
+    request = _request(conn, controller)
+    rebuilt = {"called": False}
+    monkeypatch.setattr(api_runtime, "_active_llm_client", lambda _request: MagicMock())
+    monkeypatch.setattr(api_runtime, "_active_embedding_client", lambda _request: None)
+    monkeypatch.setattr(
+        api_runtime,
+        "_rebuild_loop",
+        lambda _request, _client, _embedding_client=None: rebuilt.update(called=True),
+    )
+    asyncio.run(api.identity_match(
+        IdentityMatchRequest(
+            candidate_visitor_id="visitor-k",
+            face=IdentityMatchSignalRequest(score=0.9),
+        ),
+        request,
+    ))
+    metadata: dict = {}
+
+    api_runtime._apply_natural_identity_confirmation_locked(request, "是的，是我", metadata)
+
+    status = controller.status()["status"]
+    assert status["primary_visitor_id"] == "visitor-k"
+    assert status["visitor_memory_allowed"] is True
+    assert status["last_natural_confirmation"]["status"] == "accepted"
+    assert request.app.state.visitor_id == "visitor-k"
+    assert rebuilt["called"] is True
+    conn.close()
+
+
+def test_natural_identity_confirmation_rejects_without_binding():
+    conn = _db()
+    controller = VisitorSessionGatingController(session_id="current")
+    request = _request(conn, controller)
+    asyncio.run(api.identity_match(
+        IdentityMatchRequest(
+            candidate_visitor_id="visitor-k",
+            face=IdentityMatchSignalRequest(score=0.9),
+        ),
+        request,
+    ))
+    metadata: dict = {}
+
+    api_runtime._apply_natural_identity_confirmation_locked(request, "不是，你认错了", metadata)
+
+    status = controller.status()["status"]
+    assert status["primary_visitor_id"] is None
+    assert status["candidate_visitor_id"] is None
+    assert status["last_natural_confirmation"]["status"] == "rejected"
+    assert request.app.state.visitor_id is None
+    conn.close()
+
+
 def test_identity_auto_bind_runtime_config_binds_when_idle(monkeypatch):
     conn = _db()
     controller = VisitorSessionGatingController(session_id="current")
@@ -352,4 +410,63 @@ def test_face_enroll_requires_existing_visitor_and_appends_reference(tmp_path):
     assert metadata["favorite_color"] == "blue"
     assert "embedding" not in face_refs[0]
     assert face_refs[0]["reference"].startswith("local://face/")
+    conn.close()
+
+
+def test_face_signature_deactivate_marks_store_and_metadata_inactive(tmp_path):
+    conn = _db()
+    _ensure_visitor_profile(conn, "visitor-k", metadata={"favorite_color": "blue"})
+    controller = VisitorSessionGatingController(session_id="current")
+    manager = _face_manager(tmp_path, [_candidate([1.0, 0.0])])
+    manager.capture_and_match(b"frame")
+    request = _request(conn, controller, face_identity_manager=manager)
+    enrolled = asyncio.run(api.identity_face_enroll(
+        FaceEnrollRequest(visitor_id="visitor-k"),
+        request,
+    ))
+    signature_id = enrolled["signature"]["signature_id"]
+
+    result = asyncio.run(api.identity_face_signature_deactivate(
+        FaceSignatureDeactivateRequest(
+            visitor_id="visitor-k",
+            signature_id=signature_id,
+        ),
+        request,
+    ))
+
+    assert result["signature"]["status"] == "inactive"
+    assert manager.store.match([1.0, 0.0]) == []
+    row = conn.execute("SELECT metadata FROM visitor_profiles WHERE id = ?", ("visitor-k",)).fetchone()
+    metadata = json.loads(row["metadata"])
+    assert metadata["identity"]["signatures"]["face"][0]["status"] == "inactive"
+    conn.close()
+
+
+def test_background_face_capture_sets_candidate_without_blocking_dialogue(tmp_path):
+    conn = _db()
+    _ensure_visitor_profile(conn, "visitor-k")
+    manager = _face_manager(tmp_path, [_candidate([1.0, 0.0])])
+    manager.capture_and_match(b"frame")
+    manager.enroll_pending("visitor-k")
+    manager.provider.candidates = [_candidate([0.98, 0.2])]  # type: ignore[attr-defined]
+    controller = VisitorSessionGatingController(session_id="current")
+    controller.before_turn(source="dialog", input_mode="text", text="hello")
+    request = _request(
+        conn,
+        controller,
+        face_identity_manager=manager,
+        vision_manager=FakeVisionManager(),
+    )
+
+    async def run_capture():
+        api_runtime._maybe_schedule_background_face_capture(request.app)
+        await request.app.state.face_auto_capture_task
+
+    asyncio.run(run_capture())
+
+    status = controller.status()["status"]
+    assert status["candidate_visitor_id"] == "visitor-k"
+    assert status["waiting_for_identity_confirmation"] is True
+    assert status["visitor_memory_allowed"] is False
+    assert status["capture_in_flight"] is False
     conn.close()

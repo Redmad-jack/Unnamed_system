@@ -113,6 +113,11 @@ class FaceEnrollRequest(BaseModel):
     visitor_id: str
 
 
+class FaceSignatureDeactivateRequest(BaseModel):
+    visitor_id: str
+    signature_id: str
+
+
 class MemoryStatusRequest(BaseModel):
     status: str
 

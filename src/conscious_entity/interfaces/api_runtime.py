@@ -21,6 +21,7 @@ from conscious_entity.db.connection import get_connection
 from conscious_entity.db.migrations import run_migrations
 from conscious_entity.audio import AudioConfig, AudioManager
 from conscious_entity.identity import (
+    FaceIdentityError,
     FaceIdentityConfig,
     FaceIdentityManager,
     IdentitySignatureReference,
@@ -170,22 +171,28 @@ async def _run_dialog_turn(
     source: str = "dialog",
     input_metadata: dict[str, Any] | None = None,
 ):
-    loop = request.app.state.loop
-    if loop is None:
-        raise HTTPException(status_code=503, detail="Loop not initialised")
-
     async with request.app.state.loop_lock:
         turn_metadata = dict(input_metadata or {})
         input_mode = str(turn_metadata.get("input_mode") or "text")
         identity_controller = getattr(request.app.state, "identity_gating", None)
         if identity_controller is not None:
             try:
+                _apply_natural_identity_confirmation_locked(
+                    request,
+                    text,
+                    turn_metadata,
+                )
                 turn_metadata["identity_session"] = identity_controller.before_turn(
                     source=source,
                     input_mode=input_mode,
                     text=text,
                     metadata=turn_metadata,
                 )
+                if hasattr(request.app.state, "conn"):
+                    _enrich_identity_context_locked(
+                        request.app.state.conn,
+                        turn_metadata["identity_session"],
+                    )
             except Exception as exc:
                 logger.error("Identity/session gating failed; continuing turn: %s", exc)
                 turn_metadata["identity_session"] = {
@@ -194,6 +201,9 @@ async def _run_dialog_turn(
                     "identity_status": "unidentified",
                     "error": "identity_gating_failed",
                 }
+        loop = request.app.state.loop
+        if loop is None:
+            raise HTTPException(status_code=503, detail="Loop not initialised")
         output = await asyncio.get_running_loop().run_in_executor(
             None,
             loop.run_turn,
@@ -205,6 +215,7 @@ async def _run_dialog_turn(
     manager = getattr(request.app.state, "vision_manager", None)
     if manager is not None:
         manager.mark_activity()
+    _maybe_schedule_background_face_capture(request.app)
 
     return output
 
@@ -216,10 +227,6 @@ async def _run_dialog_turn_progressive(
     source: str = "dialog_progressive",
     input_metadata: dict[str, Any] | None = None,
 ) -> AsyncIterator[dict[str, Any]]:
-    loop = request.app.state.loop
-    if loop is None:
-        raise HTTPException(status_code=503, detail="Loop not initialised")
-
     event_loop = asyncio.get_running_loop()
     queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
 
@@ -229,12 +236,22 @@ async def _run_dialog_turn_progressive(
         identity_controller = getattr(request.app.state, "identity_gating", None)
         if identity_controller is not None:
             try:
+                _apply_natural_identity_confirmation_locked(
+                    request,
+                    text,
+                    turn_metadata,
+                )
                 turn_metadata["identity_session"] = identity_controller.before_turn(
                     source=source,
                     input_mode=input_mode,
                     text=text,
                     metadata=turn_metadata,
                 )
+                if hasattr(request.app.state, "conn"):
+                    _enrich_identity_context_locked(
+                        request.app.state.conn,
+                        turn_metadata["identity_session"],
+                    )
             except Exception as exc:
                 logger.error("Identity/session gating failed; continuing turn: %s", exc)
                 turn_metadata["identity_session"] = {
@@ -243,6 +260,9 @@ async def _run_dialog_turn_progressive(
                     "identity_status": "unidentified",
                     "error": "identity_gating_failed",
                 }
+        loop = request.app.state.loop
+        if loop is None:
+            raise HTTPException(status_code=503, detail="Loop not initialised")
 
         def progress_callback(event: dict[str, Any]) -> None:
             event_loop.call_soon_threadsafe(queue.put_nowait, dict(event))
@@ -272,6 +292,7 @@ async def _run_dialog_turn_progressive(
             manager = getattr(request.app.state, "vision_manager", None)
             if manager is not None:
                 manager.mark_activity()
+            _maybe_schedule_background_face_capture(request.app)
             plan = output.response_plan.to_dict() if output.response_plan is not None else None
             yield {
                 "phase": "final",
@@ -306,6 +327,231 @@ async def _wait_for_turn_future(future: asyncio.Future) -> None:
         future.result()
     except Exception:
         return
+
+
+def _apply_natural_identity_confirmation_locked(
+    request: Request,
+    text: str,
+    turn_metadata: dict[str, Any],
+) -> None:
+    controller = getattr(request.app.state, "identity_gating", None)
+    if controller is None:
+        return
+    if not hasattr(controller, "status"):
+        return
+    status_payload = controller.status()
+    status = status_payload.get("status") if isinstance(status_payload, dict) else None
+    if not isinstance(status, dict) or not status.get("waiting_for_identity_confirmation"):
+        return
+
+    candidate = _blank_to_none(status.get("candidate_visitor_id"))
+    decision = _parse_identity_confirmation(text)
+    if decision is None:
+        context = controller.record_natural_confirmation(
+            status="unclear",
+            text=text,
+            candidate_visitor_id=candidate,
+        )
+        turn_metadata["identity_natural_confirmation"] = "unclear"
+        turn_metadata["identity_session_pending_before_turn"] = context
+        return
+
+    accepted = decision == "accepted"
+    context = controller.confirm_candidate(accepted)
+    controller.record_natural_confirmation(
+        status=decision,
+        text=text,
+        candidate_visitor_id=candidate,
+    )
+    confirmation = context.get("confirmation_state") or {}
+    visitor_id = context.get("primary_visitor_id") or confirmation.get("candidate_visitor_id")
+    if visitor_id:
+        _update_visitor_identity_metadata(
+            request.app.state.conn,
+            str(visitor_id),
+            {"confirmation_state": confirmation},
+        )
+        request.app.state.conn.commit()
+    if accepted and context.get("primary_visitor_id"):
+        _bind_current_visitor_locked(request, str(context["primary_visitor_id"]))
+    turn_metadata["identity_natural_confirmation"] = decision
+    turn_metadata["identity_session_pending_before_turn"] = context
+
+
+def _bind_current_visitor_locked(request: Request, visitor_id: str) -> None:
+    llm_client = _active_llm_client(request)
+    embedding_client = _active_embedding_client(request)
+    request.app.state.conn.execute(
+        "UPDATE sessions SET visitor_id = ? WHERE id = ?",
+        (visitor_id, request.app.state.session_id),
+    )
+    request.app.state.conn.commit()
+    request.app.state.visitor_id = visitor_id
+    _rebuild_loop(request, llm_client, embedding_client)
+
+
+def _parse_identity_confirmation(text: str) -> str | None:
+    compact = " ".join(str(text or "").strip().lower().split())
+    if not compact:
+        return None
+    reject_markers = (
+        "不是",
+        "不对",
+        "认错",
+        "不是我",
+        "不是的",
+        "no",
+        "nope",
+        "not me",
+        "wrong person",
+        "you are wrong",
+    )
+    if any(marker in compact for marker in reject_markers):
+        return "rejected"
+    accept_markers = (
+        "是",
+        "是的",
+        "对",
+        "对的",
+        "没错",
+        "嗯",
+        "我是",
+        "就是我",
+        "yes",
+        "yeah",
+        "yep",
+        "that's me",
+        "that is me",
+        "it is me",
+        "i am",
+    )
+    if compact in accept_markers or any(marker in compact for marker in accept_markers):
+        return "accepted"
+    return None
+
+
+def _enrich_identity_context_locked(
+    conn: sqlite3.Connection,
+    context: dict[str, Any] | None,
+) -> None:
+    if not isinstance(context, dict):
+        return
+    context["visitor_memory_allowed"] = bool(context.get("primary_visitor_id"))
+    candidate = _blank_to_none(context.get("candidate_visitor_id"))
+    if candidate:
+        display_name = _visitor_display_name(conn, candidate)
+        if display_name:
+            context["candidate_display_name"] = display_name
+    primary = _blank_to_none(context.get("primary_visitor_id"))
+    if primary:
+        display_name = _visitor_display_name(conn, primary)
+        if display_name:
+            context["primary_display_name"] = display_name
+
+
+def _visitor_display_name(conn: sqlite3.Connection, visitor_id: str) -> str | None:
+    row = conn.execute(
+        "SELECT display_name FROM visitor_profiles WHERE id = ?",
+        (visitor_id,),
+    ).fetchone()
+    if row is None:
+        return None
+    value = row["display_name"] if isinstance(row, sqlite3.Row) else row[0]
+    return str(value) if value else None
+
+
+def _maybe_schedule_background_face_capture(app: Any) -> None:
+    controller = getattr(app.state, "identity_gating", None)
+    manager = getattr(app.state, "face_identity_manager", None)
+    vision = getattr(app.state, "vision_manager", None)
+    if controller is None or manager is None or vision is None:
+        return
+    status_payload = controller.status()
+    if not _face_auto_capture_allowed(status_payload):
+        return
+    frame = vision.latest_frame_jpeg()
+    if frame is None:
+        controller.record_face_capture_diagnostic(
+            in_flight=False,
+            rejection_reason="no_vision_frame",
+            source="auto",
+        )
+        return
+    started, reason = manager.start_auto_capture()
+    if not started:
+        controller.record_face_capture_diagnostic(
+            in_flight=(reason == "capture_in_flight"),
+            source="auto",
+        )
+        return
+    controller.record_face_capture_diagnostic(in_flight=True, source="auto")
+    app.state.face_auto_capture_task = asyncio.create_task(
+        _run_background_face_capture(app, frame)
+    )
+
+
+def _face_auto_capture_allowed(identity_status: dict[str, Any]) -> bool:
+    status = identity_status.get("status") if isinstance(identity_status, dict) else None
+    if not isinstance(status, dict):
+        return False
+    if status.get("primary_visitor_id"):
+        return False
+    if status.get("candidate_visitor_id") or status.get("waiting_for_identity_confirmation"):
+        return False
+    return (
+        status.get("intent_status") == "confirmed_by_input"
+        or status.get("runtime_state") in {"in_dialogue", "identity_confirming"}
+    )
+
+
+async def _run_background_face_capture(app: Any, frame: bytes) -> None:
+    manager = getattr(app.state, "face_identity_manager", None)
+    controller = getattr(app.state, "identity_gating", None)
+    if manager is None or controller is None:
+        return
+    reason = "unknown"
+    try:
+        outcome = await asyncio.get_running_loop().run_in_executor(
+            None,
+            manager.capture_and_match,
+            frame,
+        )
+        reason = outcome.reason
+        async with app.state.loop_lock:
+            result = outcome.match_result
+            if (
+                outcome.accepted
+                and result is not None
+                and result.candidate_visitor_id is not None
+            ):
+                context = controller.apply_identity_match(result)
+                _update_visitor_identity_metadata(
+                    app.state.conn,
+                    result.candidate_visitor_id,
+                    {
+                        "latest_match": result.to_public_dict(),
+                        "confirmation_state": context.get("confirmation_state", {}),
+                    },
+                )
+                app.state.conn.commit()
+            controller.record_face_capture_diagnostic(
+                in_flight=False,
+                accepted=outcome.accepted,
+                rejection_reason=None if outcome.accepted else outcome.reason,
+                source="auto",
+            )
+    except Exception as exc:
+        reason = str(exc)
+        logger.error("Background face capture failed: %s", exc)
+        with suppress(Exception):
+            controller.record_face_capture_diagnostic(
+                in_flight=False,
+                rejection_reason=reason,
+                source="auto",
+            )
+    finally:
+        with suppress(Exception):
+            manager.finish_auto_capture(reason)
 
 
 async def _vision_event_dispatcher(app: Any) -> None:
@@ -466,6 +712,41 @@ def _append_visitor_identity_signature(
         "schema_version": 1,
         "signatures": signatures,
     })
+    _ensure_visitor_profile(conn, visitor_id, metadata={"identity": identity})
+
+
+def _deactivate_visitor_identity_signature(
+    conn: sqlite3.Connection,
+    visitor_id: str,
+    signature_id: str,
+) -> None:
+    row = conn.execute(
+        "SELECT metadata FROM visitor_profiles WHERE id = ?",
+        (visitor_id,),
+    ).fetchone()
+    if row is None:
+        return
+    existing_metadata = _json_dict(row["metadata"] if isinstance(row, sqlite3.Row) else row[0])
+    identity = existing_metadata.get("identity")
+    if not isinstance(identity, dict):
+        return
+    signatures = identity.get("signatures")
+    if not isinstance(signatures, dict):
+        return
+    face_items = signatures.get("face")
+    if not isinstance(face_items, list):
+        return
+    updated_items: list[dict[str, Any]] = []
+    for item in face_items:
+        if not isinstance(item, dict):
+            continue
+        updated = dict(item)
+        if updated.get("signature_id") == signature_id:
+            updated["status"] = "inactive"
+            updated["updated_at"] = datetime.now(timezone.utc).isoformat()
+        updated_items.append(updated)
+    signatures["face"] = updated_items
+    identity["signatures"] = signatures
     _ensure_visitor_profile(conn, visitor_id, metadata={"identity": identity})
 
 

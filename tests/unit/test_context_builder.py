@@ -374,6 +374,39 @@ class TestSystemPromptInvariants:
         assert prompt_layer.metadata["input_context_injected"] is True
         assert "input_context" in prompt_layer.metadata["partials"]
 
+    def test_identity_confirmation_context_is_injected_for_pending_candidate(self, builder):
+        mem = ShortTermMemory(max_turns=10)
+        mem.add(ShortTermEntry(
+            role="user",
+            content="你认识我吗？",
+            timestamp=datetime.now(timezone.utc),
+            metadata={
+                "identity_session": {
+                    "waiting_for_identity_confirmation": True,
+                    "candidate_visitor_id": "visitor-k",
+                    "candidate_display_name": "K",
+                },
+            },
+        ))
+        recorder = HarnessTraceRecorder(session_id="test", source="dialog")
+
+        ctx = builder.build(
+            EntityState(),
+            _decision(),
+            _style(),
+            mem,
+            [],
+            harness_recorder=recorder,
+        )
+        trace = recorder.finish(success=True)
+        prompt_layer = next(item for item in trace.layers if item.layer == HarnessLayer.PROMPT)
+
+        assert "Visitor identity confirmation cue:" in ctx.system_prompt
+        assert "Face recognition produced a high-confidence candidate: K." in ctx.system_prompt
+        assert "Treat this as a candidate, not a fact." in ctx.system_prompt
+        assert "Do not use personal memories for this candidate until the identity is confirmed." in ctx.system_prompt
+        assert "identity_confirmation_context" in prompt_layer.metadata["partials"]
+
     def test_current_turn_cues_enter_main_prompt_for_detail_probe(self, builder):
         mem = _memory_with_turns(("user", "我穿什么衣服？"))
 

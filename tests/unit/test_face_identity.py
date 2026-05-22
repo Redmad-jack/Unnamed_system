@@ -103,6 +103,38 @@ def test_match_score_maps_to_medium_and_low(tmp_path):
     assert low.level == ConfidenceLevel.LOW
 
 
+def test_inactive_signature_does_not_match(tmp_path):
+    manager = _manager(tmp_path, [_candidate(embedding=[1.0, 0.0])])
+    manager.capture_and_match(b"frame")
+    reference = manager.enroll_pending("visitor-a")
+    manager.deactivate_signature(
+        visitor_id="visitor-a",
+        signature_id=reference.signature_id,
+    )
+    store = FaceSignatureStore(tmp_path)
+
+    assert store.status()["signature_count"] == 0
+    assert store.status()["inactive_signature_count"] == 1
+    assert store.match([1.0, 0.0]) == []
+
+
+def test_auto_capture_state_uses_in_flight_and_cooldown(tmp_path):
+    manager = _manager(tmp_path, [_candidate()])
+
+    started, reason = manager.start_auto_capture()
+    blocked, blocked_reason = manager.start_auto_capture()
+    manager.finish_auto_capture("accepted")
+    cooldown, cooldown_reason = manager.start_auto_capture()
+
+    assert started is True
+    assert reason is None
+    assert blocked is False
+    assert blocked_reason == "capture_in_flight"
+    assert cooldown is False
+    assert cooldown_reason == "capture_cooldown"
+    assert manager.status()["auto_capture"]["cooldown_remaining_seconds"] > 0
+
+
 def test_enroll_requires_pending_capture(tmp_path):
     manager = _manager(tmp_path, [])
 
