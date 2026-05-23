@@ -40,6 +40,7 @@
   const BARGE_IN_TRIGGER_FRAMES = 5;
   const BARGE_IN_PEAK_THRESHOLD = 6000;
   const BARGE_IN_RMS_THRESHOLD = 1200;
+  const TTS_PREFETCH_WAIT_MS = 120;
 
   function clamp(value, min, max) {
     return Math.max(min, Math.min(max, value));
@@ -101,6 +102,19 @@
         metadata: options.metadata || {},
       }),
     }).catch(() => null);
+  }
+
+  function ttsStreamUrl(streamId) {
+    return `/api/v1/audio/tts/stream/${encodeURIComponent(streamId)}?t=${Date.now()}`;
+  }
+
+  function revokeObjectUrl(objectUrl) {
+    if (!objectUrl) return;
+    try {
+      window.URL.revokeObjectURL(objectUrl);
+    } catch {
+      // Best effort cleanup only.
+    }
   }
 
   function browserCameraCapability() {
@@ -2479,6 +2493,7 @@
     const [playbackDetail, setPlaybackDetail] = useState("not unlocked");
     const [playbackQueueDepth, setPlaybackQueueDepth] = useState(0);
     const [playbackCurrentStream, setPlaybackCurrentStream] = useState("");
+    const [playbackPrefetchDetail, setPlaybackPrefetchDetail] = useState("none");
     const [lastPlaybackEvent, setLastPlaybackEvent] = useState("none");
     const [bargeInDetail, setBargeInDetail] = useState("idle");
     const [sttStreamState, setSttStreamState] = useState("stopped");
@@ -2503,6 +2518,7 @@
     const playbackPlayingRef = useRef(false);
     const playbackTimingRef = useRef(null);
     const playbackWatchdogRef = useRef(null);
+    const playbackPrefetchRef = useRef(null);
     const playNextQueuedStreamRef = useRef(null);
     const playbackStartedAtRef = useRef(0);
     const bargeInFramesRef = useRef(0);
@@ -2542,7 +2558,117 @@
       }
     }, []);
 
+    const clearPlaybackPrefetch = useCallback(() => {
+      const entry = playbackPrefetchRef.current;
+      if (entry) {
+        if (entry.controller) entry.controller.abort();
+        revokeObjectUrl(entry.objectUrl);
+      }
+      playbackPrefetchRef.current = null;
+      setPlaybackPrefetchDetail("none");
+    }, []);
+
+    const prefetchQueuedHead = useCallback(() => {
+      const next = playbackQueueRef.current[0];
+      if (!next || !next.streamId) {
+        if (playbackPrefetchRef.current) clearPlaybackPrefetch();
+        return null;
+      }
+      const existing = playbackPrefetchRef.current;
+      if (existing && existing.streamId === next.streamId) return existing;
+      clearPlaybackPrefetch();
+      const streamId = next.streamId;
+      const startedAt = nowMs();
+      const controller = new AbortController();
+      const entry = {
+        streamId,
+        status: "pending",
+        controller,
+        objectUrl: "",
+        startedAt,
+        error: "",
+        promise: null,
+      };
+      playbackPrefetchRef.current = entry;
+      setPlaybackPrefetchDetail(`pending ${compactId(streamId)}`);
+      entry.promise = fetch(ttsStreamUrl(streamId), { signal: controller.signal })
+        .then((response) => {
+          if (!response.ok) {
+            throw new Error(response.statusText || String(response.status));
+          }
+          return response.blob();
+        })
+        .then((blob) => {
+          if (playbackPrefetchRef.current !== entry) return null;
+          entry.objectUrl = window.URL.createObjectURL(blob);
+          entry.status = "ready";
+          entry.controller = null;
+          setPlaybackPrefetchDetail(`ready ${compactId(streamId)}`);
+          postPresentationLatency("dashboard.audio.prefetch_ready", startedAt, {
+            latencyRecordId: next.timing && next.timing.latencyRecordId,
+            metadata: { stream_id: streamId, byte_size: blob.size },
+          });
+          return entry;
+        })
+        .catch((err) => {
+          if (err && err.name === "AbortError") return null;
+          if (playbackPrefetchRef.current === entry) {
+            entry.status = "error";
+            entry.controller = null;
+            entry.error = err && err.message ? err.message : "prefetch_error";
+            setPlaybackPrefetchDetail(`error ${compactId(streamId)}`);
+          }
+          postPresentationLatency("dashboard.audio.prefetch_error", startedAt, {
+            latencyRecordId: next.timing && next.timing.latencyRecordId,
+            success: false,
+            error: err && err.name ? err.name : "prefetch_error",
+            metadata: { stream_id: streamId },
+          });
+          return null;
+        });
+      return entry;
+    }, [clearPlaybackPrefetch]);
+
+    const consumePlaybackPrefetch = useCallback(async (streamId, timing = {}) => {
+      const entry = playbackPrefetchRef.current;
+      if (!entry || entry.streamId !== streamId) return null;
+      if (entry.status === "pending" && entry.promise) {
+        await Promise.race([
+          entry.promise,
+          new Promise((resolve) => window.setTimeout(resolve, TTS_PREFETCH_WAIT_MS)),
+        ]);
+      }
+      const current = playbackPrefetchRef.current;
+      if (!current || current.streamId !== streamId) return null;
+      if (current.status === "ready" && current.objectUrl) {
+        playbackPrefetchRef.current = null;
+        setPlaybackPrefetchDetail(`hit ${compactId(streamId)}`);
+        postPresentationLatency("dashboard.audio.prefetch_hit", current.startedAt, {
+          latencyRecordId: timing.latencyRecordId,
+          metadata: { stream_id: streamId },
+        });
+        return current;
+      }
+      if (current.status === "pending") {
+        postPresentationLatency("dashboard.audio.prefetch_miss", current.startedAt, {
+          latencyRecordId: timing.latencyRecordId,
+          metadata: { stream_id: streamId, wait_ms: TTS_PREFETCH_WAIT_MS },
+        });
+        clearPlaybackPrefetch();
+        setPlaybackPrefetchDetail(`miss ${compactId(streamId)}`);
+      }
+      return null;
+    }, [clearPlaybackPrefetch]);
+
     useEffect(() => { loadStatus(); }, [loadStatus]);
+    useEffect(() => () => {
+      const entry = playbackPrefetchRef.current;
+      if (entry) {
+        if (entry.controller) entry.controller.abort();
+        revokeObjectUrl(entry.objectUrl);
+      }
+      playbackPrefetchRef.current = null;
+    }, []);
     useInterval(loadStatus, 5000);
 
     const cleanupMicInput = useCallback(() => {
@@ -2632,13 +2758,16 @@
         suppressedPlaybackTurnRef.current = activeAudioTurnRef.current;
       }
       clearPlaybackWatchdog();
+      clearPlaybackPrefetch();
       const player = playerRef.current;
+      const currentTiming = playbackTimingRef.current;
       const hadPlayback = Boolean(playbackStreamRef.current || (player && player.getAttribute("src")));
       if (player) {
         player.pause();
         player.removeAttribute("src");
         player.load();
       }
+      revokeObjectUrl(currentTiming && currentTiming.objectUrl);
       if (clearQueue) playbackQueueRef.current = [];
       playbackPlayingRef.current = false;
       playbackStreamRef.current = "";
@@ -2657,7 +2786,7 @@
         setPlaybackDetail(detailText);
         setBargeInDetail(detailText.startsWith("barge-in") ? "detected, playback stopped" : "idle");
       }
-    }, [clearPlaybackWatchdog, updatePlaybackQueueDepth]);
+    }, [clearPlaybackPrefetch, clearPlaybackWatchdog, updatePlaybackQueueDepth]);
 
     const startPlaybackStream = useCallback(async (streamId, timing = {}) => {
       if (!streamId || !playerRef.current) return false;
@@ -2674,25 +2803,36 @@
       playbackStreamRef.current = streamId;
       playbackStartedAtRef.current = nowMs();
       const streamReceivedAt = timing.streamReceivedAt || nowMs();
+      const prefetchedEntry = await consumePlaybackPrefetch(streamId, timing);
+      const prefetchedObjectUrl = prefetchedEntry && prefetchedEntry.objectUrl ? prefetchedEntry.objectUrl : "";
+      const playbackSrc = prefetchedObjectUrl || ttsStreamUrl(streamId);
+      const prefetched = Boolean(prefetchedObjectUrl);
+      if (playbackStreamRef.current !== streamId || !playbackPlayingRef.current) {
+        revokeObjectUrl(prefetchedObjectUrl);
+        return false;
+      }
       playbackTimingRef.current = {
         streamId,
         latencyRecordId: timing.latencyRecordId || null,
         streamReceivedAt,
+        prefetched,
+        objectUrl: prefetchedObjectUrl || null,
       };
       player.muted = false;
       player.volume = 1;
-      player.src = `/api/v1/audio/tts/stream/${encodeURIComponent(streamId)}?t=${Date.now()}`;
+      player.src = playbackSrc;
       player.load();
       try {
         await player.play();
         postPresentationLatency("dashboard.audio.play_resolved", streamReceivedAt, {
           latencyRecordId: timing.latencyRecordId,
-          metadata: { stream_id: streamId },
+          metadata: { stream_id: streamId, prefetched },
         });
         playbackUnlockedRef.current = true;
         setPlaybackUnlocked(true);
         setPlaybackDetail(`playing ${compactId(streamId)}`);
         setLastPlaybackEvent(`playing ${compactId(streamId)}`);
+        prefetchQueuedHead();
         const textChars = Number(timing.textChars || 0);
         const watchdogMs = clamp(6000 + textChars * 240, 8000, 30000);
         playbackWatchdogRef.current = window.setTimeout(() => {
@@ -2701,7 +2841,11 @@
           if (currentTiming) {
             postPresentationLatency("dashboard.audio.watchdog_recovered", currentTiming.streamReceivedAt, {
               latencyRecordId: currentTiming.latencyRecordId,
-              metadata: { stream_id: currentTiming.streamId, watchdog_ms: watchdogMs },
+              metadata: {
+                stream_id: currentTiming.streamId,
+                watchdog_ms: watchdogMs,
+                prefetched: Boolean(currentTiming.prefetched),
+              },
             });
           }
           const activePlayer = playerRef.current;
@@ -2710,6 +2854,7 @@
             activePlayer.removeAttribute("src");
             activePlayer.load();
           }
+          revokeObjectUrl(currentTiming && currentTiming.objectUrl);
           playbackWatchdogRef.current = null;
           playbackTimingRef.current = null;
           playbackStreamRef.current = "";
@@ -2733,8 +2878,9 @@
           latencyRecordId: timing.latencyRecordId,
           success: false,
           error: err && err.name ? err.name : "play_failed",
-          metadata: { stream_id: streamId },
+          metadata: { stream_id: streamId, prefetched },
         });
+        revokeObjectUrl(prefetchedObjectUrl);
         playbackTimingRef.current = null;
         playbackStreamRef.current = "";
         setPlaybackCurrentStream("");
@@ -2753,19 +2899,27 @@
           playbackUnlockedRef.current = false;
           setPlaybackUnlocked(false);
           playbackQueueRef.current = [];
+          clearPlaybackPrefetch();
           updatePlaybackQueueDepth();
         } else if (playbackQueueRef.current.length && playNextQueuedStreamRef.current) {
           playNextQueuedStreamRef.current();
         }
         return false;
       }
-    }, [clearPlaybackWatchdog, updatePlaybackQueueDepth]);
+    }, [
+      clearPlaybackPrefetch,
+      clearPlaybackWatchdog,
+      consumePlaybackPrefetch,
+      prefetchQueuedHead,
+      updatePlaybackQueueDepth,
+    ]);
 
     const playNextQueuedStream = useCallback(() => {
       const next = playbackQueueRef.current.shift();
       updatePlaybackQueueDepth();
       if (!next) {
         clearPlaybackWatchdog();
+        clearPlaybackPrefetch();
         playbackPlayingRef.current = false;
         playbackStreamRef.current = "";
         playbackTimingRef.current = null;
@@ -2781,7 +2935,7 @@
       }
       startPlaybackStream(next.streamId, next.timing);
       return true;
-    }, [clearPlaybackWatchdog, startPlaybackStream, updatePlaybackQueueDepth]);
+    }, [clearPlaybackPrefetch, clearPlaybackWatchdog, startPlaybackStream, updatePlaybackQueueDepth]);
     playNextQueuedStreamRef.current = playNextQueuedStream;
 
     const enqueueTtsStream = useCallback((streamId, timing = {}) => {
@@ -2791,9 +2945,11 @@
       setLastPlaybackEvent(`queued ${compactId(streamId)}`);
       if (!playbackPlayingRef.current) {
         playNextQueuedStream();
+      } else {
+        prefetchQueuedHead();
       }
       return true;
-    }, [playNextQueuedStream, updatePlaybackQueueDepth]);
+    }, [playNextQueuedStream, prefetchQueuedHead, updatePlaybackQueueDepth]);
 
     const submitTranscript = useCallback(async (value) => {
       const transcript = String(value || "").trim();
@@ -3075,6 +3231,11 @@
         h("span", null, "Playback detail"), h("span", { className: playbackBlocked ? "err" : "dim" }, playbackDetail),
         h("span", null, "Playback stream"), h("span", { className: playbackCurrentStream ? "ok" : "dim" }, playbackCurrentStream ? compactId(playbackCurrentStream) : "none"),
         h("span", null, "Playback queue"), h("span", { className: playbackQueueDepth > 0 ? "ok" : "dim" }, String(playbackQueueDepth)),
+        h("span", null, "Playback prefetch"), h("span", {
+          className: playbackPrefetchDetail.startsWith("ready") || playbackPrefetchDetail.startsWith("hit")
+            ? "ok"
+            : playbackPrefetchDetail.startsWith("error") ? "err" : "dim",
+        }, playbackPrefetchDetail),
         h("span", null, "Playback event"), h("span", { className: "dim" }, lastPlaybackEvent),
         h("span", null, "Barge-in"), h("span", { className: bargeInDetail.startsWith("detected") ? "ok" : "dim" }, bargeInDetail),
         h("span", null, "Voice mode"), h("span", { className: voiceMode && recording ? "ok" : "" }, `${voiceMode ? "auto" : "manual"} · ${voiceActivity}`),
@@ -3109,7 +3270,10 @@
           if (timing) {
             postPresentationLatency("dashboard.audio.playing", timing.streamReceivedAt, {
               latencyRecordId: timing.latencyRecordId,
-              metadata: { stream_id: timing.streamId },
+              metadata: {
+                stream_id: timing.streamId,
+                prefetched: Boolean(timing.prefetched),
+              },
             });
           }
         },
@@ -3119,9 +3283,13 @@
           if (timing) {
             postPresentationLatency("dashboard.audio.ended", timing.streamReceivedAt, {
               latencyRecordId: timing.latencyRecordId,
-              metadata: { stream_id: timing.streamId },
+              metadata: {
+                stream_id: timing.streamId,
+                prefetched: Boolean(timing.prefetched),
+              },
             });
           }
+          revokeObjectUrl(timing && timing.objectUrl);
           playbackTimingRef.current = null;
           setLastPlaybackEvent(`ended ${compactId(playbackStreamRef.current)}`);
           playbackStartedAtRef.current = 0;
@@ -3135,9 +3303,13 @@
               latencyRecordId: timing.latencyRecordId,
               success: false,
               error: "media_error",
-              metadata: { stream_id: timing.streamId },
+              metadata: {
+                stream_id: timing.streamId,
+                prefetched: Boolean(timing.prefetched),
+              },
             });
           }
+          revokeObjectUrl(timing && timing.objectUrl);
           const detail = describeMediaError(playerRef.current, "Playback stream error.");
           playbackStreamRef.current = "";
           setPlaybackCurrentStream("");

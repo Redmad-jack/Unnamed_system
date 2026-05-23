@@ -101,8 +101,18 @@ class VolcengineProtocol:
     def build_tts_finish_connection(self) -> bytes:
         return self.tts.build_finish_connection()
 
-    def build_tts_start_session(self, config: AudioConfig, *, session_id: str) -> bytes:
-        return self.tts.build_start_session(config, session_id=session_id)
+    def build_tts_start_session(
+        self,
+        config: AudioConfig,
+        *,
+        session_id: str,
+        voice_type: str | None = None,
+    ) -> bytes:
+        return self.tts.build_start_session(
+            config,
+            session_id=session_id,
+            voice_type=voice_type,
+        )
 
     def build_tts_finish_session(self, *, session_id: str) -> bytes:
         return self.tts.build_finish_session(session_id=session_id)
@@ -204,23 +214,32 @@ class VolcengineTTSBidirectionalProtocol:
     def build_finish_connection(self) -> bytes:
         return _build_event_json_frame(EVENT_FINISH_CONNECTION, {})
 
-    def build_start_session(self, config: AudioConfig, *, session_id: str) -> bytes:
+    def build_start_session(
+        self,
+        config: AudioConfig,
+        *,
+        session_id: str,
+        voice_type: str | None = None,
+    ) -> bytes:
         additions = {
             "disable_markdown_filter": True,
             "disable_emoji_filter": False,
         }
+        req_params = {
+            "speaker": voice_type or config.default_tts_voice_type(),
+            "audio_params": {
+                "format": config.output_format,
+                "sample_rate": config.tts_sample_rate,
+            },
+            "additions": json.dumps(additions, ensure_ascii=False),
+        }
+        if config.tts_model:
+            req_params["model"] = config.tts_model
         payload = {
             "event": EVENT_START_SESSION,
             "namespace": "BidirectionalTTS",
             "user": {"uid": "conscious_entity"},
-            "req_params": {
-                "speaker": config.tts_voice_type,
-                "audio_params": {
-                    "format": config.output_format,
-                    "sample_rate": config.tts_sample_rate,
-                },
-                "additions": json.dumps(additions, ensure_ascii=False),
-            },
+            "req_params": req_params,
         }
         return _build_event_json_frame(EVENT_START_SESSION, payload, session_id=session_id)
 

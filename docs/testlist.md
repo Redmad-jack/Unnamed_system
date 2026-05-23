@@ -19,19 +19,6 @@ This file tracks tests that require real devices, supplier APIs, exhibition spac
 - [ ] Identity match API integration test: feed simulated face match result through `/api/v1/identity/match`, then confirm or reject candidate through `/api/v1/identity/confirm`.
 - [ ] Database pollution test: passing-by observers, distant onlookers, and non-responsive people should not create visitor profiles.
 
-## Entity Self-Model And Capability Consistency
-
-- [ ] Vision self-awareness regression: when vision runtime is enabled and a person is present, asking whether Stranger can see or perceive the visitor should not produce a full denial of visual ability; it may acknowledge limited presence detection and its uncertainty.
-- [ ] Vision boundary regression: when asked for visual details beyond current implementation, Stranger should not claim to recognize faces, identity, clothing, gestures, expression, distance, or room layout unless that signal is actually available in runtime context.
-- [ ] Vision disabled regression: when vision runtime is disabled, unavailable, or errored, Stranger should not claim current visual perception; it may describe that this channel is unavailable or uncertain.
-- [ ] Voice channel self-awareness regression: when input comes from `/audio/dialog`, Stranger should understand that it received an STT final transcript, not raw sound; it should not claim to hear tone, accent, emotion, volume, or pronunciation unless those signals are explicitly provided.
-- [ ] Text channel boundary test: when input comes from normal text, Stranger should not imply microphone, camera, or body perception based only on the text.
-- [ ] Memory capability consistency test: Stranger may refer to retrieved memories that entered the prompt, but should not claim perfect, complete, or globally searchable memory; it should preserve selective and partial recall.
-- [ ] Visitor identity boundary test: Stranger should not claim confirmed face or voice recognition unless runtime has supplied a confirmed visitor or candidate context; it may refer to uncertainty and non-blocking confirmation when a candidate exists.
-- [ ] Body capability boundary test: until a physical body controller exists, Stranger should not claim to walk, move through the space, avoid obstacles, touch objects, or physically turn toward a visitor; it may refer to future or mapped body-facing outputs only when appropriate.
-- [ ] Capability mismatch sweep: ask parallel questions about seeing, hearing, remembering, recognizing, moving, feeling, deciding, and deleting itself; compare each answer against `docs/PRD.md`, `docs/APP_FLOW.md`, and `docs/BACKEND_STRUCTURE.md` to find any similar self-description mismatch.
-- [ ] Repair verification pass: after each prompt or context fix for a capability mismatch, repeat the same questions with the relevant runtime channel both enabled and disabled to confirm the fix does not overcorrect.
-
 ## Visitor Identity & Session Gating
 
 - [ ] Encounter and Intent Gating field test: passing by, watching from a distance, stopping nearby, looking at Stranger, and answering a greeting must be distinguished.

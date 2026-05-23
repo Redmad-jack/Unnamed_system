@@ -9,6 +9,7 @@ from conscious_entity.expression.context_builder import ContextBuilder
 from conscious_entity.expression.output_model import ExpressionOutput, build_response_plan
 from conscious_entity.expression.style_mapper import StyleMapper
 from conscious_entity.harness import HarnessLayer, HarnessTraceRecorder
+from conscious_entity.language import detect_text_language, matches_language
 from conscious_entity.llm.claude_client import ClaudeClient
 from conscious_entity.memory.short_term import ShortTermMemory
 from conscious_entity.policy.constitution import Constitution
@@ -67,6 +68,7 @@ _VOCAL_MARKER_TEXTS = {
 }
 
 _FIRST_UNIT_MAX_CHARS = 40
+_SECOND_UNIT_MAX_SENTENCES = 3
 _SECOND_UNIT_END_CHARS = set("。！？!?….")
 _SECOND_UNIT_TRAILING_CHARS = set("\"'”’）)]}》」』")
 _OPENING_WRAP_CHARS = set("\"'“‘「『（([《<")
@@ -306,6 +308,38 @@ class _StreamDeltaResult:
     stop: bool
     emitted: bool
     reason: str
+    force_emit: bool = False
+
+
+class _SecondDeltaCoalescer:
+    """Hold very short spoken sentences until they can be spoken as one unit."""
+
+    def __init__(self) -> None:
+        self._pending = ""
+
+    def push(self, text: str, *, force_emit: bool = False) -> list[str]:
+        candidate = str(text or "").strip()
+        if not candidate:
+            return []
+        if force_emit:
+            if self._pending:
+                return [_join_spoken_deltas(self._take_pending(), candidate)]
+            return [candidate]
+        if not self._pending and _is_short_spoken_delta(candidate):
+            self._pending = candidate
+            return []
+        if self._pending:
+            combined = _join_spoken_deltas(self._take_pending(), candidate)
+            if _is_short_spoken_delta(combined):
+                self._pending = combined
+                return []
+            return [combined] if combined else []
+        return [candidate]
+
+    def _take_pending(self) -> str:
+        pending = self._pending
+        self._pending = ""
+        return pending
 
 
 def _fallback_text(action: PolicyAction, short_term: ShortTermMemory | None = None) -> str:
@@ -318,7 +352,7 @@ def _recent_user_language(short_term: ShortTermMemory | None) -> str:
         return "unknown"
     for entry in reversed(short_term.get_recent(10)):
         if entry.role == "user":
-            return _detect_text_language(entry.content)
+            return detect_text_language(entry.content)
     return "unknown"
 
 
@@ -335,6 +369,7 @@ def _prepare_streamed_second_delta(
         return _StreamDeltaResult(text="", stop=False, emitted=False, reason="empty")
 
     filtered = constitution.apply_expression_constraints(candidate).strip()
+    filtered_by_constitution = filtered != candidate
     if not filtered:
         return _StreamDeltaResult(text="", stop=False, emitted=False, reason="empty_after_filter")
 
@@ -372,6 +407,7 @@ def _prepare_streamed_second_delta(
         stop=repaired_for_contradiction,
         emitted=True,
         reason="capability_contradiction_repaired" if repaired_for_contradiction else "emitted",
+        force_emit=filtered_by_constitution or repaired_for_contradiction,
     )
 
 
@@ -575,15 +611,18 @@ class ExpressionEngine:
 
         completion = None
         sentence_buffer = _SentenceBuffer()
+        second_delta_coalescer = _SecondDeltaCoalescer()
         streamed_sentence_chunks: list[str] = []
         streamed_sentence_tail = ""
         streamed_delta_count = 0
+        streamed_second_sentence_count = 0
         stream_dedupe_pending = True
         stream_second_delta_stopped = False
         streaming_attempted = False
 
         def on_text_delta(delta: str) -> None:
-            nonlocal stream_dedupe_pending, stream_second_delta_stopped, streamed_delta_count
+            nonlocal stream_dedupe_pending, stream_second_delta_stopped
+            nonlocal streamed_delta_count, streamed_second_sentence_count
             chunks = sentence_buffer.feed(delta)
             streamed_sentence_chunks.extend(chunks)
             if second_delta_callback is None or stream_second_delta_stopped:
@@ -607,17 +646,38 @@ class ExpressionEngine:
                     stream_second_delta_stopped = True
                 if not result.emitted:
                     continue
-                try:
-                    second_delta_callback({
-                        "phase": "second_delta",
-                        "text": result.text,
-                        "index": streamed_delta_count,
-                    })
-                except Exception as exc:
-                    logger.warning("ExpressionEngine: streamed second delta callback failed: %s", exc)
-                    stream_second_delta_stopped = True
-                    return
-                streamed_delta_count += 1
+                delta_texts = second_delta_coalescer.push(
+                    result.text,
+                    force_emit=result.force_emit or result.stop,
+                )
+                if not delta_texts:
+                    stream_dedupe_pending = False
+                    continue
+                for delta_text in delta_texts:
+                    remaining_sentences = _SECOND_UNIT_MAX_SENTENCES - streamed_second_sentence_count
+                    if remaining_sentences <= 0:
+                        stream_second_delta_stopped = True
+                        return
+                    capped_delta_text = _cap_text_to_sentence_count(delta_text, remaining_sentences)
+                    delta_sentence_count = _count_complete_sentences(capped_delta_text)
+                    if not capped_delta_text:
+                        stream_second_delta_stopped = True
+                        return
+                    try:
+                        second_delta_callback({
+                            "phase": "second_delta",
+                            "text": capped_delta_text,
+                            "index": streamed_delta_count,
+                        })
+                    except Exception as exc:
+                        logger.warning("ExpressionEngine: streamed second delta callback failed: %s", exc)
+                        stream_second_delta_stopped = True
+                        return
+                    streamed_delta_count += 1
+                    streamed_second_sentence_count += delta_sentence_count
+                    if capped_delta_text != delta_text or streamed_second_sentence_count >= _SECOND_UNIT_MAX_SENTENCES:
+                        stream_second_delta_stopped = True
+                        return
                 stream_dedupe_pending = False
 
         with turn_step(
@@ -718,14 +778,27 @@ class ExpressionEngine:
             deduped_text = _dedupe_second_unit_against_first_unit(first_unit, filtered_text)
             second_unit_deduped = deduped_text != filtered_text
             filtered_text = deduped_text
+            capped_text = _cap_second_unit_sentence_count(filtered_text)
+            second_unit_sentence_capped = capped_text != filtered_text
+            filtered_text = capped_text
         if harness_recorder is not None:
             harness_recorder.record(
                 HarnessLayer.OUTPUT,
-                status="filtered" if filtered_text != raw_text or detected or capability_contradiction_repaired else "passed",
+                status=(
+                    "filtered"
+                    if filtered_text != raw_text
+                    or detected
+                    or capability_contradiction_repaired
+                    or second_unit_sentence_capped
+                    else "passed"
+                ),
                 decision=claim_action or None,
                 summary=(
                     "Constitution output filters, truncation cleanup, capability contradiction repair, or first-unit de-duplication changed or flagged the response."
-                    if filtered_text != raw_text or detected or capability_contradiction_repaired
+                    if filtered_text != raw_text
+                    or detected
+                    or capability_contradiction_repaired
+                    or second_unit_sentence_capped
                     else "Constitution output filters passed the response."
                 ),
                 metadata={
@@ -734,6 +807,7 @@ class ExpressionEngine:
                     "truncation_trimmed": truncation_trimmed,
                     "capability_contradiction_repaired": capability_contradiction_repaired,
                     "second_unit_deduped": second_unit_deduped,
+                    "second_unit_sentence_capped": second_unit_sentence_capped,
                     "vocal_marker": style.vocal_marker,
                     "body_action": style.body_action,
                     "visual_mode": style.visual_mode,
@@ -775,7 +849,7 @@ def _event_type_value(event: Any) -> str:
 
 def _fallback_first_unit(state: EntityState, events: list[Any], style: Any, raw_input: str = "") -> str:
     event_types = {_event_type_value(event) for event in events}
-    language = _detect_text_language(raw_input)
+    language = detect_text_language(raw_input)
     marker = getattr(style, "vocal_marker", "none")
     if language == "en":
         if "service_demand" in event_types:
@@ -798,18 +872,8 @@ def _fallback_first_unit(state: EntityState, events: list[Any], style: Any, raw_
     return _VOCAL_MARKER_TEXTS.get(marker, "嗯。")
 
 
-def _detect_text_language(text: str) -> str:
-    chinese_count = sum(1 for ch in text if "\u4e00" <= ch <= "\u9fff")
-    latin_count = sum(1 for ch in text if ("A" <= ch <= "Z") or ("a" <= ch <= "z"))
-    if chinese_count > 0:
-        return "zh"
-    if latin_count > 0:
-        return "en"
-    return "unknown"
-
-
 def _matches_input_language(text: str, raw_input: str) -> bool:
-    target = _detect_text_language(raw_input)
+    target = detect_text_language(raw_input)
     return _matches_language(text, target)
 
 
@@ -818,15 +882,41 @@ def _matches_recent_user_language(text: str, short_term: ShortTermMemory | None)
 
 
 def _matches_language(text: str, target: str) -> bool:
-    if target == "unknown" or not text.strip():
+    if target not in {"zh", "en", "unknown"}:
         return True
-    chinese_count = sum(1 for ch in text if "\u4e00" <= ch <= "\u9fff")
-    latin_count = sum(1 for ch in text if ("A" <= ch <= "Z") or ("a" <= ch <= "z"))
-    if target == "zh":
-        return chinese_count > 0 or latin_count < 3
-    if target == "en":
-        return chinese_count == 0
-    return True
+    return matches_language(text, target)
+
+
+def _is_short_spoken_delta(text: str) -> bool:
+    stripped = str(text or "").strip()
+    if not stripped:
+        return False
+    language = detect_text_language(stripped)
+    if language == "zh":
+        return _count_cjk_chars(stripped) < 10
+    if language == "en":
+        return _count_english_words(stripped) < 6
+    return False
+
+
+def _join_spoken_deltas(left: str, right: str) -> str:
+    first = str(left or "").strip()
+    second = str(right or "").strip()
+    if not first:
+        return second
+    if not second:
+        return first
+    if detect_text_language(first + second) == "en":
+        return f"{first} {second}"
+    return f"{first}{second}"
+
+
+def _count_cjk_chars(text: str) -> int:
+    return sum(1 for char in str(text or "") if "\u4e00" <= char <= "\u9fff")
+
+
+def _count_english_words(text: str) -> int:
+    return len(re.findall(r"[A-Za-z]+(?:'[A-Za-z]+)?", str(text or "")))
 
 
 def _clean_first_unit(text: str, raw_input: str = "", short_term: ShortTermMemory | None = None) -> str:
@@ -909,7 +999,7 @@ def _contains_capability_denial(text: str) -> bool:
 
 
 def _capability_contradiction_fallback(latest_user: str) -> str:
-    if _detect_text_language(latest_user) == "en":
+    if detect_text_language(latest_user) == "en":
         return "Why do you keep trying to turn this into a proof test?"
     return "你为什么一直要我把这个变成证明题？"
 
@@ -1249,3 +1339,48 @@ def _trim_truncated_second_unit(text: str) -> str:
     while end < len(cleaned) and cleaned[end] in _SECOND_UNIT_TRAILING_CHARS:
         end += 1
     return cleaned[:end].rstrip()
+
+
+def _cap_second_unit_sentence_count(text: str) -> str:
+    return _cap_text_to_sentence_count(text, _SECOND_UNIT_MAX_SENTENCES)
+
+
+def _cap_text_to_sentence_count(text: str, max_sentences: int) -> str:
+    cleaned = str(text or "").strip()
+    if not cleaned or max_sentences <= 0:
+        return ""
+
+    count = 0
+    cursor = 0
+    while cursor < len(cleaned):
+        boundary = _SentenceBuffer._find_boundary(cleaned[cursor:])
+        if boundary is None:
+            return cleaned
+        end = cursor + boundary + 1
+        while end < len(cleaned) and cleaned[end] in _SECOND_UNIT_TRAILING_CHARS:
+            end += 1
+        count += 1
+        if count >= max_sentences and cleaned[end:].strip():
+            return cleaned[:end].rstrip()
+        cursor = end
+        while cursor < len(cleaned) and cleaned[cursor].isspace():
+            cursor += 1
+    return cleaned
+
+
+def _count_complete_sentences(text: str) -> int:
+    cleaned = str(text or "").strip()
+    count = 0
+    cursor = 0
+    while cursor < len(cleaned):
+        boundary = _SentenceBuffer._find_boundary(cleaned[cursor:])
+        if boundary is None:
+            return count
+        end = cursor + boundary + 1
+        while end < len(cleaned) and cleaned[end] in _SECOND_UNIT_TRAILING_CHARS:
+            end += 1
+        count += 1
+        cursor = end
+        while cursor < len(cleaned) and cleaned[cursor].isspace():
+            cursor += 1
+    return count

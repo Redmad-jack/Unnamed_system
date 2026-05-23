@@ -54,6 +54,29 @@ def test_audio_config_api_key_auth_and_defaults(monkeypatch):
     assert public["tts"]["sample_rate"] == 24000
 
 
+def test_audio_config_supports_language_specific_voice_types(monkeypatch):
+    monkeypatch.setattr(AudioConfig, "dependency_status", _deps_available)
+    monkeypatch.setenv("ENTITY_AUDIO_PROVIDER", "volcengine")
+    monkeypatch.setenv("ENTITY_AUDIO_ENABLED", "1")
+    monkeypatch.setenv("ENTITY_VOLCENGINE_API_KEY", "secret")
+    monkeypatch.delenv("ENTITY_VOLCENGINE_TTS_VOICE_TYPE", raising=False)
+    monkeypatch.setenv("ENTITY_VOLCENGINE_TTS_ZH_VOICE_TYPE", "test-zh-voice")
+    monkeypatch.setenv("ENTITY_VOLCENGINE_TTS_EN_VOICE_TYPE", "test-en-voice")
+    monkeypatch.setenv("ENTITY_VOLCENGINE_TTS_MODEL", "seed-tts-2.0-standard")
+
+    config = AudioConfig.from_env()
+    public = config.to_public_dict()
+
+    assert config.disabled_reason() is None
+    assert config.default_tts_voice_type() == "test-zh-voice"
+    assert config.tts_voice_type_for_language("zh") == "test-zh-voice"
+    assert config.tts_voice_type_for_language("en") == "test-en-voice"
+    assert config.tts_voice_type_for_language("unknown") == "test-zh-voice"
+    assert public["tts"]["voice_type"] == "test-zh-voice"
+    assert public["tts"]["voice_types"]["en"] == "test-en-voice"
+    assert public["tts"]["model"] == "seed-tts-2.0-standard"
+
+
 def test_audio_config_app_token_fallback_auth(monkeypatch):
     monkeypatch.setattr(AudioConfig, "dependency_status", _deps_available)
     monkeypatch.setenv("ENTITY_AUDIO_PROVIDER", "volcengine")

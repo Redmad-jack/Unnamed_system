@@ -215,7 +215,10 @@ class TestBasicPipeline:
 
         def complete_streaming_with_metadata(system, messages, max_tokens, on_text_delta=None):
             order.append("main_streaming_llm")
-            return original_streaming_complete(system, messages, max_tokens, on_text_delta=on_text_delta)
+            completion = ClaudeCompletion(text="这里有东西还在继续靠近。", stop_reason="end_turn")
+            if on_text_delta is not None:
+                on_text_delta(completion.text)
+            return completion
 
         def preview_influence(*args, **kwargs):
             order.append("memory_preview")

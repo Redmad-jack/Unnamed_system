@@ -118,9 +118,17 @@ class TTSStream:
     stream_id: str
     text_segments: list[str]
     output_format: str
+    voice_type: str
     created_at: datetime
     expires_at: datetime
-    source: Literal["dialog_output", "dialog_first_unit", "dialog_second_unit", "debug_preview"]
+    source: Literal[
+        "dialog_output",
+        "dialog_first_unit",
+        "dialog_second_unit",
+        "dialog_second_delta",
+        "dialog_second_unit_remainder",
+        "debug_preview",
+    ]
     consumed: bool = False
     last_logid: str | None = None
 
@@ -131,6 +139,7 @@ class TTSStream:
             "expires_at": self.expires_at.isoformat(),
             "source": self.source,
             "output_format": self.output_format,
+            "voice_type": self.voice_type,
             "consumed": self.consumed,
             "last_logid": self.last_logid,
         }

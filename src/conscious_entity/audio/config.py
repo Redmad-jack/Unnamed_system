@@ -5,6 +5,8 @@ import os
 from dataclasses import dataclass
 from typing import Any
 
+from conscious_entity.language import TextLanguage
+
 
 DEFAULT_STT_ENDPOINT = "wss://openspeech.bytedance.com/api/v3/sauc/bigmodel_async"
 DEFAULT_STT_RESOURCE_ID = "volc.seedasr.sauc.concurrent"
@@ -27,6 +29,9 @@ class AudioConfig:
     tts_endpoint: str = DEFAULT_TTS_ENDPOINT
     tts_resource_id: str = DEFAULT_TTS_RESOURCE_ID
     tts_voice_type: str | None = None
+    tts_zh_voice_type: str | None = None
+    tts_en_voice_type: str | None = None
+    tts_model: str | None = None
     output_format: str = "mp3"
     tts_sample_rate: int = 24000
     tts_max_segment_bytes: int = 800
@@ -51,6 +56,9 @@ class AudioConfig:
             tts_endpoint=os.getenv("ENTITY_VOLCENGINE_TTS_ENDPOINT", DEFAULT_TTS_ENDPOINT).strip() or DEFAULT_TTS_ENDPOINT,
             tts_resource_id=os.getenv("ENTITY_VOLCENGINE_TTS_RESOURCE_ID", DEFAULT_TTS_RESOURCE_ID).strip() or DEFAULT_TTS_RESOURCE_ID,
             tts_voice_type=_blank_to_none(os.getenv("ENTITY_VOLCENGINE_TTS_VOICE_TYPE")),
+            tts_zh_voice_type=_blank_to_none(os.getenv("ENTITY_VOLCENGINE_TTS_ZH_VOICE_TYPE")),
+            tts_en_voice_type=_blank_to_none(os.getenv("ENTITY_VOLCENGINE_TTS_EN_VOICE_TYPE")),
+            tts_model=_blank_to_none(os.getenv("ENTITY_VOLCENGINE_TTS_MODEL")),
             output_format=_normalize_output_format(os.getenv("ENTITY_AUDIO_OUTPUT_FORMAT", "mp3")),
             tts_sample_rate=_env_int("ENTITY_AUDIO_TTS_SAMPLE_RATE", 24000, minimum=8000, maximum=48000),
             tts_max_segment_bytes=_env_int("ENTITY_AUDIO_TTS_MAX_SEGMENT_BYTES", 800, minimum=80, maximum=8000),
@@ -87,7 +95,7 @@ class AudioConfig:
             return "missing_stt_resource_id"
         if not self.tts_resource_id:
             return "missing_tts_resource_id"
-        if not self.tts_voice_type:
+        if not self.default_tts_voice_type():
             return "missing_tts_voice_type"
         if self.sample_rate <= 0:
             return "invalid_sample_rate"
@@ -117,7 +125,13 @@ class AudioConfig:
                 "configured": reason is None,
                 "endpoint": self.tts_endpoint,
                 "resource_id": self.tts_resource_id,
-                "voice_type": self.tts_voice_type,
+                "voice_type": self.default_tts_voice_type(),
+                "voice_types": {
+                    "default": self.tts_voice_type,
+                    "zh": self.tts_zh_voice_type,
+                    "en": self.tts_en_voice_type,
+                },
+                "model": self.tts_model,
                 "output_format": self.output_format,
                 "sample_rate": self.tts_sample_rate,
                 "ttl_seconds": self.tts_stream_ttl_seconds,
@@ -128,6 +142,16 @@ class AudioConfig:
                 "allow_debug_raw_tts": self.allow_debug_raw_tts,
             },
         }
+
+    def default_tts_voice_type(self) -> str | None:
+        return self.tts_voice_type or self.tts_zh_voice_type or self.tts_en_voice_type
+
+    def tts_voice_type_for_language(self, language: TextLanguage) -> str | None:
+        if language == "zh" and self.tts_zh_voice_type:
+            return self.tts_zh_voice_type
+        if language == "en" and self.tts_en_voice_type:
+            return self.tts_en_voice_type
+        return self.default_tts_voice_type()
 
 
 def _blank_to_none(value: str | None) -> str | None:

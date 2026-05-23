@@ -126,6 +126,11 @@
 - 原因：即使本意只是防止编造声学细节，模型也会把这些词扩展成“我不能听见 / 只能读文字 / 没有麦克风”的技术 inventory
 - 如何应用：语音输入边界只通过 metadata 和测试记录，不把 STT / transcript / 声学缺失写给表达 LLM；能力问句另走 constitution / current-turn cue / output filter
 
+**L31：格式约束不能写成 text-only 能力暗示**
+- 规则：表达 prompt 中用于禁止 JSON、字段标签、Markdown 或 response plan 的格式约束，应写成“ordinary spoken wording / no structured output”，不要写 `plain text only`、`text only` 或“只能文字输出”。
+- 原因：这类措辞本意是输出格式约束，但会和语音能力问题、TTS 现场能力、managed memory 污染叠加，让 Stranger 误以为自己没有声音或不能说话。
+- 如何应用：修改表达格式规则时，同时用 `rg` 检查 runtime prompt、context builder、managed memory 和最近 session history 中是否存在 `no voice`、`text-based`、`voice/audio`、`没有声音`、`用文字回应`、`读字` 等污染短语；必要时 reset 当前 session，避免短期历史继续污染。
+
 **L17：跨 session 记忆必须有 visitor scope**
 - 规则：不能依赖 `session_type` 或全局池去模拟“同一个访客”的连续性；跨 session 的个人事实、关系线索和回返感必须经过显式 `visitor_id` 绑定
 - 原因：否则一个访客说过的事实会在另一个访客处泄漏，或者像“K 是谁”这类旧会话事实在新 session 中无法稳定召回

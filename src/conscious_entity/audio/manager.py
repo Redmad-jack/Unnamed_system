@@ -22,6 +22,7 @@ from conscious_entity.audio.volcengine_protocol import media_type_for_format
 from conscious_entity.audio.volcengine_stt import VolcengineSTTClient
 from conscious_entity.audio.volcengine_tts import VolcengineTTSClient
 from conscious_entity.expression.output_model import ExpressionOutput
+from conscious_entity.language import detect_text_language
 from conscious_entity.telemetry.latency import record_audio_latency
 
 
@@ -182,7 +183,10 @@ class AudioManager:
         start = time.perf_counter()
         first_byte_recorded = False
         try:
-            async for chunk in client.synthesize_stream(stream.text_segments):
+            async for chunk in client.synthesize_stream(
+                stream.text_segments,
+                voice_type=stream.voice_type,
+            ):
                 if not first_byte_recorded:
                     first_byte_recorded = True
                     record_audio_latency(
@@ -192,6 +196,7 @@ class AudioManager:
                             "stream_id": stream_id,
                             "segment_count": len(stream.text_segments),
                             "output_format": stream.output_format,
+                            "voice_type": stream.voice_type,
                         },
                     )
                 yield chunk
@@ -206,6 +211,7 @@ class AudioManager:
                     "stream_id": stream_id,
                     "segment_count": len(stream.text_segments),
                     "output_format": stream.output_format,
+                    "voice_type": stream.voice_type,
                     "logid": stream.last_logid,
                 },
             )
@@ -228,6 +234,7 @@ class AudioManager:
                     "stream_id": stream_id,
                     "segment_count": len(stream.text_segments),
                     "output_format": stream.output_format,
+                    "voice_type": stream.voice_type,
                 },
             )
             raise
@@ -307,13 +314,22 @@ class AudioManager:
         now = utc_now()
         stream_source = (
             source
-            if source in {"dialog_output", "dialog_first_unit", "dialog_second_unit", "debug_preview"}
+            if source in {
+                "dialog_output",
+                "dialog_first_unit",
+                "dialog_second_unit",
+                "dialog_second_delta",
+                "dialog_second_unit_remainder",
+                "debug_preview",
+            }
             else "dialog_output"
         )
+        voice_type = self._voice_type_for_segments(segments)
         stream = TTSStream(
             stream_id="tts_" + uuid.uuid4().hex,
             text_segments=segments,
             output_format=self.config.output_format,
+            voice_type=voice_type,
             created_at=now,
             expires_at=now + timedelta(seconds=self.config.tts_stream_ttl_seconds),
             source=stream_source,
@@ -321,6 +337,13 @@ class AudioManager:
         self.active_tts_streams[stream.stream_id] = stream
         self.last_stream_id = stream.stream_id
         return stream
+
+    def _voice_type_for_segments(self, segments: list[str]) -> str:
+        language = detect_text_language("\n".join(segments))
+        voice_type = self.config.tts_voice_type_for_language(language)
+        if not voice_type:
+            raise AudioRuntimeError("missing_tts_voice_type", "TTS voice type is not configured.")
+        return voice_type
 
     def _ensure_enabled(self, code: str) -> None:
         reason = self.config.disabled_reason()
