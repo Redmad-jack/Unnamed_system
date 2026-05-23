@@ -4,6 +4,8 @@ import os
 from dataclasses import dataclass
 from typing import Any
 
+from have_some_ai.doubao.tts_bidirectional_client import doubao_tts_speakers_from_env
+
 
 @dataclass(frozen=True)
 class VoiceProviderConfig:
@@ -138,7 +140,8 @@ def _provider_capabilities(provider: str, stt_mode: str) -> dict[str, Any]:
                 "wss://openspeech.bytedance.com/api/v3/tts/bidirection",
             ),
             "tts_resource_id": os.getenv("DOUBAO_TTS_RESOURCE_ID", "seed-icl-2.0"),
-            "speaker": "S_ud9II0522",
+            "speakers": doubao_tts_speakers_from_env(),
+            "default_speaker_language": "zh",
         }
     return {}
 

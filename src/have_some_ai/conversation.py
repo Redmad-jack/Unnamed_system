@@ -5,15 +5,18 @@ from typing import Any
 
 from have_some_ai.chat import ShopkeeperReplyService
 from have_some_ai.service import MealService
+from have_some_ai.voice import FoodGateIntentInterpreter
 
 
 TOTAL_REQUIRED_QUESTIONS = 2
 
 CHAT_MODE_A_NO_FOOD = "A_NO_FOOD"
 CHAT_MODE_B_WANT_FOOD = "B_WANT_FOOD"
+CHAT_MODE_C_TALK_ONLY = "TALK_ONLY"
 
 FOOD_GATE_WANT = "WANT_FOOD"
 FOOD_GATE_NO = "NO_FOOD"
+FOOD_GATE_CHAT = "WANT_CHAT"
 FOOD_GATE_UNCLEAR = "UNCLEAR"
 
 RESPONSE_LANGUAGE_EN = "en"
@@ -22,13 +25,16 @@ RESPONSE_LANGUAGE_ZH = "zh"
 STAGE_LANGUAGE_GATE = "language_gate"
 STAGE_FOOD_GATE = "food_gate"
 STAGE_NOT_EATING_CHAT = "not_eating_chat"
+STAGE_TALK_ONLY_CHAT = "talk_only_chat"
 STAGE_FORMAL_QUESTION_1 = "formal_question_1"
 STAGE_FORMAL_QUESTION_2 = "formal_question_2"
+STAGE_POST_ASSIGNMENT_CHAT = "post_assignment_chat"
 STAGE_FAREWELL = "farewell"
 STAGE_ASSIGNED = "assigned"
 STAGE_DONE = "done"
 
 ROUTE_WANT_FOOD = "want_food"
+ROUTE_WANT_CHAT = "want_chat"
 ROUTE_NO_FOOD = "no_food"
 ROUTE_CHITCHAT = "chitchat"
 ROUTE_UNCLEAR_SPEECH = "unclear_speech"
@@ -36,15 +42,26 @@ ROUTE_ANSWER_ATTEMPT = "answer_attempt"
 ROUTE_SYSTEM_COMMAND = "system_command"
 ROUTE_NOISE = "noise"
 ROUTE_LANGUAGE = "language"
+ROUTE_COMMAND_REPLY_NOW = "reply_now"
 
 MAX_NOT_EATING_CHAT_TURNS = 3
+MAX_TALK_ONLY_CHAT_TURNS = 3
 MAX_FORMAL_CHITCHAT_TURNS = 3
+MAX_POST_ASSIGNMENT_CHAT_TURNS = 2
 
 
 @dataclass(frozen=True)
 class TurnRoute:
     route: str
     command: str | None = None
+
+
+@dataclass(frozen=True)
+class FoodGateEvidence:
+    strong_food: bool
+    weak_food: bool
+    no_food: bool
+    wants_chat: bool
 
 
 class ConversationOrchestrator:
@@ -58,16 +75,20 @@ class ConversationOrchestrator:
         self,
         service: MealService,
         reply_service: ShopkeeperReplyService | None = None,
+        food_gate_interpreter: FoodGateIntentInterpreter | None = None,
     ) -> None:
         self._service = service
         self._reply_service = reply_service or ShopkeeperReplyService()
+        self._food_gate_interpreter = food_gate_interpreter
         self._awaiting_question_by_participant: dict[str, str] = {}
         self._chat_mode_by_participant: dict[str, str] = {}
         self._food_gate_prompted: set[str] = set()
         self._response_language_by_participant: dict[str, str] = {}
         self._food_gate_chitchat_count: dict[str, int] = {}
         self._not_eating_chat_count: dict[str, int] = {}
+        self._talk_only_chat_count: dict[str, int] = {}
         self._formal_chitchat_count: dict[str, int] = {}
+        self._post_assignment_chat_count: dict[str, int] = {}
         self._language_router = LanguageGateRouter()
         self._food_gate_router = FoodGateRouter()
         self._formal_turn_router = FormalTurnRouter()
@@ -111,6 +132,13 @@ class ConversationOrchestrator:
         assignment = detail["assignment"]
         response_language = self._response_language(participant_id, detail)
         if assignment is not None:
+            if participant_id in self._post_assignment_chat_count:
+                return self._handle_post_assignment_chat(
+                    participant_id,
+                    detail,
+                    clean_transcript,
+                    assignment,
+                )
             self._clear_live_state(participant_id)
             return self._response(
                 participant_id=participant_id,
@@ -121,6 +149,7 @@ class ConversationOrchestrator:
                 assignment=assignment,
                 interpretation=None,
                 chat_mode=CHAT_MODE_B_WANT_FOOD,
+                participant_public_code=_participant_public_code(detail),
             )
 
         if response_language is None:
@@ -129,6 +158,8 @@ class ConversationOrchestrator:
         chat_mode = self._chat_mode(participant_id, detail)
         if chat_mode == CHAT_MODE_A_NO_FOOD:
             return self._handle_not_eating_chat(participant_id, detail, clean_transcript)
+        if chat_mode == CHAT_MODE_C_TALK_ONLY:
+            return self._handle_talk_only_chat(participant_id, detail, clean_transcript)
 
         if not detail["draws"] and chat_mode != CHAT_MODE_B_WANT_FOOD:
             return self._handle_food_gate(participant_id, detail, clean_transcript)
@@ -137,7 +168,11 @@ class ConversationOrchestrator:
             return self._enter_want_food(participant_id, detail, clean_transcript)
 
         if len(detail["answers"]) >= len(detail["draws"]):
-            return self._assign_and_respond(participant_id, len(detail["answers"]))
+            return self._assign_and_respond(
+                participant_id,
+                len(detail["answers"]),
+                participant_public_code=_participant_public_code(detail),
+            )
 
         awaiting_question_id = self._awaiting_question_id(participant_id, detail)
         if awaiting_question_id is not None:
@@ -166,7 +201,11 @@ class ConversationOrchestrator:
 
         current_question = _first_unanswered_question(detail)
         if current_question is None:
-            return self._assign_and_respond(participant_id, len(detail["answers"]))
+            return self._assign_and_respond(
+                participant_id,
+                len(detail["answers"]),
+                participant_public_code=_participant_public_code(detail),
+            )
 
         self._awaiting_question_by_participant[participant_id] = (
             current_question["question_id"]
@@ -236,8 +275,16 @@ class ConversationOrchestrator:
             )
 
         routed = self._food_gate_router.route(transcript)
+        routed = self._route_food_gate_with_llm(participant_id, transcript, routed)
         if routed.route == ROUTE_WANT_FOOD:
             return self._enter_want_food(participant_id, detail, transcript)
+        if routed.route == ROUTE_WANT_CHAT:
+            return self._enter_talk_only(
+                participant_id,
+                detail,
+                transcript,
+                reply_now=routed.command == ROUTE_COMMAND_REPLY_NOW,
+            )
         if routed.route in {ROUTE_NO_FOOD, ROUTE_SYSTEM_COMMAND} and routed.command == "cancel":
             return self._enter_no_food(participant_id, detail, transcript, FOOD_GATE_NO)
         if routed.route == ROUTE_NO_FOOD:
@@ -278,6 +325,34 @@ class ConversationOrchestrator:
                 ),
             ),
         )
+
+    def _route_food_gate_with_llm(
+        self,
+        participant_id: str,
+        transcript: str,
+        fallback_route: TurnRoute,
+    ) -> TurnRoute:
+        if self._food_gate_interpreter is None:
+            return fallback_route
+        if not _should_consult_food_gate_llm(transcript, fallback_route):
+            return fallback_route
+
+        response_language = self._response_language_by_participant.get(participant_id)
+        try:
+            interpreted = self._food_gate_interpreter.interpret_food_gate(
+                food_gate_prompt=self._service.food_gate_prompt(
+                    participant_id,
+                    response_language=response_language,
+                ),
+                transcript=transcript,
+                response_language=response_language,
+                local_fallback_route=fallback_route.route,
+            )
+        except Exception:
+            return fallback_route
+        if interpreted is None:
+            return fallback_route
+        return TurnRoute(interpreted.route)
 
     def _handle_not_eating_chat(
         self,
@@ -327,6 +402,57 @@ class ConversationOrchestrator:
             not_eating_chat_count=count,
         )
 
+    def _handle_talk_only_chat(
+        self,
+        participant_id: str,
+        detail: dict[str, Any],
+        transcript: str,
+    ) -> dict[str, Any]:
+        if not transcript:
+            return self._response(
+                participant_id=participant_id,
+                stage=STAGE_TALK_ONLY_CHAT,
+                participant_status=detail["participant"]["status"],
+                answered_count=len(detail["answers"]),
+                next_action="talk_only_chat",
+                last_user_transcript=transcript,
+                interpretation=None,
+                chat_mode=CHAT_MODE_C_TALK_ONLY,
+                food_gate_result=FOOD_GATE_CHAT,
+                talk_only_chat_count=self._talk_only_chat_count.get(participant_id, 0),
+            )
+
+        count = self._talk_only_chat_count.get(participant_id, 0) + 1
+        self._talk_only_chat_count[participant_id] = count
+        if count >= MAX_TALK_ONLY_CHAT_TURNS:
+            self._clear_live_state(participant_id)
+            self._service.delete_transient_participant(participant_id)
+            return self._response(
+                participant_id=participant_id,
+                stage=STAGE_DONE,
+                participant_status="deleted",
+                answered_count=len(detail["answers"]),
+                next_action="end_session",
+                last_user_transcript=transcript,
+                interpretation={"route": ROUTE_CHITCHAT, "count": count},
+                chat_mode=CHAT_MODE_C_TALK_ONLY,
+                food_gate_result=FOOD_GATE_CHAT,
+                talk_only_chat_count=count,
+                participant_deleted=True,
+            )
+        return self._response(
+            participant_id=participant_id,
+            stage=STAGE_TALK_ONLY_CHAT,
+            participant_status=detail["participant"]["status"],
+            answered_count=len(detail["answers"]),
+            next_action="talk_only_chat",
+            last_user_transcript=transcript,
+            interpretation={"route": ROUTE_CHITCHAT, "count": count},
+            chat_mode=CHAT_MODE_C_TALK_ONLY,
+            food_gate_result=FOOD_GATE_CHAT,
+            talk_only_chat_count=count,
+        )
+
     def _enter_no_food(
         self,
         participant_id: str,
@@ -350,6 +476,38 @@ class ConversationOrchestrator:
             not_eating_chat_count=0,
         )
 
+    def _enter_talk_only(
+        self,
+        participant_id: str,
+        detail: dict[str, Any],
+        transcript: str,
+        *,
+        reply_now: bool = False,
+    ) -> dict[str, Any]:
+        self._chat_mode_by_participant[participant_id] = CHAT_MODE_C_TALK_ONLY
+        self._awaiting_question_by_participant.pop(participant_id, None)
+        self._food_gate_chitchat_count.pop(participant_id, None)
+        self._not_eating_chat_count.pop(participant_id, None)
+        initial_count = 1 if reply_now and transcript else 0
+        self._talk_only_chat_count[participant_id] = initial_count
+        interpretation = (
+            {"route": ROUTE_CHITCHAT, "count": initial_count}
+            if initial_count
+            else {"status": FOOD_GATE_CHAT}
+        )
+        return self._response(
+            participant_id=participant_id,
+            stage=STAGE_TALK_ONLY_CHAT,
+            participant_status=detail["participant"]["status"],
+            answered_count=len(detail["answers"]),
+            next_action="talk_only_chat",
+            last_user_transcript=transcript,
+            interpretation=interpretation,
+            chat_mode=CHAT_MODE_C_TALK_ONLY,
+            food_gate_result=FOOD_GATE_CHAT,
+            talk_only_chat_count=initial_count,
+        )
+
     def _enter_want_food(
         self,
         participant_id: str,
@@ -365,7 +523,11 @@ class ConversationOrchestrator:
         fresh_detail = self._service.participant_detail(participant_id)
         current_question = _first_unanswered_question(fresh_detail)
         if current_question is None:
-            return self._assign_and_respond(participant_id, len(fresh_detail["answers"]))
+            return self._assign_and_respond(
+                participant_id,
+                len(fresh_detail["answers"]),
+                participant_public_code=_participant_public_code(fresh_detail),
+            )
         self._awaiting_question_by_participant[participant_id] = (
             current_question["question_id"]
         )
@@ -474,6 +636,16 @@ class ConversationOrchestrator:
         detail = self._service.participant_detail(participant_id)
         answered_count = len(detail["answers"])
 
+        if voice_result["status"] == "chitchat":
+            current_question = _draw_by_question_id(detail["draws"], question_id)
+            self._awaiting_question_by_participant[participant_id] = question_id
+            return self._formal_chitchat_response(
+                participant_id,
+                detail,
+                current_question,
+                transcript,
+            )
+
         if voice_result["status"] == "accepted":
             interpretation = _interpretation_from_voice_result(voice_result)
             self._awaiting_question_by_participant.pop(participant_id, None)
@@ -483,6 +655,7 @@ class ConversationOrchestrator:
                     participant_id,
                     answered_count,
                     interpretation=interpretation,
+                    participant_public_code=_participant_public_code(detail),
                 )
             next_question = _first_unanswered_question(detail)
             if next_question is not None:
@@ -539,24 +712,84 @@ class ConversationOrchestrator:
             formal_chitchat_count=count,
         )
 
+    def _handle_post_assignment_chat(
+        self,
+        participant_id: str,
+        detail: dict[str, Any],
+        transcript: str,
+        assignment: dict[str, Any],
+    ) -> dict[str, Any]:
+        if not transcript:
+            return self._response(
+                participant_id=participant_id,
+                stage=STAGE_POST_ASSIGNMENT_CHAT,
+                participant_status=detail["participant"]["status"],
+                answered_count=len(detail["answers"]),
+                next_action="post_assignment_chat",
+                last_user_transcript=transcript,
+                assignment=assignment,
+                interpretation=None,
+                chat_mode=CHAT_MODE_B_WANT_FOOD,
+                post_assignment_chat_count=self._post_assignment_chat_count.get(
+                    participant_id,
+                    0,
+                ),
+                participant_public_code=_participant_public_code(detail),
+            )
+
+        count = self._post_assignment_chat_count.get(participant_id, 0) + 1
+        self._post_assignment_chat_count[participant_id] = count
+        if count > MAX_POST_ASSIGNMENT_CHAT_TURNS:
+            self._clear_live_state(participant_id)
+            return self._response(
+                participant_id=participant_id,
+                stage=STAGE_DONE,
+                participant_status=detail["participant"]["status"],
+                answered_count=len(detail["answers"]),
+                next_action="end_session",
+                last_user_transcript=transcript,
+                assignment=assignment,
+                interpretation={"route": ROUTE_CHITCHAT, "count": count},
+                chat_mode=CHAT_MODE_B_WANT_FOOD,
+                post_assignment_chat_count=count,
+                participant_public_code=_participant_public_code(detail),
+            )
+        return self._response(
+            participant_id=participant_id,
+            stage=STAGE_POST_ASSIGNMENT_CHAT,
+            participant_status=detail["participant"]["status"],
+            answered_count=len(detail["answers"]),
+            next_action="post_assignment_chat",
+            last_user_transcript=transcript,
+            assignment=assignment,
+            interpretation={"route": ROUTE_CHITCHAT, "count": count},
+            chat_mode=CHAT_MODE_B_WANT_FOOD,
+            post_assignment_chat_count=count,
+            participant_public_code=_participant_public_code(detail),
+        )
+
     def _assign_and_respond(
         self,
         participant_id: str,
         answered_count: int,
         interpretation: dict[str, Any] | None = None,
+        participant_public_code: str | None = None,
     ) -> dict[str, Any]:
         assignment = self._service.assign_food(participant_id)
         self._clear_live_state(participant_id)
         self._chat_mode_by_participant[participant_id] = CHAT_MODE_B_WANT_FOOD
+        self._post_assignment_chat_count[participant_id] = 0
         return self._response(
             participant_id=participant_id,
-            stage=STAGE_FAREWELL,
+            stage=STAGE_POST_ASSIGNMENT_CHAT,
             participant_status=STAGE_ASSIGNED,
             answered_count=answered_count,
-            next_action="end_session",
+            next_action="post_assignment_chat",
             assignment=assignment.__dict__,
             interpretation=interpretation,
             chat_mode=CHAT_MODE_B_WANT_FOOD,
+            post_assignment_chat_count=0,
+            participant_public_code=participant_public_code,
         )
 
     def _awaiting_question_id(
@@ -611,7 +844,9 @@ class ConversationOrchestrator:
         self._chat_mode_by_participant.pop(participant_id, None)
         self._food_gate_chitchat_count.pop(participant_id, None)
         self._not_eating_chat_count.pop(participant_id, None)
+        self._talk_only_chat_count.pop(participant_id, None)
         self._formal_chitchat_count.pop(participant_id, None)
+        self._post_assignment_chat_count.pop(participant_id, None)
 
     def _response(
         self,
@@ -630,9 +865,12 @@ class ConversationOrchestrator:
         food_gate_result: str | None = None,
         food_gate_prompt: str | None = None,
         not_eating_chat_count: int | None = None,
+        talk_only_chat_count: int | None = None,
         formal_chitchat_count: int | None = None,
+        post_assignment_chat_count: int | None = None,
         participant_deleted: bool = False,
         response_language: str | None = None,
+        participant_public_code: str | None = None,
     ) -> dict[str, Any]:
         resolved_language = (
             response_language
@@ -661,9 +899,12 @@ class ConversationOrchestrator:
             "food_gate_result": food_gate_result,
             "food_gate_prompt": food_gate_prompt,
             "not_eating_chat_count": not_eating_chat_count,
+            "talk_only_chat_count": talk_only_chat_count,
             "formal_chitchat_count": formal_chitchat_count,
+            "post_assignment_chat_count": post_assignment_chat_count,
             "participant_deleted": participant_deleted,
             "response_language": resolved_language,
+            "participant_public_code": participant_public_code,
         }
         reply = self._reply_service.generate_reply(context)
         return {
@@ -672,7 +913,9 @@ class ConversationOrchestrator:
             "chat_mode": chat_mode,
             "food_gate_result": food_gate_result,
             "not_eating_chat_count": not_eating_chat_count,
+            "talk_only_chat_count": talk_only_chat_count,
             "formal_chitchat_count": formal_chitchat_count,
+            "post_assignment_chat_count": post_assignment_chat_count,
             "participant_deleted": participant_deleted,
             "response_language": resolved_language,
             "answered_count": answered_count,
@@ -718,16 +961,25 @@ class FoodGateRouter:
         compact = _compact(transcript)
         if _is_noise(compact):
             return TurnRoute(ROUTE_NOISE)
-        if _is_unclear_speech(compact):
-            return TurnRoute(ROUTE_UNCLEAR_SPEECH)
         command = _system_command(compact)
         if command == "cancel":
             return TurnRoute(ROUTE_SYSTEM_COMMAND, command)
-        if _matches_any(compact, _FOOD_GATE_NO_TOKENS):
+        if _is_food_gate_explanation_question(compact):
+            return TurnRoute(ROUTE_WANT_CHAT, ROUTE_COMMAND_REPLY_NOW)
+        evidence = _food_gate_evidence(compact)
+        if evidence.no_food and evidence.wants_chat:
+            return TurnRoute(ROUTE_WANT_CHAT)
+        if evidence.no_food:
             return TurnRoute(ROUTE_NO_FOOD)
-        if _matches_any(compact, _FOOD_GATE_WANT_TOKENS):
+        if evidence.strong_food:
             return TurnRoute(ROUTE_WANT_FOOD)
-        return TurnRoute(ROUTE_CHITCHAT)
+        if evidence.wants_chat:
+            return TurnRoute(ROUTE_WANT_CHAT)
+        if evidence.weak_food:
+            return TurnRoute(ROUTE_WANT_FOOD)
+        if _is_unclear_speech(compact):
+            return TurnRoute(ROUTE_UNCLEAR_SPEECH)
+        return TurnRoute(ROUTE_WANT_CHAT)
 
 
 class FormalTurnRouter:
@@ -737,40 +989,23 @@ class FormalTurnRouter:
         compact = _compact(transcript)
         if _is_noise(compact):
             return TurnRoute(ROUTE_NOISE)
-        if _is_unclear_speech(compact):
-            return TurnRoute(ROUTE_UNCLEAR_SPEECH)
         command = _system_command(compact)
         if command is not None:
             return TurnRoute(ROUTE_SYSTEM_COMMAND, command)
-        if _has_choice_marker(transcript, compact):
-            return TurnRoute(ROUTE_ANSWER_ATTEMPT)
-        if compact in _FORMAL_NONANSWER_ACK_TOKENS:
-            return TurnRoute(ROUTE_CHITCHAT)
-        if _looks_like_side_chat(transcript, compact):
-            return TurnRoute(ROUTE_CHITCHAT)
-        if _looks_like_option_semantics(compact, current_question):
-            return TurnRoute(ROUTE_ANSWER_ATTEMPT)
-        if _matches_any(compact, _FORMAL_UNCLEAR_ANSWER_TOKENS):
-            return TurnRoute(ROUTE_ANSWER_ATTEMPT)
-        if _looks_like_unrelated_formal_chitchat(transcript, compact, current_question):
-            return TurnRoute(ROUTE_CHITCHAT)
+        if _is_unclear_speech(compact):
+            return TurnRoute(ROUTE_UNCLEAR_SPEECH)
         return TurnRoute(ROUTE_ANSWER_ATTEMPT)
 
 
-_FOOD_GATE_NO_TOKENS = {
-    "不吃",
-    "不想吃",
+_FOOD_GATE_NO_EXACT_TOKENS = {
     "不要",
     "不用",
     "先不",
     "先不了",
     "算了",
-    "不饿",
-    "不需要",
     "不了",
-    "只是看看",
+    "不需要",
     "看看",
-    "路过",
     "no",
     "nope",
     "notnow",
@@ -779,20 +1014,61 @@ _FOOD_GATE_NO_TOKENS = {
     "donotwant",
 }
 
-_FOOD_GATE_WANT_TOKENS = {
-    "想吃",
-    "要吃",
-    "来点",
-    "吃的",
+_FOOD_GATE_NO_PHRASE_TOKENS = {
+    "不吃",
+    "不想吃",
+    "不要吃",
+    "先不吃",
+    "不饿",
+    "不用吃",
+    "不用了",
+    "不需要吃",
+    "不需要了",
+    "不参加",
+    "不想参加",
+    "只是看看",
+    "路过",
+    "nofood",
+    "nothanks",
+    "nothungry",
+    "noneedfood",
+    "noneedtoeat",
+    "dontneedfood",
+    "dontneedtoeat",
+    "dontwantfood",
+    "dontwanttoeat",
+    "donotneedfood",
+    "donotneedtoeat",
+    "donotwantfood",
+    "donotwanttoeat",
+    "idontneedfood",
+    "idontneedtoeat",
+    "idonotneedfood",
+    "idonotneedtoeat",
+}
+
+_FOOD_GATE_STRONG_WANT_EXACT_TOKENS = {
     "吃",
+    "吃点",
+    "吃饭",
+    "好吃",
+    "干饭",
+    "恰饭",
+    "开饭",
+    "饿了",
+    "eat",
+    "food",
+    "meal",
+    "snack",
+    "hungry",
+}
+
+_FOOD_GATE_WEAK_WANT_EXACT_TOKENS = {
     "要",
-    "想试试",
-    "试试",
-    "参加",
-    "可以",
-    "来吧",
     "好",
     "行",
+    "可以",
+    "来吧",
     "yes",
     "yeah",
     "yep",
@@ -801,7 +1077,148 @@ _FOOD_GATE_WANT_TOKENS = {
     "sure",
     "please",
     "want",
+}
+
+_FOOD_GATE_STRONG_WANT_PHRASE_TOKENS = {
+    "想吃",
+    "要吃",
+    "来点吃",
+    "来点饭",
+    "来口",
+    "来份",
+    "来一份",
+    "整点吃",
+    "整点饭",
+    "点吃的",
+    "搞点吃",
+    "搞点饭",
+    "弄点吃",
+    "弄点饭",
+    "给我来点",
+    "给我来份",
+    "给我来一份",
+    "给我来口",
+    "给我来碗",
+    "给我来杯",
+    "吃的",
+    "吃东西",
+    "吃一点",
+    "吃点东西",
+    "干饭",
+    "恰饭",
+    "开饭",
+    "饿",
+    "尝尝",
+    "尝一下",
+    "尝一口",
+    "wantfood",
+    "wantsomethingtoeat",
+    "iwanttoeat",
+    "iwantfood",
+    "iwouldliketoeat",
+    "iwouldlikefood",
+    "somethingtoeat",
+    "getfood",
     "hungry",
+}
+
+_FOOD_GATE_WEAK_WANT_PHRASE_TOKENS = {
+    "想试试",
+    "试试",
+    "参加",
+}
+
+_FOOD_GATE_CHAT_TOKENS = {
+    "我们说说话吧",
+    "那我们说说话吧",
+    "那说说话吧",
+    "说说话吧",
+    "说说吧",
+    "聊聊天吧",
+    "我们聊聊天吧",
+    "那聊聊天吧",
+    "聊一下吧",
+    "聊一会儿吧",
+    "想聊天",
+    "我想聊天",
+    "我想和你聊天",
+    "我想和你说话",
+    "我想和你说说话",
+    "和你说说话",
+    "跟你说说话",
+    "跟你聊聊",
+    "和你聊聊",
+    "先聊聊",
+    "先说说话",
+    "不吃聊聊吧",
+    "不想吃想聊聊",
+    "不饿聊会儿",
+    "只是想聊聊天",
+    "就想说说话",
+    "可以聊天吗",
+    "能和你聊聊吗",
+    "陪我聊会儿",
+    "先不吃聊一下",
+    "想问你点事",
+    "想问你问题",
+    "想知道你是谁",
+    "你是谁",
+    "你想聊什么",
+    "随便聊聊",
+    "说话",
+    "聊天",
+    "聊",
+    "talk",
+    "chat",
+    "letstalk",
+    "letustalk",
+    "canwetalk",
+    "iwanttotalk",
+    "justtalk",
+}
+
+_FOOD_GATE_EXPLANATION_QUESTION_TOKENS = {
+    "为什么",
+    "为啥",
+    "为何",
+    "怎么",
+    "什么意思",
+    "什么意义",
+    "代表什么",
+    "是什么意思",
+    "why",
+    "whatdoes",
+    "whatdo",
+}
+
+_FOOD_GATE_EXPLANATION_SUBJECT_TOKENS = {
+    "ai",
+    "食物",
+    "吃的",
+    "吃东西",
+    "做吃",
+    "做饭",
+    "做菜",
+    "做汤",
+    "做沙拉",
+    "下厨",
+    "厨房",
+    "羹汤",
+    "汤",
+    "沙拉",
+    "艾苗",
+    "艾草",
+    "aimiao",
+    "mugwort",
+    "food",
+    "eat",
+    "serving",
+    "serve",
+    "cooking",
+    "cook",
+    "kitchen",
+    "soup",
+    "salad",
 }
 
 _UNCLEAR_SPEECH_TOKENS = {
@@ -841,219 +1258,75 @@ _CANCEL_COMMAND_TOKENS = {
     "quit",
 }
 
-_SIDE_CHAT_TOKENS = {
-    "你是谁",
-    "你是",
-    "你呢",
-    "你觉得",
-    "你会",
-    "你能",
-    "这个摊位",
-    "摊位",
-    "装置",
-    "作品",
-    "项目",
-    "好好玩",
-    "好玩",
-    "今天有点累",
-    "有点累",
-    "好累",
-    "累",
-    "天气",
-    "老板",
-    "店主",
-    "聊天",
-    "聊聊",
-    "开玩笑",
-    "这个问题",
-    "问题有点",
-    "有点奇怪",
-    "很奇怪",
-    "不想回答",
-    "不想选",
-    "紧张",
-    "不舒服",
-    "不太舒服",
-    "哈哈",
-    "笑",
-    "whatisthis",
-    "whoareyou",
-    "installation",
-    "project",
-    "booth",
-    "tired",
-    "fun",
-    "haha",
-}
-
-_OFF_TOPIC_CONTEXT_TOKENS = {
-    "今天",
-    "刚才",
-    "刚刚",
-    "朋友",
-    "同学",
-    "学校",
-    "上班",
-    "工作",
-    "天气",
-    "下雨",
-    "雨",
-    "外面",
-    "旁边",
-    "声音",
-    "机器",
-    "机器人",
-    "摊位",
-    "项目",
-    "作品",
-    "展览",
-    "装置",
-    "路上",
-    "吃饭",
-    "喝水",
-    "衣服",
-    "today",
-    "yesterday",
-    "tomorrow",
-    "friend",
-    "school",
-    "work",
-    "weather",
-    "rain",
-    "outside",
-    "nearby",
-    "voice",
-    "sound",
-    "machine",
-    "robot",
-    "project",
-    "booth",
-    "installation",
-    "exhibition",
-}
-
-_QUESTION_RELATED_TOKEN_CANDIDATES = {
-    "ai",
-    "answer",
-    "apologized",
-    "angry",
-    "analyze",
-    "beside",
-    "bedroom",
-    "closed",
-    "confides",
-    "difference",
-    "door",
-    "idea",
-    "loneliness",
-    "meant",
-    "open",
-    "opinion",
-    "physically",
-    "repeated",
-    "sad",
-    "sadder",
-    "sleep",
-    "thank",
-    "troubles",
-    "understand",
-    "understood",
-    "不必要",
-    "倾诉",
-    "关着",
-    "关门",
-    "分析",
-    "卧室",
-    "原谅",
-    "孤独",
-    "开着",
-    "开门",
-    "想法",
-    "感谢",
-    "懂",
-    "歉",
-    "生气",
-    "真正",
-    "睡觉",
-    "观点",
-    "说过",
-    "谢谢",
-    "身边",
-    "道歉",
-    "门",
-    "难过",
-}
-
-_LATIN_STOP_WORDS = {
-    "about",
-    "after",
-    "and",
-    "are",
-    "but",
-    "can",
-    "did",
-    "does",
-    "ever",
-    "for",
-    "from",
-    "has",
-    "have",
-    "having",
-    "kind",
-    "one",
-    "someone",
-    "something",
-    "that",
-    "the",
-    "their",
-    "them",
-    "then",
-    "they",
-    "this",
-    "when",
-    "which",
-    "with",
-    "you",
-    "your",
-}
-
-_FORMAL_UNCLEAR_ANSWER_TOKENS = {
-    "随便",
-    "都行",
-    "都可以",
-    "都像",
-    "都不像",
-    "不确定",
-    "不知道",
-    "可能吧",
-    "选c",
-    "c",
-    "other",
-    "notsure",
-    "idontknow",
-}
-
-_FORMAL_NONANSWER_ACK_TOKENS = {
-    "好",
-    "好吧",
-    "好的",
-    "行",
-    "行吧",
-    "可以",
-    "可以吧",
-    "ok",
-    "okay",
-    "sure",
-    "fine",
-}
-
-
 def _formal_stage(answered_count: int) -> str:
     return STAGE_FORMAL_QUESTION_1 if answered_count <= 0 else STAGE_FORMAL_QUESTION_2
 
 
 def _matches_any(compact: str, tokens: set[str]) -> bool:
     return any(token in compact for token in tokens)
+
+
+def _food_gate_evidence(compact: str) -> FoodGateEvidence:
+    return FoodGateEvidence(
+        strong_food=_matches_food_gate_strong_want(compact),
+        weak_food=_matches_food_gate_weak_want(compact),
+        no_food=_matches_food_gate_no(compact),
+        wants_chat=_matches_any(compact, _FOOD_GATE_CHAT_TOKENS),
+    )
+
+
+def _should_consult_food_gate_llm(transcript: str, fallback_route: TurnRoute) -> bool:
+    compact = _compact(transcript)
+    if not compact:
+        return False
+    if fallback_route.command == ROUTE_COMMAND_REPLY_NOW:
+        return False
+    if fallback_route.route in {
+        ROUTE_NOISE,
+        ROUTE_UNCLEAR_SPEECH,
+        ROUTE_SYSTEM_COMMAND,
+        ROUTE_NO_FOOD,
+    }:
+        return False
+
+    evidence = _food_gate_evidence(compact)
+    if evidence.no_food or evidence.wants_chat:
+        return False
+    if fallback_route.route == ROUTE_WANT_FOOD:
+        return evidence.weak_food and not evidence.strong_food
+    if fallback_route.route == ROUTE_WANT_CHAT:
+        return True
+    return False
+
+
+def _is_food_gate_explanation_question(compact: str) -> bool:
+    if not compact:
+        return False
+    has_question = _matches_any(compact, _FOOD_GATE_EXPLANATION_QUESTION_TOKENS)
+    if not has_question:
+        return False
+    return _matches_any(compact, _FOOD_GATE_EXPLANATION_SUBJECT_TOKENS)
+
+
+def _matches_food_gate_no(compact: str) -> bool:
+    return (
+        compact in _FOOD_GATE_NO_EXACT_TOKENS
+        or any(token in compact for token in _FOOD_GATE_NO_PHRASE_TOKENS)
+    )
+
+
+def _matches_food_gate_strong_want(compact: str) -> bool:
+    return (
+        compact in _FOOD_GATE_STRONG_WANT_EXACT_TOKENS
+        or any(token in compact for token in _FOOD_GATE_STRONG_WANT_PHRASE_TOKENS)
+    )
+
+
+def _matches_food_gate_weak_want(compact: str) -> bool:
+    return (
+        compact in _FOOD_GATE_WEAK_WANT_EXACT_TOKENS
+        or any(token in compact for token in _FOOD_GATE_WEAK_WANT_PHRASE_TOKENS)
+    )
 
 
 def _is_noise(compact: str) -> bool:
@@ -1063,7 +1336,7 @@ def _is_noise(compact: str) -> bool:
 def _is_unclear_speech(compact: str) -> bool:
     if not compact:
         return False
-    if compact in {"a", "b", "c"}:
+    if compact in {"a", "b", "c", "有", "是", "好", "行", "要", "吃", "聊"}:
         return False
     if compact in _UNCLEAR_SPEECH_TOKENS:
         return True
@@ -1090,154 +1363,6 @@ def _has_choice_marker(transcript: str, compact: str) -> bool:
     )
 
 
-def _looks_like_side_chat(transcript: str, compact: str) -> bool:
-    if _matches_any(compact, _SIDE_CHAT_TOKENS):
-        return True
-    if ("?" in transcript or "？" in transcript) and any(
-        token in compact for token in {"你", "这个", "什么", "为什么", "怎么", "who", "what", "why", "how"}
-    ):
-        return True
-    return False
-
-
-def _looks_like_unrelated_formal_chitchat(
-    transcript: str,
-    compact: str,
-    current_question: dict[str, Any],
-) -> bool:
-    if not _has_substantive_formal_content(transcript):
-        return False
-    if _has_choice_marker(transcript, compact):
-        return False
-    if _is_related_to_current_question(compact, current_question):
-        return False
-    return _matches_any(compact, _OFF_TOPIC_CONTEXT_TOKENS) or _has_side_question_shape(
-        transcript,
-        compact,
-    )
-
-
-def _has_side_question_shape(transcript: str, compact: str) -> bool:
-    if "?" not in transcript and "？" not in transcript:
-        return False
-    return any(
-        token in compact
-        for token in {"你", "这个", "什么", "为什么", "怎么", "who", "what", "why", "how"}
-    )
-
-
-def _has_substantive_formal_content(transcript: str) -> bool:
-    if sum(1 for ch in transcript if "\u4e00" <= ch <= "\u9fff") >= 4:
-        return True
-    return len(_latin_words(transcript)) >= 3
-
-
-def _is_related_to_current_question(
-    compact: str,
-    current_question: dict[str, Any],
-) -> bool:
-    return any(
-        token and token in compact
-        for token in _question_related_tokens(current_question)
-    )
-
-
-def _question_related_tokens(current_question: dict[str, Any]) -> set[str]:
-    source_text = _formal_question_source_text(current_question)
-    compact_source = _compact(source_text)
-    tokens = {
-        token
-        for token in _QUESTION_RELATED_TOKEN_CANDIDATES
-        if token in compact_source
-    }
-    tokens.update(_latin_words(source_text))
-    return tokens
-
-
-def _formal_question_source_text(current_question: dict[str, Any]) -> str:
-    parts = [
-        str(current_question.get("question_text") or ""),
-        str(current_question.get("question_text_zh") or ""),
-    ]
-    for option in current_question.get("options") or []:
-        parts.append(str(option.get("text") or ""))
-        parts.append(str(option.get("text_zh") or ""))
-    return " ".join(parts)
-
-
-def _latin_words(text: str) -> list[str]:
-    words: list[str] = []
-    current: list[str] = []
-    for ch in text.lower():
-        if "a" <= ch <= "z":
-            current.append(ch)
-            continue
-        if current:
-            word = "".join(current)
-            if len(word) >= 3 and word not in _LATIN_STOP_WORDS:
-                words.append(word)
-            current = []
-    if current:
-        word = "".join(current)
-        if len(word) >= 3 and word not in _LATIN_STOP_WORDS:
-            words.append(word)
-    return words
-
-
-def _looks_like_option_semantics(compact: str, current_question: dict[str, Any]) -> bool:
-    options = current_question.get("options") or []
-    option_text = "".join(
-        _compact(str(option.get("text", "")) + str(option.get("text_zh", "")))
-        for option in options
-    )
-    semantic_tokens = {
-        "有",
-        "没有",
-        "是",
-        "不是",
-        "开着",
-        "关着",
-        "打开",
-        "关上",
-        "open",
-        "closed",
-        "yes",
-        "no",
-    }
-    if compact in semantic_tokens:
-        return True
-    keywords = _option_keywords(option_text)
-    generic_keywords = {"有", "没有", "yes", "no"}
-    strong_keywords = keywords - generic_keywords
-    if any(token and token in compact for token in strong_keywords):
-        return True
-    return compact in keywords & generic_keywords
-
-
-def _option_keywords(option_text: str) -> set[str]:
-    return {
-        token
-        for token in {
-            "open",
-            "closed",
-            "yes",
-            "no",
-            "有",
-            "没有",
-            "开着",
-            "关着",
-            "理解",
-            "分析",
-            "难过",
-            "生气",
-            "道歉",
-            "谢谢",
-            "ai",
-        }
-        if token in option_text
-    }
-
-
 def _first_unanswered_question(detail: dict[str, Any]) -> dict[str, Any] | None:
     answered_question_ids = {
         answer["question_id"]
@@ -1260,6 +1385,17 @@ def _question_text(draw: dict[str, Any], response_language: str | None) -> str:
     if response_language == RESPONSE_LANGUAGE_EN:
         return str(draw["question_text"])
     return str(draw.get("question_text_zh") or draw["question_text"])
+
+
+def _participant_public_code(detail: dict[str, Any]) -> str | None:
+    participant = detail.get("participant")
+    if not isinstance(participant, dict):
+        return None
+    public_code = participant.get("public_code")
+    if public_code is None:
+        return None
+    text = str(public_code).strip()
+    return text or None
 
 
 def _interpretation_from_voice_result(voice_result: dict[str, Any]) -> dict[str, Any]:

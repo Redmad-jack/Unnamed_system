@@ -391,6 +391,7 @@ let doubaoInterruptResetTimer = null;
 let doubaoPlaybackStartedAt = 0;
 let doubaoLastMicRms = 0;
 let doubaoPlaybackSpeechFrames = 0;
+let doubaoAudienceSpeechFrames = 0;
 let doubaoMicMutedForTts = false;
 let doubaoOutputSampleRate = 24000;
 let currentTtsDisplayText = '';
@@ -401,35 +402,52 @@ let displayAudienceSpeaking = false;
 let displayAudienceSpeakingTimer = null;
 let displayStandbyTimer = null;
 let displayFormalAnswerGreetingUntil = 0;
+let voiceSessionSilenceTimer = null;
+let voiceSessionSilenceResumeTimer = null;
+let voiceSessionSilenceWatchActive = false;
+let voiceSessionSilencePaused = false;
+let voiceSessionSilenceTimedOut = false;
 let hardwareButtonPort = null;
 let hardwareButtonReader = null;
 let hardwareButtonBuffer = '';
 let hardwareButtonReadLoopActive = false;
 let hardwareButtonNewInProgress = false;
 let hardwareButtonLastTriggerAt = 0;
+let displayWakeChannel = null;
+let displayWakeNewInProgress = false;
+let displayWakeLastTriggerAt = 0;
 
 const VAD = {
   calibrationMs: 600,
   minSpeechMs: 500,
   silenceMs: 1100,
   maxRecordingMs: 12000,
-  noSpeechTimeoutMs: 8000,
+  noSpeechTimeoutMs: 15000,
 };
 
 const DOUBAO_STREAM = {
   localInterruptEnabled: false,
+  audienceActivityRms: 0.035,
+  audienceActivityFrames: 4,
   playbackMicForwardRms: 0.12,
   playbackMicForwardFrames: 3,
   providerInterruptGraceMs: 2500,
   interruptResetMs: 4500,
 };
 
+const VOICE_SESSION_SILENCE_TIMEOUT_MS = 15000;
 const DISPLAY_SPEECH_FALLBACK_MS = 20000;
 const DISPLAY_AUDIENCE_SPEECH_HOLD_MS = 1200;
 const DISPLAY_RESULT_HOLD_MS = 8000;
 const DISPLAY_FORMAL_ANSWER_GREETING_MS = 2300;
 const DISPLAY_WAKE_TEXT = '按按钮叫醒我\nPress the button to wake me';
 const DISPLAY_AVATAR_DEBUG = new URLSearchParams(window.location.search).has('avatarDebug');
+const DISPLAY_WAKE_CHANNEL = {
+  name: 'have_some_ai_wake',
+  requestType: 'particle_display_wake_request',
+  ackType: 'control_wake_ack',
+  triggerCooldownMs: 1200,
+};
 const HARDWARE_BUTTON = {
   baudRate: 115200,
   newCommand: 'NEW',
@@ -497,6 +515,53 @@ function initializeHardwareButtonControls() {
       closeHardwareButtonPort('button disconnected');
     }
   });
+}
+
+function initializeDisplayWakeChannel() {
+  if (!('BroadcastChannel' in window)) {
+    console.info('display wake channel unavailable: BroadcastChannel is not supported');
+    return;
+  }
+  displayWakeChannel = new BroadcastChannel(DISPLAY_WAKE_CHANNEL.name);
+  displayWakeChannel.addEventListener('message', event => {
+    void handleDisplayWakeChannelMessage(event.data);
+  });
+}
+
+async function handleDisplayWakeChannelMessage(message) {
+  if (!message || message.type !== DISPLAY_WAKE_CHANNEL.requestType) return;
+  const requestId = String(message.requestId || '');
+  await triggerDisplayWakeNewParticipant(requestId);
+}
+
+function postDisplayWakeAck(requestId, status) {
+  if (!displayWakeChannel || !requestId) return;
+  displayWakeChannel.postMessage({
+    type: DISPLAY_WAKE_CHANNEL.ackType,
+    requestId,
+    status,
+    sentAt: Date.now(),
+  });
+}
+
+async function triggerDisplayWakeNewParticipant(requestId) {
+  const now = Date.now();
+  if (displayWakeNewInProgress || now - displayWakeLastTriggerAt < DISPLAY_WAKE_CHANNEL.triggerCooldownMs) {
+    postDisplayWakeAck(requestId, 'ignored');
+    return;
+  }
+  displayWakeLastTriggerAt = now;
+  displayWakeNewInProgress = true;
+  console.info('display wake trigger: calling existing newParticipant()', { requestId });
+  try {
+    await newParticipant();
+    postDisplayWakeAck(requestId, 'created');
+  } catch (error) {
+    postDisplayWakeAck(requestId, 'failed');
+    console.error('display wake new participant failed', error);
+  } finally {
+    displayWakeNewInProgress = false;
+  }
 }
 
 async function connectHardwareButton() {
@@ -631,6 +696,135 @@ async function closeHardwareButtonPort(stateText = 'button disconnected') {
   }
   setHardwareButtonState(stateText, 'dim');
   updateHardwareButtonControls();
+}
+
+function clearVoiceSessionSilenceTimer() {
+  if (voiceSessionSilenceTimer) {
+    clearTimeout(voiceSessionSilenceTimer);
+    voiceSessionSilenceTimer = null;
+  }
+}
+
+function clearVoiceSessionSilenceResumeTimer() {
+  if (voiceSessionSilenceResumeTimer) {
+    clearTimeout(voiceSessionSilenceResumeTimer);
+    voiceSessionSilenceResumeTimer = null;
+  }
+}
+
+function startVoiceSessionSilenceWatch() {
+  voiceSessionSilenceWatchActive = true;
+  voiceSessionSilencePaused = false;
+  voiceSessionSilenceTimedOut = false;
+  clearVoiceSessionSilenceResumeTimer();
+  scheduleVoiceSessionSilenceTimer();
+}
+
+function stopVoiceSessionSilenceWatch() {
+  voiceSessionSilenceWatchActive = false;
+  voiceSessionSilencePaused = false;
+  voiceSessionSilenceTimedOut = false;
+  clearVoiceSessionSilenceTimer();
+  clearVoiceSessionSilenceResumeTimer();
+}
+
+function pauseVoiceSessionSilenceWatch() {
+  if (!voiceSessionSilenceWatchActive) return;
+  voiceSessionSilencePaused = true;
+  clearVoiceSessionSilenceTimer();
+  clearVoiceSessionSilenceResumeTimer();
+}
+
+function resumeVoiceSessionSilenceWatch(delayMs = 0) {
+  if (!voiceSessionSilenceWatchActive || voiceSessionSilenceTimedOut) return;
+  clearVoiceSessionSilenceResumeTimer();
+  const ms = Math.max(0, Number(delayMs) || 0);
+  if (ms > 16) {
+    voiceSessionSilenceResumeTimer = window.setTimeout(() => {
+      voiceSessionSilenceResumeTimer = null;
+      voiceSessionSilencePaused = false;
+      scheduleVoiceSessionSilenceTimer();
+    }, ms);
+    return;
+  }
+  voiceSessionSilencePaused = false;
+  scheduleVoiceSessionSilenceTimer();
+}
+
+function markVoiceSessionAudienceActivity() {
+  if (
+    !voiceSessionSilenceWatchActive ||
+    voiceSessionSilencePaused ||
+    voiceSessionSilenceTimedOut ||
+    doubaoMicMutedForTts
+  ) {
+    return;
+  }
+  scheduleVoiceSessionSilenceTimer();
+}
+
+function scheduleVoiceSessionSilenceTimer() {
+  clearVoiceSessionSilenceTimer();
+  if (
+    !voiceSessionSilenceWatchActive ||
+    voiceSessionSilencePaused ||
+    voiceSessionSilenceTimedOut
+  ) {
+    return;
+  }
+  voiceSessionSilenceTimer = window.setTimeout(
+    handleVoiceSessionSilenceTimeout,
+    VOICE_SESSION_SILENCE_TIMEOUT_MS,
+  );
+}
+
+function handleVoiceSessionSilenceTimeout() {
+  if (
+    voiceSessionSilenceTimedOut ||
+    voiceSessionSilencePaused ||
+    doubaoMicMutedForTts
+  ) {
+    return;
+  }
+  const hasOpenCapture =
+    voiceRunActive ||
+    doubaoStreamCaptureActive ||
+    (mediaRecorder && mediaRecorder.state !== 'inactive');
+  if (!hasOpenCapture) {
+    stopVoiceSessionSilenceWatch();
+    return;
+  }
+  voiceSessionSilenceTimedOut = true;
+  console.info('voice session silence timeout: returning to hardware wake state');
+  cancelVoiceResources('session_silence_timeout');
+  resetControlSessionToStandby();
+  syncDisplayStandby();
+}
+
+function resetControlSessionToStandby() {
+  voiceRunActive = false;
+  currentParticipant = null;
+  currentQuestions = [];
+  activeQuestionIndex = 0;
+  voiceAnswers = {};
+  conversationState = null;
+  responseLanguage = null;
+  pendingTranscript = '';
+  document.getElementById('participantView').classList.add('hidden');
+  document.getElementById('conversationView').classList.add('hidden');
+  document.getElementById('publicCode').textContent = '';
+  document.getElementById('participantStatus').textContent = '';
+  document.getElementById('shopkeeperReply').textContent = '';
+  document.getElementById('visitorTranscript').textContent = '';
+  document.getElementById('conversationProgress').textContent = '';
+  document.getElementById('conversationQuestion').textContent = '';
+  document.getElementById('assignmentBand').classList.add('hidden');
+  document.getElementById('questionsBody').innerHTML = '<span class="muted">No active participant.</span>';
+  document.getElementById('questionProgress').textContent = '0/0';
+  document.getElementById('voiceBtn').disabled = true;
+  document.getElementById('stopVoiceBtn').disabled = true;
+  document.getElementById('manualSubmitBtn').disabled = true;
+  setVoiceState('waiting for button');
 }
 
 const DISPLAY_FIELDS = [
@@ -878,7 +1072,6 @@ function syncDisplayResult(assignment) {
     isSystemSpeaking: false,
     isAudienceSpeaking: false,
   }));
-  scheduleDisplayStandby();
 }
 
 function isAcceptedFormalAnswerResult(result) {
@@ -953,6 +1146,7 @@ function currentDisplayQuestionText() {
 }
 
 function syncDisplayTtsStart(text) {
+  pauseVoiceSessionSilenceWatch();
   clearDisplayAfterSpeechTimer();
   clearDisplayAudienceResumeTimer();
   clearDisplayAudienceSpeaking();
@@ -1367,6 +1561,7 @@ async function startDoubaoStreamConversation(config, options = {}) {
   doubaoPlaybackStartedAt = 0;
   doubaoLastMicRms = 0;
   doubaoPlaybackSpeechFrames = 0;
+  doubaoAudienceSpeechFrames = 0;
   setVoiceState('requesting mic');
 
   try {
@@ -1452,6 +1647,7 @@ async function playDoubaoStreamReplyText(text, config) {
   doubaoPlaybackStartedAt = 0;
   doubaoLastMicRms = 0;
   doubaoPlaybackSpeechFrames = 0;
+  doubaoAudienceSpeechFrames = 0;
   doubaoPlaybackTime = context.currentTime || 0;
   currentTtsDisplayText = displaySafeText(text);
   document.getElementById('voiceBtn').disabled = true;
@@ -1493,6 +1689,7 @@ async function playDoubaoStreamReplyText(text, config) {
     doubaoSocket.send(JSON.stringify({
       type: 'tts.speak',
       text,
+      response_language: selectedResponseLanguage(),
     }));
     scheduleDoubaoStreamClose(15000);
     await closed;
@@ -1521,6 +1718,8 @@ function startDoubaoPcmCapture(config) {
   doubaoSource = doubaoInputContext.createMediaStreamSource(mediaStream);
   doubaoProcessor = doubaoInputContext.createScriptProcessor(4096, 1, 1);
   doubaoStreamCaptureActive = true;
+  doubaoAudienceSpeechFrames = 0;
+  startVoiceSessionSilenceWatch();
   setDisplayAudienceSpeaking(true);
   doubaoProcessor.onaudioprocess = event => {
     const output = event.outputBuffer.getChannelData(0);
@@ -1621,6 +1820,7 @@ async function handleDoubaoStreamMessage(event, config) {
   }
   if (payload.type === 'mic.muted_for_tts') {
     doubaoMicMutedForTts = true;
+    pauseVoiceSessionSilenceWatch();
     setVoiceState('doubao speaking');
     syncDisplayTtsStart(payload.text || currentTtsDisplayText || conversationState?.reply_text || '');
     return;
@@ -1631,24 +1831,32 @@ async function handleDoubaoStreamMessage(event, config) {
     const queuedDisplayMs = Math.max(900, doubaoQueuedPlaybackMs() + 300);
     scheduleDisplayAfterSpeech(queuedDisplayMs);
     if (doubaoStreamCaptureActive) scheduleDisplayAudienceResume(queuedDisplayMs + 50);
+    if (doubaoStreamCaptureActive) resumeVoiceSessionSilenceWatch(queuedDisplayMs + 50);
     return;
   }
   if (payload.type === 'tts.error') {
     console.error(payload.message || 'doubao tts failed');
     doubaoMicMutedForTts = false;
     setVoiceState('doubao tts failed · mic listening');
+    if (doubaoStreamCaptureActive) resumeVoiceSessionSilenceWatch();
     syncDisplayError();
     return;
   }
   if (payload.type === 'asr.partial') {
     pendingTranscript = payload.text || '';
-    if (pendingTranscript) markDisplayAudienceSpeaking();
+    if (pendingTranscript) {
+      markDisplayAudienceSpeaking();
+      markVoiceSessionAudienceActivity();
+    }
     renderQuestions();
     return;
   }
   if (payload.type === 'asr.final') {
     pendingTranscript = payload.text || '';
-    if (pendingTranscript) markDisplayAudienceSpeaking(900);
+    if (pendingTranscript) {
+      markDisplayAudienceSpeaking(900);
+      markVoiceSessionAudienceActivity();
+    }
     const transcriptEl = document.getElementById('visitorTranscript');
     if (transcriptEl) transcriptEl.textContent = pendingTranscript ? `Visitor: ${pendingTranscript}` : '';
     renderQuestions();
@@ -1703,6 +1911,7 @@ function scheduleDoubaoStreamClose(delayMs) {
 
 function stopDoubaoCaptureOnly() {
   doubaoStreamCaptureActive = false;
+  stopVoiceSessionSilenceWatch();
   setDisplayAudienceSpeaking(false);
   if (doubaoProcessor) {
     try { doubaoProcessor.disconnect(); } catch {}
@@ -1722,6 +1931,7 @@ function stopDoubaoCaptureOnly() {
 function releaseDoubaoStreamResources(reason = 'user_cancel') {
   clearTimeout(doubaoCloseTimer);
   doubaoCloseTimer = null;
+  stopVoiceSessionSilenceWatch();
   clearDisplaySpeechFallback();
   clearDisplayAfterSpeechTimer();
   clearDisplayAudienceResumeTimer();
@@ -1744,6 +1954,7 @@ function releaseDoubaoStreamResources(reason = 'user_cancel') {
   doubaoPlaybackStartedAt = 0;
   doubaoLastMicRms = 0;
   doubaoPlaybackSpeechFrames = 0;
+  doubaoAudienceSpeechFrames = 0;
 }
 
 function downsampleToPcm16Bytes(input, inputSampleRate, outputSampleRate) {
@@ -1807,6 +2018,14 @@ async function playPcm16AudioBytes(bytes, sampleRate = 24000) {
 function evaluateDoubaoMicFrame(input) {
   const rms = floatRms(input);
   doubaoLastMicRms = rms;
+  if (rms >= DOUBAO_STREAM.audienceActivityRms) {
+    doubaoAudienceSpeechFrames += 1;
+  } else {
+    doubaoAudienceSpeechFrames = 0;
+  }
+  if (doubaoAudienceSpeechFrames >= DOUBAO_STREAM.audienceActivityFrames) {
+    markVoiceSessionAudienceActivity();
+  }
   if (!doubaoPlaybackSources.size || doubaoDiscardPlayback) {
     doubaoPlaybackSpeechFrames = 0;
     return { mask: false, interrupt: false };
@@ -1932,6 +2151,7 @@ function stopVoiceSession() {
 }
 
 function cancelVoiceResources(reason = 'user_cancel') {
+  stopVoiceSessionSilenceWatch();
   clearVadHelpers();
   setDisplayAudienceSpeaking(false);
   releaseDoubaoStreamResources(reason);
@@ -1980,6 +2200,7 @@ async function startFileRecording() {
     mediaRecorder.start(200);
     setVoiceState('recording');
     setDisplayAudienceSpeaking(true);
+    startVoiceSessionSilenceWatch();
     console.debug('voice recording started', {
       mime_type: activeRecordingMimeType || mediaRecorder.mimeType || 'default',
     });
@@ -2053,17 +2274,18 @@ function startVadMonitor() {
       const speaking = rms > threshold;
       if (speaking) {
         markDisplayAudienceSpeaking();
+        markVoiceSessionAudienceActivity();
         if (speechStartedAt === null) speechStartedAt = now;
         lastSpeechAt = now;
         speechMs += delta;
       }
 
-      if (elapsed >= VAD.maxRecordingMs) {
-        stopRecordingForUpload('max_duration');
+      if (speechStartedAt === null && elapsed >= VAD.noSpeechTimeoutMs) {
+        handleVoiceSessionSilenceTimeout();
         return;
       }
-      if (speechStartedAt === null && elapsed >= VAD.noSpeechTimeoutMs) {
-        stopRecordingForUpload('no_speech_timeout');
+      if (speechStartedAt !== null && elapsed >= VAD.maxRecordingMs) {
+        stopRecordingForUpload('max_duration');
         return;
       }
       if (
@@ -2102,6 +2324,7 @@ function stopRecordingForUpload(reason = 'manual_finish') {
   recordingStopReason = reason;
   recordingStopRequested = true;
   clearVadHelpers();
+  stopVoiceSessionSilenceWatch();
   setDisplayAudienceSpeaking(false);
   setVoiceState('stopping');
   console.debug('voice recording stopping', { reason });
@@ -2482,6 +2705,7 @@ function handleLanguageGateShortcut(event) {
 document.addEventListener('keydown', handleLanguageGateShortcut);
 
 initializeHardwareButtonControls();
+initializeDisplayWakeChannel();
 syncDisplayStandby();
 pollHealth();
 refreshQueue();

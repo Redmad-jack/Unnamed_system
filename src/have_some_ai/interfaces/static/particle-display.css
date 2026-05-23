@@ -9,6 +9,7 @@
   --orb: rgba(152, 238, 184, 0.58);
   --glow: rgba(102, 238, 173, 0.28);
   --halo: rgba(95, 232, 170, 0.34);
+  --wake-green: #8cf2b0;
 }
 
 html,
@@ -89,6 +90,13 @@ body {
   display: none;
 }
 
+.particle-main-row {
+  align-items: center;
+  display: flex;
+  gap: clamp(11px, 1.22vw, 18px);
+  max-width: 100%;
+}
+
 .particle-result-line,
 .particle-main-line,
 .particle-sub-line,
@@ -114,6 +122,182 @@ body {
   letter-spacing: 0;
   line-height: 1.16;
   white-space: pre-line;
+}
+
+.particle-wake-button {
+  --wake-dot: clamp(2.2px, 0.2vw, 3.2px);
+  --wake-height: clamp(34px, 3.35vw, 52px);
+  --wake-hit-width: calc(var(--wake-width) * 2);
+  --wake-width: clamp(84px, 8.2vw, 128px);
+  align-items: center;
+  appearance: none;
+  background: transparent;
+  border: 0;
+  border-radius: 999px;
+  cursor: pointer;
+  display: inline-block;
+  flex: 0 0 auto;
+  height: var(--wake-height);
+  margin-top: 1px;
+  opacity: 0;
+  outline: none;
+  padding: 0;
+  pointer-events: auto;
+  position: relative;
+  transition:
+    opacity 240ms ease,
+    filter 240ms ease;
+  width: var(--wake-hit-width);
+}
+
+.particle-wake-button[hidden] {
+  display: none;
+}
+
+.particle-wake-button.is-visible {
+  animation: wake-button-glow 5.2s ease-in-out infinite;
+  opacity: 1;
+}
+
+.particle-wake-button:hover,
+.particle-wake-button:focus-visible {
+  filter: drop-shadow(0 0 13px rgba(140, 242, 176, 0.46));
+}
+
+.particle-wake-button:focus-visible {
+  filter:
+    drop-shadow(0 0 12px rgba(255, 255, 255, 0.34))
+    drop-shadow(0 0 18px rgba(140, 242, 176, 0.5));
+}
+
+.particle-wake-button.is-activating {
+  animation: wake-button-activate 600ms cubic-bezier(.19, 1, .22, 1) forwards;
+  filter:
+    drop-shadow(0 0 18px rgba(180, 255, 196, 0.78))
+    drop-shadow(0 0 34px rgba(80, 232, 158, 0.5));
+  pointer-events: none;
+}
+
+.wake-particle-field {
+  animation: wake-particle-idle 7.2s ease-in-out infinite;
+  border-radius: 999px;
+  height: var(--wake-height);
+  left: 50%;
+  position: relative;
+  top: 50%;
+  width: var(--wake-width);
+  z-index: 2;
+}
+
+.wake-particle-field,
+.wake-orbit-field {
+  pointer-events: none;
+  position: absolute;
+}
+
+.wake-particle-field span,
+.wake-orbit-field span {
+  background: var(--wake-green);
+  border-radius: 50%;
+  box-shadow: 0 0 5px rgba(140, 242, 176, 0.42);
+  height: var(--wake-dot);
+  position: absolute;
+  width: var(--wake-dot);
+}
+
+.wake-particle-field span {
+  left: calc(50% + var(--x, 0%));
+  opacity: var(--o, 0.74);
+  top: calc(50% + var(--y, 0%));
+  transform: translate(-50%, -50%) scale(var(--s, 1));
+}
+
+.wake-particle-field span:nth-child(1) { --x: -48%; --y: -5%; --s: 0.9; --o: 0.5; }
+.wake-particle-field span:nth-child(2) { --x: -43%; --y: -23%; --s: 0.82; --o: 0.62; }
+.wake-particle-field span:nth-child(3) { --x: -35%; --y: -32%; --s: 0.9; --o: 0.78; }
+.wake-particle-field span:nth-child(4) { --x: -22%; --y: -35%; --s: 1; --o: 0.86; }
+.wake-particle-field span:nth-child(5) { --x: -8%; --y: -31%; --s: 0.86; --o: 0.68; }
+.wake-particle-field span:nth-child(6) { --x: 7%; --y: -36%; --s: 0.95; --o: 0.82; }
+.wake-particle-field span:nth-child(7) { --x: 22%; --y: -31%; --s: 0.82; --o: 0.66; }
+.wake-particle-field span:nth-child(8) { --x: 35%; --y: -25%; --s: 0.92; --o: 0.74; }
+.wake-particle-field span:nth-child(9) { --x: 45%; --y: -10%; --s: 0.78; --o: 0.56; }
+.wake-particle-field span:nth-child(10) { --x: 49%; --y: 8%; --s: 0.95; --o: 0.76; }
+.wake-particle-field span:nth-child(11) { --x: 39%; --y: 24%; --s: 0.86; --o: 0.7; }
+.wake-particle-field span:nth-child(12) { --x: 27%; --y: 33%; --s: 0.96; --o: 0.83; }
+.wake-particle-field span:nth-child(13) { --x: 11%; --y: 36%; --s: 0.84; --o: 0.64; }
+.wake-particle-field span:nth-child(14) { --x: -4%; --y: 32%; --s: 0.92; --o: 0.72; }
+.wake-particle-field span:nth-child(15) { --x: -20%; --y: 36%; --s: 0.82; --o: 0.6; }
+.wake-particle-field span:nth-child(16) { --x: -34%; --y: 27%; --s: 1; --o: 0.84; }
+.wake-particle-field span:nth-child(17) { --x: -44%; --y: 12%; --s: 0.78; --o: 0.55; }
+.wake-particle-field span:nth-child(18) { --x: -31%; --y: -10%; --s: 0.7; --o: 0.52; }
+.wake-particle-field span:nth-child(19) { --x: -19%; --y: 3%; --s: 0.86; --o: 0.74; }
+.wake-particle-field span:nth-child(20) { --x: -7%; --y: -8%; --s: 0.68; --o: 0.48; }
+.wake-particle-field span:nth-child(21) { --x: 5%; --y: 6%; --s: 0.92; --o: 0.82; }
+.wake-particle-field span:nth-child(22) { --x: 18%; --y: -4%; --s: 0.74; --o: 0.54; }
+.wake-particle-field span:nth-child(23) { --x: 31%; --y: 8%; --s: 0.84; --o: 0.68; }
+.wake-particle-field span:nth-child(24) { --x: -39%; --y: -2%; --s: 0.68; --o: 0.43; }
+.wake-particle-field span:nth-child(25) { --x: 41%; --y: 0%; --s: 0.7; --o: 0.5; }
+.wake-particle-field span:nth-child(26) { --x: -12%; --y: 18%; --s: 0.76; --o: 0.58; }
+.wake-particle-field span:nth-child(27) { --x: 13%; --y: 21%; --s: 0.7; --o: 0.52; }
+.wake-particle-field span:nth-child(28) { --x: -28%; --y: 15%; --s: 0.8; --o: 0.6; }
+.wake-particle-field span:nth-child(29) { --x: 28%; --y: -17%; --s: 0.76; --o: 0.58; }
+.wake-particle-field span:nth-child(30) { --x: 0%; --y: -22%; --s: 0.68; --o: 0.48; }
+.wake-particle-field span:nth-child(31) { --x: 0%; --y: 0%; --s: 0.82; --o: 0.66; }
+
+.wake-orbit-field {
+  animation: wake-orbit-idle 9.6s linear infinite;
+  height: calc(var(--wake-height) * 1.34);
+  left: 50%;
+  top: 50%;
+  width: calc(var(--wake-width) * 1.22);
+  z-index: 1;
+}
+
+.wake-orbit-field span {
+  box-shadow:
+    0 0 6px rgba(140, 242, 176, 0.44),
+    0 0 12px rgba(80, 232, 158, 0.22);
+  left: calc(50% + var(--ox, 0%));
+  opacity: var(--oo, 0.38);
+  top: calc(50% + var(--oy, 0%));
+  transform: translate(-50%, -50%) scale(var(--os, 0.74));
+}
+
+.wake-orbit-field span:nth-child(1) { --ox: -50%; --oy: -4%; --os: 0.78; --oo: 0.32; }
+.wake-orbit-field span:nth-child(2) { --ox: -39%; --oy: -31%; --os: 0.62; --oo: 0.26; }
+.wake-orbit-field span:nth-child(3) { --ox: -21%; --oy: -43%; --os: 0.86; --oo: 0.44; }
+.wake-orbit-field span:nth-child(4) { --ox: 2%; --oy: -47%; --os: 0.56; --oo: 0.22; }
+.wake-orbit-field span:nth-child(5) { --ox: 25%; --oy: -40%; --os: 0.75; --oo: 0.34; }
+.wake-orbit-field span:nth-child(6) { --ox: 43%; --oy: -22%; --os: 0.68; --oo: 0.28; }
+.wake-orbit-field span:nth-child(7) { --ox: 51%; --oy: 4%; --os: 0.9; --oo: 0.45; }
+.wake-orbit-field span:nth-child(8) { --ox: 39%; --oy: 29%; --os: 0.6; --oo: 0.25; }
+.wake-orbit-field span:nth-child(9) { --ox: 16%; --oy: 43%; --os: 0.78; --oo: 0.36; }
+.wake-orbit-field span:nth-child(10) { --ox: -10%; --oy: 46%; --os: 0.56; --oo: 0.24; }
+.wake-orbit-field span:nth-child(11) { --ox: -32%; --oy: 33%; --os: 0.8; --oo: 0.36; }
+.wake-orbit-field span:nth-child(12) { --ox: -47%; --oy: 14%; --os: 0.62; --oo: 0.26; }
+
+.particle-wake-button.is-activating .wake-particle-field {
+  animation-play-state: paused;
+}
+
+.particle-wake-button.is-activating .wake-orbit-field {
+  animation-play-state: paused;
+}
+
+.particle-wake-button.is-activating .wake-particle-field span {
+  animation: wake-dot-flash 600ms cubic-bezier(.19, 1, .22, 1) forwards;
+  background: #caffd4;
+  box-shadow:
+    0 0 10px rgba(202, 255, 212, 0.95),
+    0 0 22px rgba(92, 232, 160, 0.78);
+}
+
+.particle-wake-button.is-activating .wake-orbit-field span {
+  animation: wake-orbit-dot-flash 600ms cubic-bezier(.19, 1, .22, 1) forwards;
+  background: #caffd4;
+  box-shadow:
+    0 0 8px rgba(202, 255, 212, 0.8),
+    0 0 18px rgba(92, 232, 160, 0.5);
 }
 
 .particle-options-line {
@@ -288,10 +472,124 @@ body {
   }
 }
 
+@keyframes wake-button-glow {
+  0%, 100% {
+    filter: drop-shadow(0 0 7px rgba(140, 242, 176, 0.24));
+  }
+
+  50% {
+    filter: drop-shadow(0 0 13px rgba(140, 242, 176, 0.42));
+  }
+}
+
+@keyframes wake-particle-idle {
+  0% {
+    opacity: 0.82;
+    transform: translate(-50%, -50%) rotate(-2deg) scale(0.985);
+  }
+
+  50% {
+    opacity: 1;
+    transform: translate(-50%, calc(-50% - 1px)) rotate(2.4deg) scale(1.025);
+  }
+
+  100% {
+    opacity: 0.82;
+    transform: translate(-50%, -50%) rotate(-2deg) scale(0.985);
+  }
+}
+
+@keyframes wake-orbit-idle {
+  0% {
+    opacity: 0.62;
+    transform: translate(-50%, -50%) rotate(0deg) scale(0.98);
+  }
+
+  50% {
+    opacity: 0.86;
+    transform: translate(-50%, -50%) rotate(180deg) scale(1.02);
+  }
+
+  100% {
+    opacity: 0.62;
+    transform: translate(-50%, -50%) rotate(360deg) scale(0.98);
+  }
+}
+
+@keyframes wake-button-activate {
+  0% {
+    opacity: 1;
+  }
+
+  16% {
+    opacity: 1;
+  }
+
+  28% {
+    opacity: 1;
+  }
+
+  42% {
+    opacity: 0.96;
+  }
+
+  100% {
+    opacity: 0;
+  }
+}
+
+@keyframes wake-dot-flash {
+  0% {
+    filter: brightness(1);
+    opacity: var(--o, 0.74);
+  }
+
+  24% {
+    filter: brightness(2.15);
+    opacity: 1;
+  }
+
+  46% {
+    filter: brightness(1.72);
+    opacity: 0.92;
+  }
+
+  100% {
+    filter: brightness(1.05);
+    opacity: 0;
+  }
+}
+
+@keyframes wake-orbit-dot-flash {
+  0% {
+    filter: brightness(1);
+    opacity: var(--oo, 0.38);
+  }
+
+  28% {
+    filter: brightness(1.9);
+    opacity: 0.9;
+  }
+
+  50% {
+    filter: brightness(1.42);
+    opacity: 0.62;
+  }
+
+  100% {
+    filter: brightness(1.05);
+    opacity: 0;
+  }
+}
+
 @media (max-width: 720px) {
   .particle-text-plane {
     bottom: 42px;
     width: calc(100vw - 34px);
+  }
+
+  .particle-main-row {
+    gap: 10px;
   }
 
   .fallback-orb {

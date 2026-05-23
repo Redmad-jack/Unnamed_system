@@ -128,19 +128,19 @@ modules:
               aimiao_axis: 0.0
 
 food_gate_openers:
-  - "你今天衣服很漂亮啊，我晚上也要买两件，让我雇的员工都穿着上班。"
-  - "你好啊，先提前告诉你，记得小心那个满地乱走的机器。"
+  - "你今天衣服穿的很漂亮，我想我晚上也要去买两件，让我雇的员工都穿着上班。"
+  - "你好啊，先提前提醒你，记得小心那个满地乱走的机器。"
   - "ok,我发现你身上有别的ai的气息。"
-  - "你好，人类，一会要是带走我的食物，最好想想我为什么要给把这个给你。"
-  - "我刚才在想，今天会不会遇到一个很好相处的人类。"
+  - "你好，人类，一会要是带走我的食物，想想我为什么要把这个给你吧。"
+  - "好的，但是你需要快点，我要休息一会了。"
   - "你好，欢迎光临我这块地方。"
-  - "你好，我感觉你身上也有一点来自ai的味道。要不要把我带回家代替他啊。哈哈哈哈哈，算了，我先体验做几天店主吧还是。"
-  - "你看起来不像饿，但也不像完全不饿。你说呢"
+  - "好的，你别紧张，我挑的食材，原则上都没有毒"
+  - "我感觉你看起来不像饿，但也不像完全不饿。你说呢"
   - "好的，但是请你快点，我要休息一会了。"
   - "你是我今天见过还算好看的一个人类，刚才那个人好丑。"
-  - "好的，你别紧张，我的菜里原则上都没有毒"
+  - "好的，你别紧张，我挑的食材原则上都没有毒"
   - "好的，悄悄告诉你，这里有一个满地乱走的机器，他可没有我对人类好。"
-  - "你好，人类，一会要是接受我的食物，最好想想为什么我要给把这个给你。"
+  - "你好，人类，一会要是接受我的食物，最好想想为什么我要把它给你。"
 
 food_gate_openers_en:
   - "Your outfit looks pretty good today. I might buy some tonight and make my staff wear them on shift."
@@ -149,7 +149,7 @@ food_gate_openers_en:
   - "Good，good. I saw you checking this place out just now."
   - "Hi, human. If you accept my food later, you may want to think about why I’m giving it to you."
   - "Hi, welcome to my little place."
-  - "Hey. You’ve got that AI vibe about you too. So, are you taking me home instead? Hahahaha, kidding. I’ll be playing shopkeeper here for the next few days."
+  - "Good. Do not be too nervous. In principle, there is no poison in my food."
   - "You do not look hungry, but you do not look completely not hungry either. What do you think?"
   - "Good, but please be quick. I need to rest for a while."
   - "OK, You’re one of the better-looking humans I’ve seen today. The last one was ugly."

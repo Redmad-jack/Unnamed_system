@@ -45,7 +45,7 @@ from have_some_ai.questionnaire import QuestionBank
 from have_some_ai.repository import MealRepository
 from have_some_ai.scoring import ScoringEngine
 from have_some_ai.service import MealService
-from have_some_ai.voice import ClaudeRubricInterpreter
+from have_some_ai.voice import ClaudeFoodGateIntentInterpreter, ClaudeRubricInterpreter
 from have_some_ai.voice_provider import resolve_voice_provider_config
 
 
@@ -172,6 +172,7 @@ async def lifespan(app: FastAPI):
     app.state.conversation = ConversationOrchestrator(
         app.state.service,
         reply_service=ShopkeeperReplyService(enable_llm=True),
+        food_gate_interpreter=ClaudeFoodGateIntentInterpreter(),
     )
     app.state.voice_config = resolve_voice_provider_config()
     app.state.file_stt = OpenAIFileTranscription()
@@ -544,7 +545,13 @@ async def conversation_stream(participant_id: str, websocket: WebSocket):
                 if state is not None and state.get("reply_text"):
                     mic_muted.set()
                     task = asyncio.create_task(
-                        _stream_tts_text(websocket, tts_client, str(state["reply_text"]), mic_muted)
+                        _stream_tts_text(
+                            websocket,
+                            tts_client,
+                            str(state["reply_text"]),
+                            mic_muted,
+                            response_language=_tts_response_language(state.get("response_language")),
+                        )
                     )
                     tts_tasks.add(task)
                     task.add_done_callback(tts_tasks.discard)
@@ -565,7 +572,15 @@ async def conversation_stream(participant_id: str, websocket: WebSocket):
                 text = str(payload.get("text") or "").strip()
                 if text:
                     mic_muted.set()
-                    task = asyncio.create_task(_stream_tts_text(websocket, tts_client, text, mic_muted))
+                    task = asyncio.create_task(
+                        _stream_tts_text(
+                            websocket,
+                            tts_client,
+                            text,
+                            mic_muted,
+                            response_language=_tts_response_language(payload.get("response_language")),
+                        )
+                    )
                     tts_tasks.add(task)
                     task.add_done_callback(tts_tasks.discard)
             else:
@@ -625,7 +640,13 @@ async def conversation_stream(participant_id: str, websocket: WebSocket):
             )
             await _send_stream_conversation_events(websocket, response)
             if response.get("reply_text"):
-                await _stream_tts_text(websocket, tts_client, str(response["reply_text"]), mic_muted)
+                await _stream_tts_text(
+                    websocket,
+                    tts_client,
+                    str(response["reply_text"]),
+                    mic_muted,
+                    response_language=_tts_response_language(response.get("response_language")),
+                )
             if response.get("next_action") == "end_session" or response.get("participant_deleted"):
                 session_done.set()
                 await _queue_audio_final(audio_queue)
@@ -853,6 +874,8 @@ async def _stream_tts_text(
     tts_client: DoubaoTTSBidirectionalClient,
     text: str,
     mic_muted: asyncio.Event,
+    *,
+    response_language: str | None = None,
 ) -> None:
     clean_text = text.strip()
     if not clean_text:
@@ -860,7 +883,10 @@ async def _stream_tts_text(
     mic_muted.set()
     await websocket.send_json({"type": "mic.muted_for_tts", "text": clean_text})
     try:
-        async for event in tts_client.synthesize(clean_text):
+        async for event in tts_client.synthesize(
+            clean_text,
+            response_language=response_language,
+        ):
             await _forward_tts_event(websocket, event)
             if event.audio:
                 await websocket.send_bytes(event.audio)
@@ -875,6 +901,10 @@ async def _stream_tts_text(
     finally:
         mic_muted.clear()
         await _safe_websocket_send_json(websocket, {"type": "mic.resumed_after_tts"})
+
+
+def _tts_response_language(value: object) -> str | None:
+    return "en" if value == "en" else "zh" if value == "zh" else None
 
 
 async def _forward_tts_event(websocket: WebSocket, event: TTSEvent) -> None:

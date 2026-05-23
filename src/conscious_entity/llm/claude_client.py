@@ -14,6 +14,11 @@ logger = logging.getLogger(__name__)
 
 
 _DEFAULT_MODEL = "claude-sonnet-4-6"
+_DEFAULT_PROVIDER = "anthropic"
+_ARK_PROVIDER = "ark"
+_DEFAULT_ARK_MODEL = "doubao-seed-2-0-pro-260215"
+_DEFAULT_ARK_BASE_URL = "https://ark.cn-beijing.volces.com/api/v3"
+_DEFAULT_ARK_THINKING = "disabled"
 
 
 class ClaudeConfigurationError(RuntimeError):
@@ -22,11 +27,15 @@ class ClaudeConfigurationError(RuntimeError):
 
 @dataclass(frozen=True)
 class ClaudeClientConfig:
+    provider: str
     model: str
     api_key: str | None
     auth_token: str | None
     base_url: str | None
     messages_endpoint: str | None
+    ark_api_key: str | None
+    ark_base_url: str | None
+    ark_thinking: str | None
     disable_system_proxy: bool
 
 
@@ -40,9 +49,9 @@ class ClaudeCompletion:
 
 class ClaudeClient:
     """
-    Thin wrapper around the Anthropic SDK.
+    Thin wrapper around the configured text LLM provider.
 
-    This is the ONLY place in the system that calls the Anthropic API.
+    This is the ONLY place in the system that calls the text LLM API.
     Both ExpressionEngine and ReflectionEngine (v0.2) use this class.
 
     To use a different model (e.g. Haiku for reflection):
@@ -68,12 +77,19 @@ class ClaudeClient:
             base_url=base_url,
             messages_endpoint=messages_endpoint,
         )
+        self._provider = config.provider
         self._model = config.model
         self._messages_endpoint = config.messages_endpoint
+        self._ark_base_url = config.ark_base_url
+        self._ark_api_key = config.ark_api_key
+        self._ark_thinking = config.ark_thinking
         self._http_client: httpx.Client | None = None
         http_client = self._build_http_client(config.disable_system_proxy)
 
-        if self._messages_endpoint:
+        if self._provider == _ARK_PROVIDER:
+            self._client = None
+            self._http_client = http_client
+        elif self._messages_endpoint:
             self._client = None
             self._http_client = http_client
         else:
@@ -97,12 +113,46 @@ class ClaudeClient:
         base_url: str | None = None,
         messages_endpoint: str | None = None,
     ) -> ClaudeClientConfig:
+        provider = (os.environ.get("ENTITY_LLM_PROVIDER") or _DEFAULT_PROVIDER).strip().lower()
+        if provider not in {_DEFAULT_PROVIDER, _ARK_PROVIDER}:
+            raise ClaudeConfigurationError(
+                "Unsupported ENTITY_LLM_PROVIDER. Use 'anthropic' or 'ark'."
+            )
+
+        disable_system_proxy = cls._env_flag("ENTITY_LLM_DISABLE_SYSTEM_PROXY")
+        if provider == _ARK_PROVIDER:
+            resolved_model = model or os.environ.get("ENTITY_LLM_MODEL") or _DEFAULT_ARK_MODEL
+            resolved_ark_api_key = os.environ.get("ARK_API_KEY")
+            resolved_ark_base_url = os.environ.get("ARK_BASE_URL") or _DEFAULT_ARK_BASE_URL
+            resolved_ark_thinking = (
+                os.environ.get("ENTITY_LLM_ARK_THINKING") or _DEFAULT_ARK_THINKING
+            ).strip().lower()
+            if not resolved_ark_api_key:
+                raise ClaudeConfigurationError(
+                    "Ark LLM provider requires ARK_API_KEY."
+                )
+            if resolved_ark_thinking not in {"enabled", "disabled", "auto"}:
+                raise ClaudeConfigurationError(
+                    "ENTITY_LLM_ARK_THINKING must be enabled, disabled, or auto."
+                )
+            return ClaudeClientConfig(
+                provider=provider,
+                model=resolved_model,
+                api_key=None,
+                auth_token=None,
+                base_url=None,
+                messages_endpoint=None,
+                ark_api_key=resolved_ark_api_key,
+                ark_base_url=resolved_ark_base_url,
+                ark_thinking=resolved_ark_thinking,
+                disable_system_proxy=disable_system_proxy,
+            )
+
         resolved_model = model or os.environ.get("ENTITY_LLM_MODEL")
         resolved_api_key = api_key or os.environ.get("ANTHROPIC_API_KEY")
         resolved_auth_token = auth_token or os.environ.get("ANTHROPIC_AUTH_TOKEN")
         resolved_base_url = base_url or os.environ.get("ANTHROPIC_BASE_URL")
         resolved_messages_endpoint = messages_endpoint or os.environ.get("ENTITY_LLM_MESSAGES_ENDPOINT")
-        disable_system_proxy = cls._env_flag("ENTITY_LLM_DISABLE_SYSTEM_PROXY")
 
         if resolved_messages_endpoint:
             if resolved_auth_token:
@@ -112,21 +162,29 @@ class ClaudeClient:
                         "ANTHROPIC_AUTH_TOKEN."
                     )
                 return ClaudeClientConfig(
+                    provider=provider,
                     model=resolved_model,
                     api_key=None,
                     auth_token=resolved_auth_token,
                     base_url=resolved_base_url,
                     messages_endpoint=resolved_messages_endpoint,
+                    ark_api_key=None,
+                    ark_base_url=None,
+                    ark_thinking=None,
                     disable_system_proxy=disable_system_proxy,
                 )
 
             if resolved_api_key:
                 return ClaudeClientConfig(
+                    provider=provider,
                     model=resolved_model or _DEFAULT_MODEL,
                     api_key=resolved_api_key,
                     auth_token=None,
                     base_url=resolved_base_url,
                     messages_endpoint=resolved_messages_endpoint,
+                    ark_api_key=None,
+                    ark_base_url=None,
+                    ark_thinking=None,
                     disable_system_proxy=disable_system_proxy,
                 )
 
@@ -148,21 +206,29 @@ class ClaudeClient:
                     + "."
                 )
             return ClaudeClientConfig(
+                provider=provider,
                 model=resolved_model,
                 api_key=None,
                 auth_token=resolved_auth_token,
                 base_url=resolved_base_url,
                 messages_endpoint=None,
+                ark_api_key=None,
+                ark_base_url=None,
+                ark_thinking=None,
                 disable_system_proxy=disable_system_proxy,
             )
 
         if resolved_api_key:
             return ClaudeClientConfig(
+                provider=provider,
                 model=resolved_model or _DEFAULT_MODEL,
                 api_key=resolved_api_key,
                 auth_token=None,
                 base_url=resolved_base_url,
                 messages_endpoint=None,
+                ark_api_key=None,
+                ark_base_url=None,
+                ark_thinking=None,
                 disable_system_proxy=disable_system_proxy,
             )
 
@@ -200,7 +266,7 @@ class ClaudeClient:
         max_tokens: int = 300,
     ) -> str:
         """
-        Call the Anthropic Messages API and return the generated text.
+        Call the configured LLM API and return the generated text.
 
         Args:
             system:     System prompt string.
@@ -226,7 +292,9 @@ class ClaudeClient:
         error_msg: str | None = None
 
         try:
-            if self._messages_endpoint:
+            if self._provider == _ARK_PROVIDER:
+                completion = self._complete_via_ark(system, messages, max_tokens)
+            elif self._messages_endpoint:
                 completion = self._complete_via_custom_endpoint(system, messages, max_tokens)
             else:
                 response = self._client.messages.create(
@@ -275,6 +343,65 @@ class ClaudeClient:
                 pass  # stats recording is optional; never break the call path
 
         return completion
+
+    def _complete_via_ark(
+        self,
+        system: str,
+        messages: list[dict],
+        max_tokens: int,
+    ) -> ClaudeCompletion:
+        if self._http_client is None or self._ark_api_key is None or self._ark_base_url is None:
+            raise RuntimeError("Ark client is not initialized.")
+
+        response = self._http_client.post(
+            self._ark_chat_completions_endpoint(),
+            headers={
+                "Authorization": f"Bearer {self._ark_api_key}",
+                "content-type": "application/json",
+            },
+            json=self._ark_chat_completions_payload(system, messages, max_tokens),
+        )
+        response.raise_for_status()
+        return self._extract_completion_from_response(response)
+
+    def _ark_chat_completions_endpoint(self) -> str:
+        if self._ark_base_url is None:
+            raise RuntimeError("Ark base URL is not configured.")
+        base_url = self._ark_base_url.rstrip("/")
+        if base_url.endswith("/chat/completions"):
+            return base_url
+        return f"{base_url}/chat/completions"
+
+    def _ark_chat_completions_payload(
+        self,
+        system: str,
+        messages: list[dict],
+        max_tokens: int,
+    ) -> dict[str, object]:
+        ark_messages = self._ark_messages(system, messages)
+        payload: dict[str, object] = {
+            "model": self._model,
+            "max_tokens": max_tokens,
+            "messages": ark_messages,
+        }
+        if self._ark_thinking:
+            payload["thinking"] = {"type": self._ark_thinking}
+        return payload
+
+    @staticmethod
+    def _ark_messages(system: str, messages: list[dict]) -> list[dict]:
+        ark_messages: list[dict] = []
+        if system.strip():
+            ark_messages.append({"role": "system", "content": system})
+        for message in messages:
+            role = message.get("role")
+            content = message.get("content")
+            if role not in {"user", "assistant", "system"}:
+                continue
+            if not isinstance(content, str):
+                continue
+            ark_messages.append({"role": role, "content": content})
+        return ark_messages
 
     def _complete_via_custom_endpoint(
         self,

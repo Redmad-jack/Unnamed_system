@@ -303,14 +303,20 @@ async def config_llm(request: Request):
             return "***"
         return v[:6] + "..." + v[-6:]
 
+    provider = (os.getenv("ENTITY_LLM_PROVIDER") or "anthropic").strip().lower()
     api_key = os.getenv("ANTHROPIC_API_KEY")
     auth_token = os.getenv("ANTHROPIC_AUTH_TOKEN")
     base_url = os.getenv("ANTHROPIC_BASE_URL")
+    ark_api_key = os.getenv("ARK_API_KEY")
+    ark_base_url = os.getenv("ARK_BASE_URL")
+    ark_thinking = os.getenv("ENTITY_LLM_ARK_THINKING")
     model = os.getenv("ENTITY_LLM_MODEL")
     endpoint = os.getenv("ENTITY_LLM_MESSAGES_ENDPOINT")
     disable_proxy = os.getenv("ENTITY_LLM_DISABLE_SYSTEM_PROXY")
 
-    if endpoint:
+    if provider == "ark":
+        mode = "ark"
+    elif endpoint:
         mode = "custom_endpoint"
     elif auth_token:
         mode = "supplier"
@@ -321,9 +327,13 @@ async def config_llm(request: Request):
 
     return {
         "mode": mode,
+        "ENTITY_LLM_PROVIDER": provider,
         "ANTHROPIC_API_KEY": _redact(api_key),
         "ANTHROPIC_AUTH_TOKEN": _redact(auth_token),
         "ANTHROPIC_BASE_URL": base_url,
+        "ARK_API_KEY": _redact(ark_api_key),
+        "ARK_BASE_URL": ark_base_url,
+        "ENTITY_LLM_ARK_THINKING": ark_thinking,
         "ENTITY_LLM_MODEL": model,
         "ENTITY_LLM_MESSAGES_ENDPOINT": endpoint,
         "ENTITY_LLM_DISABLE_SYSTEM_PROXY": disable_proxy,

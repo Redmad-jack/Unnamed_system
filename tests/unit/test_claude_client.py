@@ -32,7 +32,11 @@ def clear_llm_env(monkeypatch):
         "ANTHROPIC_API_KEY",
         "ANTHROPIC_AUTH_TOKEN",
         "ANTHROPIC_BASE_URL",
+        "ARK_API_KEY",
+        "ARK_BASE_URL",
         "ENTITY_LLM_MODEL",
+        "ENTITY_LLM_PROVIDER",
+        "ENTITY_LLM_ARK_THINKING",
         "ENTITY_LLM_MESSAGES_ENDPOINT",
         "ENTITY_LLM_DISABLE_SYSTEM_PROXY",
     ):
@@ -177,6 +181,43 @@ class TestClaudeClientConfig:
         with pytest.raises(ClaudeConfigurationError, match="Missing LLM credentials"):
             ClaudeClient.resolve_config()
 
+    def test_ark_provider_uses_default_model_and_base_url(
+        self,
+        monkeypatch,
+        fake_anthropic,
+    ):
+        monkeypatch.setenv("ENTITY_LLM_PROVIDER", "ark")
+        monkeypatch.setenv("ARK_API_KEY", "ark-key")
+
+        config = ClaudeClient.resolve_config()
+
+        assert config.provider == "ark"
+        assert config.model == "doubao-seed-2-0-pro-260215"
+        assert config.ark_api_key == "ark-key"
+        assert config.ark_base_url == "https://ark.cn-beijing.volces.com/api/v3"
+        assert config.ark_thinking == "disabled"
+        assert fake_anthropic.last_init_kwargs is None
+
+    def test_ark_provider_requires_api_key(self, monkeypatch):
+        monkeypatch.setenv("ENTITY_LLM_PROVIDER", "ark")
+
+        with pytest.raises(ClaudeConfigurationError, match="ARK_API_KEY"):
+            ClaudeClient.resolve_config()
+
+    def test_ark_provider_rejects_invalid_thinking_mode(self, monkeypatch):
+        monkeypatch.setenv("ENTITY_LLM_PROVIDER", "ark")
+        monkeypatch.setenv("ARK_API_KEY", "ark-key")
+        monkeypatch.setenv("ENTITY_LLM_ARK_THINKING", "deep")
+
+        with pytest.raises(ClaudeConfigurationError, match="ENTITY_LLM_ARK_THINKING"):
+            ClaudeClient.resolve_config()
+
+    def test_invalid_provider_raises_clear_error(self, monkeypatch):
+        monkeypatch.setenv("ENTITY_LLM_PROVIDER", "unknown")
+
+        with pytest.raises(ClaudeConfigurationError, match="ENTITY_LLM_PROVIDER"):
+            ClaudeClient.resolve_config()
+
     def test_custom_messages_endpoint_allows_supplier_mode_without_base_url(
         self,
         monkeypatch,
@@ -242,6 +283,69 @@ class TestClaudeClientCustomEndpoint:
             },
         }]
         assert fake_http_client.init_kwargs[0]["trust_env"] is True
+
+    def test_ark_provider_posts_chat_completions_payload(
+        self,
+        monkeypatch,
+        fake_anthropic,
+        fake_http_client,
+    ):
+        fake_http_client.response = _FakeHTTPResponse(
+            payload={"choices": [{"message": {"content": "ark response"}}]}
+        )
+        monkeypatch.setenv("ENTITY_LLM_PROVIDER", "ark")
+        monkeypatch.setenv("ARK_API_KEY", "ark-key")
+        monkeypatch.setenv("ARK_BASE_URL", "https://ark.example/api/v3")
+        monkeypatch.setenv("ENTITY_LLM_MODEL", "doubao-custom")
+
+        client = ClaudeClient()
+        text = client.complete(
+            system="You are concise.",
+            messages=[{"role": "user", "content": "hi"}],
+            max_tokens=42,
+        )
+
+        assert text == "ark response"
+        assert fake_anthropic.last_init_kwargs is None
+        assert fake_http_client.calls == [{
+            "url": "https://ark.example/api/v3/chat/completions",
+            "headers": {
+                "Authorization": "Bearer ark-key",
+                "content-type": "application/json",
+            },
+            "json": {
+                "model": "doubao-custom",
+                "max_tokens": 42,
+                "messages": [
+                    {"role": "system", "content": "You are concise."},
+                    {"role": "user", "content": "hi"},
+                ],
+                "thinking": {"type": "disabled"},
+            },
+        }]
+
+    def test_ark_provider_uses_configured_thinking_mode(
+        self,
+        monkeypatch,
+        fake_http_client,
+    ):
+        fake_http_client.response = _FakeHTTPResponse(
+            payload={"choices": [{"message": {"content": "ark response"}}]}
+        )
+        monkeypatch.setenv("ENTITY_LLM_PROVIDER", "ark")
+        monkeypatch.setenv("ARK_API_KEY", "ark-key")
+        monkeypatch.setenv("ENTITY_LLM_ARK_THINKING", "auto")
+
+        client = ClaudeClient()
+        client.complete(
+            system="",
+            messages=[{"role": "user", "content": "hi"}],
+        )
+
+        assert fake_http_client.calls[0]["json"]["thinking"] == {"type": "auto"}
+        assert fake_http_client.calls[0]["json"]["messages"] == [
+            {"role": "user", "content": "hi"},
+        ]
 
     def test_custom_endpoint_supports_openai_style_choice_response(
         self,
@@ -348,3 +452,31 @@ class TestClaudeClientCustomEndpoint:
         assert completion.stop_reason == "max_tokens"
         assert completion.prompt_tokens == 13
         assert completion.completion_tokens == 29
+
+    def test_complete_with_metadata_exposes_ark_usage_tokens(
+        self,
+        monkeypatch,
+        fake_http_client,
+    ):
+        fake_http_client.response = _FakeHTTPResponse(
+            payload={
+                "choices": [{
+                    "finish_reason": "stop",
+                    "message": {"content": "ark response"},
+                }],
+                "usage": {"prompt_tokens": 17, "completion_tokens": 5},
+            }
+        )
+        monkeypatch.setenv("ENTITY_LLM_PROVIDER", "ark")
+        monkeypatch.setenv("ARK_API_KEY", "ark-key")
+
+        client = ClaudeClient()
+        completion = client.complete_with_metadata(
+            system="You are concise.",
+            messages=[{"role": "user", "content": "hi"}],
+        )
+
+        assert completion.text == "ark response"
+        assert completion.stop_reason == "stop"
+        assert completion.prompt_tokens == 17
+        assert completion.completion_tokens == 5

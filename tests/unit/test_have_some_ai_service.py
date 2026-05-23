@@ -4,6 +4,8 @@ import random
 import sqlite3
 from pathlib import Path
 
+import pytest
+
 from have_some_ai.config import load_have_some_ai_config
 from have_some_ai.db import run_migrations
 from have_some_ai.questionnaire import QuestionBank
@@ -16,8 +18,10 @@ from have_some_ai.voice import RubricInterpretation
 class FakeRubricInterpreter:
     def __init__(self, results):
         self._results = list(results)
+        self.calls = []
 
-    def interpret(self, **_kwargs):
+    def interpret(self, **kwargs):
+        self.calls.append(kwargs)
         return self._results.pop(0)
 
 
@@ -125,17 +129,17 @@ def test_food_gate_prompt_rotates_by_public_code():
 
     participants = [service.create_participant() for _ in range(14)]
 
-    assert service.food_gate_prompt(participants[0].id).startswith("你今天衣服很漂亮啊，我晚上")
-    assert service.food_gate_prompt(participants[1].id).startswith("你好啊，先提前告诉你")
+    assert service.food_gate_prompt(participants[0].id).startswith("你今天衣服穿的很漂亮")
+    assert service.food_gate_prompt(participants[1].id).startswith("你好啊，先提前提醒你")
     assert service.food_gate_prompt(participants[12].id).startswith("你好，人类，一会")
-    assert service.food_gate_prompt(participants[13].id).startswith("你今天衣服很漂亮啊，我晚上")
-    assert service.food_gate_prompt(participants[0].id).endswith("想来点吃的吗？")
+    assert service.food_gate_prompt(participants[13].id).startswith("你今天衣服穿的很漂亮")
+    assert service.food_gate_prompt(participants[0].id).endswith("想吃点什么，还是说说话？")
     assert service.food_gate_prompt(
         participants[0].id,
         response_language="en",
     ) == (
         "Your outfit looks pretty good today. I might buy some tonight and "
-        "make my staff wear them on shift. Want something to eat?"
+        "make my staff wear them on shift. Do you want something to eat, or do you want to talk?"
     )
     assert service.food_gate_prompt(
         participants[12].id,
@@ -275,6 +279,86 @@ def test_voice_answer_low_confidence_is_unclear_without_answer():
     assert result["needs_retry"] is True
     assert repo.get_answers(participant.id) == []
     assert repo.get_voice_interpretations(participant.id)[0].status == "unclear"
+
+    conn.close()
+
+
+def test_voice_answer_chitchat_route_does_not_store_interpretation_or_answer():
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    run_migrations(conn)
+
+    configs = load_have_some_ai_config(Path("config/have_some_ai"))
+    bank = QuestionBank(configs["questions"], rng=random.Random(7))
+    repo = MealRepository(conn)
+    service = MealService(
+        repo,
+        bank,
+        ScoringEngine(configs["scoring"], bank),
+        rubric_interpreter=FakeRubricInterpreter([
+            RubricInterpretation(
+                option_id=None,
+                confidence=0.88,
+                reason_zh="这是闲聊。",
+                reason_en="This is chitchat.",
+                detected_language="zh",
+                raw_json={"route": "chitchat", "status": "chitchat"},
+                route="chitchat",
+            )
+        ]),
+    )
+
+    participant = service.create_participant()
+    draws = service.start_questionnaire(participant.id)
+    result = service.submit_voice_answer(
+        participant.id,
+        question_id=draws[0]["question_id"],
+        transcript="旁边那个机器声音有点怪。",
+        detected_language="zh",
+    )
+
+    assert result["status"] == "chitchat"
+    assert result["needs_retry"] is False
+    assert result["interpretation_id"] is None
+    assert repo.get_answers(participant.id) == []
+    assert repo.get_voice_interpretations(participant.id) == []
+
+    conn.close()
+
+
+@pytest.mark.parametrize("transcript", ["好", "行"])
+def test_voice_answer_short_affirmative_reaches_rubric_judge(transcript):
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    run_migrations(conn)
+
+    configs = load_have_some_ai_config(Path("config/have_some_ai"))
+    bank = QuestionBank(configs["questions"], rng=random.Random(7))
+    repo = MealRepository(conn)
+    rubric = FakeRubricInterpreter([
+        RubricInterpretation("A", 0.9, "可映射到 A。", "Maps to A.", "zh", {}),
+    ])
+    service = MealService(
+        repo,
+        bank,
+        ScoringEngine(configs["scoring"], bank),
+        rubric_interpreter=rubric,
+    )
+
+    participant = service.create_participant()
+    draws = service.start_questionnaire(participant.id)
+    result = service.submit_voice_answer(
+        participant.id,
+        question_id=draws[0]["question_id"],
+        transcript=transcript,
+        detected_language="zh",
+    )
+
+    assert result["status"] == "accepted"
+    assert result["option_id"] == "A"
+    assert rubric.calls
+    assert len(repo.get_answers(participant.id)) == 1
+    assert len(repo.get_voice_interpretations(participant.id)) == 1
 
     conn.close()
 

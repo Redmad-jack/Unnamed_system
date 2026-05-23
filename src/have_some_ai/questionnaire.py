@@ -56,10 +56,10 @@ class QuestionBank:
         if response_language == "en":
             opener = self._food_gate_opener(public_code, language="en")
             if not opener:
-                return "Want something to eat?"
-            return f"{opener} Want something to eat?"
+                return "Do you want something to eat, or do you want to talk?"
+            return f"{opener} Do you want something to eat, or do you want to talk?"
         opener = self._food_gate_opener(public_code, language="zh")
-        return f"{opener}想来点吃的吗？"
+        return f"{opener}想吃点什么，还是说说话？"
 
     def _food_gate_opener(self, public_code: str, *, language: str) -> str:
         openers = (

@@ -209,6 +209,21 @@ class MealService:
                 transcript=clean_transcript,
                 detected_language=detected_language,
             )
+            if result.route == "chitchat":
+                return {
+                    "status": "chitchat",
+                    "question_id": question_id,
+                    "attempt_id": clean_attempt_id,
+                    "transcript": clean_transcript,
+                    "detected_language": result.detected_language or detected_language,
+                    "option_id": None,
+                    "confidence": result.confidence,
+                    "reason_zh": result.reason_zh,
+                    "reason_en": result.reason_en,
+                    "needs_retry": False,
+                    "interpretation_id": None,
+                    "raw_llm_json": result.raw_json,
+                }
             valid_options = {"A", "B"} & {option.id for option in question.options}
             if result.option_id not in valid_options:
                 status = "unclear"
@@ -387,7 +402,7 @@ def _transcript_is_unclear(transcript: str) -> bool:
     compact = "".join(ch for ch in transcript.strip().lower() if ch.isalnum())
     if not compact:
         return True
-    if compact in {"a", "b"}:
+    if compact in {"a", "b", "有", "是", "好", "行"}:
         return False
     if len(compact) < 2:
         return True

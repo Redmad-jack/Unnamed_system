@@ -19,7 +19,12 @@ from have_some_ai.doubao.tts_protocol import (
     TTS_RESPONSE,
 )
 from have_some_ai.interfaces.api import app
-from have_some_ai.voice import ClaudeRubricInterpreter, RubricInterpretation
+from have_some_ai.voice import (
+    ClaudeFoodGateIntentInterpreter,
+    ClaudeRubricInterpreter,
+    FoodGateIntentInterpretation,
+    RubricInterpretation,
+)
 
 
 class _FakeHTTPResponse:
@@ -285,7 +290,7 @@ def test_display_html_does_not_include_control_or_voice_entrypoints():
         assert item not in source
 
 
-def test_particle_display_only_uses_read_only_display_state():
+def test_particle_display_wake_button_does_not_call_backend_write_endpoints():
     paths = [
         Path("src/have_some_ai/interfaces/static/particle-display.html"),
         Path("src/have_some_ai/interfaces/static/particle-display.css"),
@@ -294,6 +299,9 @@ def test_particle_display_only_uses_read_only_display_state():
     source = "\n".join(path.read_text() for path in paths)
 
     assert 'fetchJSON("/api/v1/display-state")' in source
+    assert 'id="particleWakeButton"' in source
+    assert "BroadcastChannel" in source
+    assert "particle_display_wake_request" in source
     for item in [
         "getUserMedia",
         "navigator.mediaDevices",
@@ -318,7 +326,6 @@ def test_particle_display_only_uses_read_only_display_state():
         "memory",
         "database",
         "queue",
-        "<button",
     ]:
         assert item not in source
 
@@ -516,7 +523,20 @@ def test_control_page_display_state_sync_uses_single_helper():
     assert "function scheduleDisplayStandby" in source
     assert "syncDisplayStandby();" in source
     assert "syncDisplayIdle();" in source
-    assert "scheduleDisplayStandby();" in source
+    assert "const VOICE_SESSION_SILENCE_TIMEOUT_MS = 15000" in source
+    assert "noSpeechTimeoutMs: 15000" in source
+    assert "function startVoiceSessionSilenceWatch" in source
+    assert "function pauseVoiceSessionSilenceWatch" in source
+    assert "function resumeVoiceSessionSilenceWatch" in source
+    assert "function markVoiceSessionAudienceActivity" in source
+    assert "function handleVoiceSessionSilenceTimeout" in source
+    assert "cancelVoiceResources('session_silence_timeout')" in source
+    assert "resetControlSessionToStandby();" in source
+    assert "syncDisplayStandby();" in source
+    assert "handleVoiceSessionSilenceTimeout();" in source
+    assert "speechStartedAt !== null && elapsed >= VAD.maxRecordingMs" in source
+    assert "stopRecordingForUpload('no_speech_timeout')" not in source
+    assert "scheduleDisplayStandby();" not in source
 
 
 def test_control_page_hardware_button_reuses_new_participant_flow():
@@ -533,6 +553,9 @@ def test_control_page_hardware_button_reuses_new_participant_flow():
     assert "newCommand: 'NEW'" in source
     assert "function handleHardwareButtonLine" in source
     assert "function triggerHardwareNewParticipant" in source
+    assert "const DISPLAY_WAKE_CHANNEL = {" in source
+    assert "function initializeDisplayWakeChannel" in source
+    assert "function triggerDisplayWakeNewParticipant" in source
     assert "await newParticipant();" in source
     assert source.count("fetch('/api/v1/display-state'") == 1
 
@@ -699,7 +722,12 @@ def test_voice_config_exposes_doubao_stream_pcm_fields(monkeypatch, tmp_path):
     assert payload["provider_capabilities"]["asr_credentials_configured"] is True
     assert payload["provider_capabilities"]["tts_credentials_configured"] is True
     assert payload["provider_capabilities"]["tts_resource_id"] == "seed-icl-2.0"
-    assert payload["provider_capabilities"]["speaker"] == "S_ud9II0522"
+    assert payload["provider_capabilities"]["speakers"] == {
+        "zh": "S_sd9II0522",
+        "en": "S_r98II0522",
+    }
+    assert payload["provider_capabilities"]["default_speaker_language"] == "zh"
+    assert "speaker" not in payload["provider_capabilities"]
 
 
 def test_voice_config_marks_doubao_credentials_missing(monkeypatch, tmp_path):
@@ -1284,12 +1312,26 @@ def test_conversation_audio_food_gate_turn_does_not_store_formal_answer(
         claude_calls["count"] += 1
         return RubricInterpretation("A", 0.9, "清楚。", "Clear.", "zh", {})
 
+    def fake_food_gate_interpret(self, **_kwargs):
+        return FoodGateIntentInterpretation(
+            route="want_chat",
+            confidence=0.9,
+            rationale="The visitor is chatting.",
+            detected_language="zh",
+            raw_json={"route": "want_chat"},
+        )
+
     monkeypatch.setenv("HAVE_SOME_AI_DB_PATH", str(tmp_path / "meal.db"))
     monkeypatch.setenv("HAVE_SOME_AI_VOICE_API_KEY", "test-key")
     monkeypatch.setenv("HAVE_SOME_AI_VOICE_BASE_URL", "https://voice-provider.example/v1")
     monkeypatch.setattr(openai_file_stt.httpx, "Client", _FakeHTTPClient)
     monkeypatch.setattr(openai_tts.httpx, "Client", _FakeHTTPClient)
     monkeypatch.setattr(ClaudeRubricInterpreter, "interpret", fake_interpret)
+    monkeypatch.setattr(
+        ClaudeFoodGateIntentInterpreter,
+        "interpret_food_gate",
+        fake_food_gate_interpret,
+    )
 
     with TestClient(app) as client:
         participant = client.post("/api/v1/participants", json={}).json()
@@ -1308,10 +1350,63 @@ def test_conversation_audio_food_gate_turn_does_not_store_formal_answer(
         detail = client.get(f"/api/v1/participants/{participant['id']}").json()
 
     assert response.status_code == 200
-    assert response.json()["stage"] == "food_gate"
+    assert response.json()["stage"] == "talk_only_chat"
+    assert response.json()["chat_mode"] == "TALK_ONLY"
     assert detail["answers"] == []
     assert detail["voice_interpretations"] == []
     assert claude_calls["count"] == 0
+
+
+def test_conversation_turn_food_gate_llm_can_start_formal_questions(
+    monkeypatch,
+    tmp_path,
+):
+    food_gate_calls = []
+
+    def fake_food_gate_interpret(self, **kwargs):
+        food_gate_calls.append(kwargs)
+        return FoodGateIntentInterpretation(
+            route="want_food",
+            confidence=0.91,
+            rationale="The visitor wants to eat a little.",
+            detected_language="zh",
+            raw_json={"route": "want_food"},
+        )
+
+    def fail_rubric_if_called(self, **_kwargs):
+        raise AssertionError("Formal rubric should not run at Food Gate")
+
+    monkeypatch.setenv("HAVE_SOME_AI_DB_PATH", str(tmp_path / "meal.db"))
+    monkeypatch.setattr(
+        ClaudeFoodGateIntentInterpreter,
+        "interpret_food_gate",
+        fake_food_gate_interpret,
+    )
+    monkeypatch.setattr(ClaudeRubricInterpreter, "interpret", fail_rubric_if_called)
+
+    with TestClient(app) as client:
+        participant = client.post("/api/v1/participants", json={}).json()
+        client.post(
+            f"/api/v1/participants/{participant['id']}/conversation-turn",
+            json={"transcript": ""},
+        )
+        client.post(
+            f"/api/v1/participants/{participant['id']}/conversation-turn",
+            json={"transcript": "中文"},
+        )
+        response = client.post(
+            f"/api/v1/participants/{participant['id']}/conversation-turn",
+            json={"transcript": "吃点吧"},
+        )
+        detail = client.get(f"/api/v1/participants/{participant['id']}").json()
+
+    assert response.status_code == 200
+    assert response.json()["stage"] == "formal_question_1"
+    assert response.json()["food_gate_result"] == "WANT_FOOD"
+    assert len(detail["draws"]) == 2
+    assert detail["answers"] == []
+    assert detail["voice_interpretations"] == []
+    assert food_gate_calls[0]["transcript"] == "吃点吧"
 
 
 def test_conversation_audio_formal_question_maps_and_saves_answer(
@@ -1419,7 +1514,8 @@ def test_conversation_audio_two_answers_generate_assignment(
         detail = client.get(f"/api/v1/participants/{participant['id']}").json()
 
     assert final is not None
-    assert final["stage"] == "farewell"
+    assert final["stage"] == "post_assignment_chat"
+    assert final["next_action"] == "post_assignment_chat"
     assert final["assignment"] is not None
     assert len(detail["answers"]) == 2
     assert detail["assignment"]["assignment_id"] == final["assignment"]["assignment_id"]
@@ -1432,7 +1528,7 @@ def test_conversation_audio_after_assignment_does_not_change_result(
     from have_some_ai import openai_file_stt, openai_tts
 
     _FakeHTTPClient.posts = []
-    _FakeHTTPClient.transcription_payload = {"text": "我要换一个", "language": "zh"}
+    _FakeHTTPClient.transcription_payload = {"text": "我选 A", "language": "zh"}
     claude_calls = {"count": 0}
     results = [
         RubricInterpretation("A", 0.9, "清楚。", "Clear.", "zh", {}),
@@ -1475,13 +1571,15 @@ def test_conversation_audio_after_assignment_does_not_change_result(
                     f"/api/v1/participants/{participant['id']}/conversation-turn",
                     json={"transcript": ""},
                 )
+        _FakeHTTPClient.transcription_payload = {"text": "我要换一个", "language": "zh"}
         assigned = client.post(
             f"/api/v1/participants/{participant['id']}/conversation-audio",
             json=_conversation_audio_payload("after-assigned"),
         ).json()
 
     assert ready is not None
-    assert assigned["stage"] == "assigned"
+    assert assigned["stage"] == "post_assignment_chat"
+    assert assigned["next_action"] == "post_assignment_chat"
     assert assigned["assignment"]["assignment_id"] == ready["assignment"]["assignment_id"]
     assert assigned["assignment"]["food_code"] == ready["assignment"]["food_code"]
     assert claude_calls["count"] == 2
@@ -1570,6 +1668,7 @@ def test_conversation_stream_uses_doubao_asr_tts_and_existing_claude_judge(
     assert asr.audio_chunks == [b"x" * 6400]
     assert asr.finish_calls == 1
     assert tts.spoken_texts
+    assert tts.response_languages == ["zh"]
     assert claude_calls["count"] == 1
     assert detail["answers"][0]["question_id"] == question["current_question_id"]
     assert detail["answers"][0]["option_id"] == "B"
@@ -1598,7 +1697,11 @@ def test_conversation_stream_tts_only_uses_task_request_path(monkeypatch, tmp_pa
             websocket.receive_json()
             websocket.send_json({"type": "session.start", "prepare_turn": False})
             websocket.receive_json()
-            websocket.send_json({"type": "tts.speak", "text": "想来点吃的吗？"})
+            websocket.send_json({
+                "type": "tts.speak",
+                "text": "Do you want something to eat, or do you want to talk?",
+                "response_language": "en",
+            })
             muted = _receive_json_type(websocket, "mic.muted_for_tts")
             websocket.receive_json()
             audio = websocket.receive_bytes()
@@ -1606,9 +1709,10 @@ def test_conversation_stream_tts_only_uses_task_request_path(monkeypatch, tmp_pa
             websocket.send_json({"type": "session.cancel"})
 
     tts = _FakeTTSClient.instances[0]
-    assert muted["text"] == "想来点吃的吗？"
+    assert muted["text"] == "Do you want something to eat, or do you want to talk?"
     assert audio == b"fake-pcm-24k"
-    assert tts.spoken_texts == ["想来点吃的吗？"]
+    assert tts.spoken_texts == ["Do you want something to eat, or do you want to talk?"]
+    assert tts.response_languages == ["en"]
 
 
 def test_conversation_stream_barge_in_cancels_tts_session(monkeypatch, tmp_path):
@@ -1785,10 +1889,18 @@ class _FakeTTSClient:
     def __init__(self, *args, **kwargs):
         self.__class__.instances.append(self)
         self.spoken_texts: list[str] = []
+        self.response_languages: list[str | None] = []
         self.cancel_calls = 0
 
-    async def synthesize(self, text: str):
+    async def synthesize(
+        self,
+        text: str,
+        *,
+        response_language: str | None = None,
+        speaker: str | None = None,
+    ):
         self.spoken_texts.append(text)
+        self.response_languages.append(response_language)
         yield TTSEvent(TTS_SESSION_STARTED, session_id="fake-tts-session")
         yield TTSEvent(TTS_RESPONSE, session_id="fake-tts-session", audio=b"fake-pcm-24k")
         yield TTSEvent(TTS_SESSION_FINISHED, session_id="fake-tts-session", payload={})
@@ -1803,8 +1915,15 @@ class _FakeTTSClient:
 class _SlowTTSClient(_FakeTTSClient):
     instances: list["_SlowTTSClient"] = []
 
-    async def synthesize(self, text: str):
+    async def synthesize(
+        self,
+        text: str,
+        *,
+        response_language: str | None = None,
+        speaker: str | None = None,
+    ):
         self.spoken_texts.append(text)
+        self.response_languages.append(response_language)
         yield TTSEvent(TTS_SESSION_STARTED, session_id="slow-tts-session")
         await asyncio.sleep(0.2)
         yield TTSEvent(TTS_SESSION_CANCELED, session_id="slow-tts-session", payload={})
@@ -1813,8 +1932,15 @@ class _SlowTTSClient(_FakeTTSClient):
 class _FailingTTSClient(_FakeTTSClient):
     instances: list["_FailingTTSClient"] = []
 
-    async def synthesize(self, text: str):
+    async def synthesize(
+        self,
+        text: str,
+        *,
+        response_language: str | None = None,
+        speaker: str | None = None,
+    ):
         self.spoken_texts.append(text)
+        self.response_languages.append(response_language)
         if False:
             yield TTSEvent(TTS_SESSION_STARTED, session_id="unused")
         raise ValueError("Missing DOUBAO_TTS_API_KEY or DOUBAO_API_KEY")

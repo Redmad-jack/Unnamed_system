@@ -16,6 +16,13 @@
   const CORE_SPEECH_TIME_SCALE = 0.5;
   const MIN_BURST_INTERVAL = 0.12;
   const MAX_BURST_INTERVAL = 1.0;
+  const WAKE_CHANNEL_NAME = "have_some_ai_wake";
+  const WAKE_REQUEST_TYPE = "particle_display_wake_request";
+  const WAKE_ACK_TYPE = "control_wake_ack";
+  const WAKE_REQUEST_TIMEOUT_MS = 3200;
+  const WAKE_ACTIVATION_MS = 600;
+  const WAKE_PROMPT_ZH = "按按钮叫醒我";
+  const WAKE_PROMPT_EN = "press the button to wake me";
 
   const QUIET_SIGNALS = Object.freeze({
     speaking: 0,
@@ -245,6 +252,110 @@
     }
 
     return { render };
+  }
+
+  function createWakeButtonController({ root, button } = {}) {
+    let channel = null;
+    let requestId = "";
+    let timeoutId = null;
+    let active = false;
+
+    function post(message) {
+      if (!channel) return;
+      channel.postMessage(message);
+    }
+
+    function clearPendingTimeout() {
+      if (timeoutId === null) return;
+      window.clearTimeout(timeoutId);
+      timeoutId = null;
+    }
+
+    function setVisible(visible) {
+      if (!button) return;
+      if (visible) {
+        button.hidden = false;
+        window.requestAnimationFrame(() => {
+          button.classList.add("is-visible");
+        });
+      } else {
+        button.classList.remove("is-visible");
+        if (!active) button.hidden = true;
+      }
+    }
+
+    function reset() {
+      active = false;
+      requestId = "";
+      clearPendingTimeout();
+      if (!button) return;
+      button.disabled = false;
+      button.classList.remove("is-activating");
+    }
+
+    function handleAck(message) {
+      if (!message || message.type !== WAKE_ACK_TYPE || message.requestId !== requestId) return;
+      if (message.status === "created") {
+        clearPendingTimeout();
+        timeoutId = window.setTimeout(() => {
+          reset();
+          if (button) {
+            button.classList.remove("is-visible");
+            button.hidden = true;
+          }
+        }, WAKE_ACTIVATION_MS);
+        return;
+      }
+      reset();
+      setVisible(true);
+    }
+
+    function handleClick() {
+      if (!button || active) return;
+      active = true;
+      requestId = `wake-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+      button.disabled = true;
+      button.classList.add("is-activating");
+      post({
+        type: WAKE_REQUEST_TYPE,
+        requestId,
+        source: "particle-display",
+        sentAt: Date.now(),
+      });
+      timeoutId = window.setTimeout(() => {
+        reset();
+        setVisible(true);
+      }, WAKE_REQUEST_TIMEOUT_MS);
+    }
+
+    function render(state) {
+      const mode = cleanText(state?.mode) || "idle";
+      const displayText = cleanText(state?.display_text);
+      const lowerText = displayText.toLowerCase();
+      const shouldShow = (
+        mode === "idle"
+        && (displayText.includes(WAKE_PROMPT_ZH) || lowerText.includes(WAKE_PROMPT_EN))
+      );
+      root.classList.toggle("has-wake-button", shouldShow);
+      if (!active) setVisible(shouldShow && Boolean(channel));
+    }
+
+    function dispose() {
+      clearPendingTimeout();
+      if (channel) {
+        channel.close();
+        channel = null;
+      }
+      if (button) button.removeEventListener("click", handleClick);
+    }
+
+    if (button && "BroadcastChannel" in window) {
+      channel = new BroadcastChannel(WAKE_CHANNEL_NAME);
+      channel.addEventListener("message", (event) => handleAck(event.data));
+      button.addEventListener("click", handleClick);
+    }
+
+    return { render, dispose };
   }
 
   class GreenParticleRenderer {
@@ -979,7 +1090,8 @@
     const resultLine = document.getElementById("particleResultLine");
     const optionsLine = document.getElementById("particleOptionsLine");
     const subLine = document.getElementById("particleSubLine");
-    if (!root || !host || !cueRoot || !mainLine || !resultLine || !optionsLine || !subLine) return;
+    const wakeButton = document.getElementById("particleWakeButton");
+    if (!root || !host || !cueRoot || !mainLine || !resultLine || !optionsLine || !subLine || !wakeButton) return;
 
     let renderer = null;
     let pollId = null;
@@ -991,6 +1103,10 @@
       resultLine,
       optionsLine,
       subLine,
+    });
+    const wakeButtonController = createWakeButtonController({
+      root,
+      button: wakeButton,
     });
 
     function heldSpeaking(rawSpeaking) {
@@ -1006,10 +1122,12 @@
         root.dataset.speaking = speaking ? "true" : "false";
         if (renderer) renderer.setSpeaking(speaking);
         particleCue.render(state);
+        wakeButtonController.render(state);
       } catch {
         const speaking = heldSpeaking(false);
         root.dataset.speaking = speaking ? "true" : "false";
         if (renderer) renderer.setSpeaking(speaking);
+        wakeButtonController.render({ mode: "idle", display_text: "" });
       }
     }
 
@@ -1032,6 +1150,7 @@
         renderer.dispose();
         renderer = null;
       }
+      wakeButtonController.dispose();
     }
 
     try {

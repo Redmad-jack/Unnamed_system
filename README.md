@@ -22,7 +22,7 @@ src/
 | 作品 | 当前进度 | 可以做什么 |
 | --- | --- | --- |
 | The "Stranger" | 已停止维护，以下内容只保留历史记录 | 不再作为当前开发重点 |
-| Have Some "Ai" | 当前主项目；`v1.2.1-EC` 已收口 Language Gate、A/B-only 正式题显示、双语 Food Gate、双屏 `/display` 展示页和最终出餐话术 | 新建观众、Language Gate、双语 Food Gate、闲聊 + 判断、ASR/TTS 语音、Claude A/B judge、食物分配、工作人员队列、只读观众展示页 |
+| Have Some "Ai" | 当前主项目；`v1.2.1-EC` 已收口 Language Gate、A/B-only 正式题显示、双语 Food Gate、双屏 `/display` 展示页和最终出餐话术 | 新建观众、Language Gate、双语 Food Gate、Food Gate 歧义 LLM 入口判断、闲聊 + 判断、ASR/TTS 语音、LLM A/B judge、食物分配、工作人员队列、只读观众展示页 |
 
 当前 Have Some "Ai" 的现场交互已经从纯 A/B 调试流程，推进到：
 
@@ -31,7 +31,7 @@ src/
   ↓
 Language Gate：选择 English / 中文，不计入正式题
   ↓
-Food Gate 闲聊入口：先问要不要吃 / 要不要参加
+Food Gate：问想吃点什么还是说说话；本地规则优先，歧义入口可由 LLM 判断
   ↓
 想吃则进入两道正式 A / B 判断题；不想吃则进入最多 3 回合 not_eating_chat 后送客并清理 transient participant
   ↓
@@ -41,9 +41,9 @@ AIHubMix/OpenAI-compatible TTS 或豆包 TTS V3 朗读
   ↓
 AIHubMix 文件上传式 STT 或豆包 ASR bigmodel_async 转写
   ↓
-ConversationOrchestrator 先区分 chitchat / unclear_speech / answer_attempt
+FormalTurnRouter 先处理空音频、重复、取消和极短回应
   ↓
-只有 answer_attempt 进入 Claude A/B/unclear judge；chitchat 不判题、不评分、不推进，前 1-2 回合可由 Claude 生成店主自由回应
+Food Gate 歧义入口只判断 want_food / want_chat / no_food / unclear_speech；正式题 judge 用同一次 LLM 调用判断 answer/chitchat，answer 再映射 A/B/unclear
   ↓
 两道正式题都有 accepted A/B 后，规则评分引擎分配食物
   ↓
@@ -55,8 +55,8 @@ ConversationOrchestrator 先区分 chitchat / unclear_speech / answer_attempt
 其中：
 
 - A、B 是正式选项，会显示在屏幕上。
-- freeform / 侧问 / 评论不会自动映射为 A/B；只有 `FormalTurnRouter` 判定用户正在尝试回答当前正式题时，才会调用 Claude judge。
-- Claude judge 输出只允许 A / B / unclear，并会做 JSON 容错解析；malformed JSON 会 repair 一次，仍失败则进入重试。闲聊 Claude 只生成 `reply_text`，不能决定流程或食物。
+- freeform / 侧问 / 评论不会自动映射为 A/B；正式题 judge 可以返回 `chitchat`，这类内容不写正式答案、不推进题目。
+- Food Gate LLM 只补歧义入口，不写正式答案、不评分、不分配食物；正式题 LLM judge 输出 `route=answer|chitchat`，`answer` 才允许 A / B / unclear，并会做 JSON 容错解析；malformed JSON 会 repair 一次，仍失败则进入重试。闲聊 LLM 只生成 `reply_text`，不能决定食物。
 - 最终食物仍由规则评分引擎决定，LLM 不直接决定食物。
 - 不保存观众原始音频，只保存转写、置信度、理由和推断结果。
 
@@ -113,7 +113,7 @@ src/conscious_entity/
 ├── policy/                     # 策略规则 + 宪法约束
 ├── expression/                 # Prompt 组装 + 风格映射 + 输出
 ├── reflection/                 # 情节记忆压缩为反思
-├── llm/                        # Claude 唯一接入点
+├── llm/                        # 文本 LLM 唯一接入点（Anthropic / Ark）
 ├── interfaces/                 # CLI / FastAPI / Web 看板
 └── core/                       # 主循环与事件总线
 ```
@@ -166,6 +166,7 @@ Have Some "Ai" 是一个食物分配系统，而不是另一个聊天实体。�
 
 - `/` 控制页运行真实流程：新建观众、麦克风录音、`conversation-stream`、ASR/TTS、`ConversationOrchestrator`、食物分配和工作人员队列。
 - `/display` 展示页只读，给观众看：冷灰绿色磨砂薄膜、膜后存在、AI 字幕、当前题目和最终食物结果。
+- `/particle-display` 展示页在待机文案旁显示一个小型粒子 wake 按钮；点击后通过 `BroadcastChannel` 通知已打开的控制页复用现有 `newParticipant()`，粒子页本身不直接创建参与者、不打开麦克风、不启动会话链路。
 - `/api/v1/display-state` 是内存级展示状态，控制页写入，展示页轮询读取；不写 SQLite，不推进会话，不触发 ASR/TTS。
 - `/display-assets/{filename}` 只暴露展示页白名单图片资产。
 
@@ -176,15 +177,17 @@ Have Some "Ai" 是一个食物分配系统，而不是另一个聊天实体。�
 ```text
 1. 新建匿名观众，生成 A001 形式编号
 2. Language Gate 问 `Hi. 你好～ Do you want to talk in 中文 or English?`；English / en / 英文 或明显英文输入固定本次会话英文，中文 / Chinese / zh 或明显中文输入使用中文默认逻辑
-3. Food Gate 使用 `questions.yaml` 的 13 条开场轮换；中文问“想来点吃的吗？”，English 模式问 “Want something to eat?”
-4. `NO_FOOD` 进入最多 3 回合的 not-eating chat，随后送客并清理 transient participant，不抽正式题、不分配食物
-5. `WANT_FOOD` 后抽两道正式题
-6. 屏幕显示题目和 A/B 两个选项
-7. AIHubMix file STT 或豆包 ASR `bigmodel_async` 生成 transcript
-8. 正式题 transcript 先经过 `FormalTurnRouter`；只有 answer_attempt 才进入 Claude A/B/unclear judge
-9. chitchat 由店主接住，不判题、不评分、不推进；前 1-2 回合可自由回应，正式题 chitchat 第 3 回合拉回当前题
-10. 两道正式题分别决定 soup / salad 与 normal / aimiao
-11. 系统分配食物并写入工作人员队列
+3. Food Gate 使用 `questions.yaml` 的 13 条开场轮换；中文问“想吃点什么，还是说说话？”，English 模式问 “Do you want something to eat, or do you want to talk?”
+4. `WANT_CHAT` 进入最多 3 回合的 talk-only chat，随后送客并清理 transient participant，不抽正式题、不分配食物；Food Gate 先看本地食物意图、拒绝食物、聊天/提问和语气词证据，强证据直接路由，弱证据或本地不确定的实质输入再交给文本 LLM 判断 `want_food / want_chat / no_food / unclear_speech`
+5. `NO_FOOD` 进入最多 3 回合的 not-eating chat，随后送客并清理 transient participant，不抽正式题、不分配食物
+6. `WANT_FOOD` 后抽两道正式题
+7. 屏幕显示题目和 A/B 两个选项
+8. AIHubMix file STT 或豆包 ASR `bigmodel_async` 生成 transcript
+9. 正式题 transcript 先经过 `FormalTurnRouter` 处理空音频、重复、取消和极短回应；其余正式题输入进入同一次 LLM judge
+10. LLM judge 先判断 `answer` / `chitchat`；`answer` 再映射 A / B / unclear。`chitchat` 不写正式答案、不推进题目，第 3 回合拉回当前题
+11. 两道正式题分别决定 soup / salad 与 normal / aimiao
+12. 系统分配食物并写入工作人员队列；出餐话术会读出观众 public code（中文如 `A零零一号顾客`，英文如 `customer A001`）；出餐后还允许最多 2 回合 post-assignment chat，第 3 次追问结束会话
+13. 整个语音会话中，控制页只在等待观众说话时计算静默；连续 15 秒没有可检测观众语音会停止当前语音链路，并让展示页回到“按按钮叫醒我 / Press the button to wake me”；`/particle-display` 的待机 wake 按钮会通知控制页创建下一位观众
 ```
 
 当前四种结果：
@@ -201,7 +204,7 @@ Have Some "Ai" 是一个食物分配系统，而不是另一个聊天实体。�
 | A | 原设计选项，直接进入隐藏评分 rubric |
 | B | 原设计选项，直接进入隐藏评分 rubric |
 
-实现上，语音会先变成 transcript，再进入 `ConversationOrchestrator`。Food Gate、not-eating chat、正式题 chitchat、unclear_speech 和 noise 都不会进入正式评分；只有 `FormalTurnRouter` 判定为 `answer_attempt` 的正式题回答才会交给 Claude 判断 A / B / unclear。Claude judge 输出会经过严格 JSON 解析、code fence / 前后文本 / trailing comma 容错、一次 JSON repair 和 schema 校验；数据库中的正式答案仍只在 `accepted` 时保存 A/B。chitchat 的前 1-2 回合可以由 `ShopkeeperReplyService` 调 Claude 生成 `reply_text`，失败时使用本地模板兜底。
+实现上，语音会先变成 transcript，再进入 `ConversationOrchestrator`。Food Gate 的歧义入口可以由文本 LLM 只判断 `want_food / want_chat / no_food / unclear_speech`，失败时按本地规则兜底；它不写正式答案、不写 voice interpretation、不评分、不分配食物。not-eating chat、正式题 chitchat、unclear_speech 和 noise 也不会进入正式评分；正式题 judge 输出 `route=answer|chitchat`，只有 `answer` 才继续判断 A / B / unclear。数据库中的正式答案仍只在 `accepted` 时保存 A/B；`chitchat` 不写 `meal_answers`，也不写 `meal_voice_answer_interpretations`。LLM judge 输出会经过严格 JSON 解析、code fence / 前后文本 / trailing comma 容错、一次 JSON repair 和 schema 校验。chitchat 的前 1-2 回合可以由 `ShopkeeperReplyService` 调配置的文本 LLM provider 生成 `reply_text`，失败时使用本地模板兜底。
 
 ### 当前模块结构
 
@@ -215,9 +218,9 @@ src/have_some_ai/
 ├── repository.py               # SQLite 读写
 ├── scoring.py                  # 两轴正式答案到四种食物的规则映射
 ├── service.py                  # 观众流程服务
-├── chat.py                     # 店主话术；闲聊 Claude reply_text + 模板兜底
+├── chat.py                     # 店主话术；闲聊 LLM reply_text + 模板兜底
 ├── prompt_context.py           # 读取 AI 店主运行语境，仅注入闲聊话术 prompt
-├── voice.py                    # Claude formal answer_attempt A/B/unclear judge
+├── voice.py                    # Food Gate intent LLM + formal turn LLM route + A/B/unclear judge
 ├── voice_provider.py           # 语音 provider / STT mode 配置
 ├── doubao/                     # Doubao ASR bigmodel_async + TTS bidirectional V3
 ├── openai_file_stt.py          # OpenAI-compatible 文件上传式 STT
@@ -250,7 +253,7 @@ meal_assignments
 meal_staff_queue
 ```
 
-`meal_voice_answer_interpretations` 保存语音理解过程：原始转写、STT 元数据、attempt_id、Claude 推断选项、置信度、中英理由、原始/修复后的 LLM JSON 和 status。不保存音频文件。
+`meal_voice_answer_interpretations` 保存语音理解过程：原始转写、STT 元数据、attempt_id、LLM 推断选项、置信度、中英理由、原始/修复后的 LLM JSON 和 status。不保存音频文件。
 
 ### API 概览
 
@@ -306,6 +309,32 @@ curl -s http://127.0.0.1:8010/api/v1/display-state
 
 如果 8010 没有监听，网页不会有声音，麦克风也不会进入后端语音链路。先启动服务或换一个空闲端口，再打开对应地址。
 
+### Windows 拯救者主控部署
+
+现场若使用拯救者 Windows 作为唯一主控，按 [docs/windows_lenovo_deployment.md](docs/windows_lenovo_deployment.md) 执行。该拓扑中：
+
+- 拯救者跑后端服务、打开控制页、负责麦克风收音和扬声器发音。
+- iMac M1 只通过局域网打开 `http://<拯救者局域网IP>:8010/particle-display`。
+- 服务必须绑定 `0.0.0.0:8010`，否则 iMac 无法访问。
+- `.env` 不提交 GitHub，需用 U 盘或其他安全方式复制到拯救者项目根目录。
+- 默认不搬 `data/have_some_ai.db`，让拯救者从空数据库开始；需要保留编号/队列/历史时才单独复制数据库三件套。
+
+拯救者首次安装：
+
+```powershell
+.\scripts\setup_windows.ps1
+```
+
+拯救者现场启动：
+
+```powershell
+.\scripts\start_have_some_ai_windows.ps1
+```
+
+跨电脑时，`/particle-display` 的 wake 按钮不能通过 `BroadcastChannel` 唤醒拯救者控制页；现场启动观众请使用拯救者控制页按钮，或把实体按钮接到拯救者。
+
+如果拯救者上有 Codex，直接复制 [docs/lenovo_codex_prompt.md](docs/lenovo_codex_prompt.md) 里的 prompt 给它执行。
+
 可在 `.env` 中覆盖：
 
 ```env
@@ -337,13 +366,14 @@ HAVE_SOME_AI_RUBRIC_CONFIDENCE_THRESHOLD=0.55
 浏览器端会读取 `/api/v1/voice-config`：`aihubmix + file` 使用 MediaRecorder 录音并上传真实
 `mime_type`；`doubao + asr_tts_stream` 使用本地 `/conversation-stream` WebSocket。浏览器发送 binary PCM16 16k mono 音频块，后端聚合约 200ms 后送 Doubao ASR `bigmodel_async`；只消费新增 `definite=true` 分句。
 
-豆包模式下所有店主可听见回复都通过 Doubao TTS V3 `tts/bidirection` 播放，使用声音复刻资源 `seed-icl-2.0` 和固定艾苗音色 `S_ud9II0522`。TTS 输出 PCM16 24k mono；播放期间前后端 half-duplex 暂停 ASR 上行，避免把店主自己的声音识别成用户回答。豆包只负责 ASR/TTS，不闲聊、不判题、不打分、不分配食物。
+豆包模式下所有店主可听见回复都通过 Doubao TTS V3 `tts/bidirection` 播放，使用声音复刻资源 `seed-icl-2.0`，并按本次会话 `response_language` 选择复刻音色：中文 `S_sd9II0522`，英文 `S_r98II0522`，未确定语言时使用中文音色。TTS 输出 PCM16 24k mono；播放期间前后端 half-duplex 暂停 ASR 上行，避免把店主自己的声音识别成用户回答。AI 自己说话期间不计入 15 秒静默，浏览器播放队列结束并恢复收麦后才重新计时。豆包只负责 ASR/TTS，不闲聊、不判题、不打分、不分配食物。
 
 当前豆包 split 状态：
 
 - 后端主入口为 `/api/v1/participants/{participant_id}/conversation-stream`。
 - ASR 使用 `wss://openspeech.bytedance.com/api/v3/sauc/bigmodel_async`。
 - TTS 使用 `wss://openspeech.bytedance.com/api/v3/tts/bidirection`。
+- 前端语音会话有 15 秒观众静默超时：AI TTS 期间暂停计时，恢复收麦并等浏览器播放队列结束后重新计时；超时只清理控制页语音资源和展示状态，不写业务数据库。
 - `barge_in` 协议已接入；前端本地自动打断默认关闭，现场仍需人工验收。
 - 仍待现场浏览器麦克风验收：ASR definite 分句、TTS PCM 播放、回声防护、barge-in 和完整两题答题流程。
 
@@ -357,11 +387,13 @@ DOUBAO_ASR_ENDPOINT=wss://openspeech.bytedance.com/api/v3/sauc/bigmodel_async
 DOUBAO_ASR_RESOURCE_ID=volc.seedasr.sauc.duration
 DOUBAO_TTS_ENDPOINT=wss://openspeech.bytedance.com/api/v3/tts/bidirection
 DOUBAO_TTS_RESOURCE_ID=seed-icl-2.0
+DOUBAO_TTS_SPEAKER_ZH=S_sd9II0522
+DOUBAO_TTS_SPEAKER_EN=S_r98II0522
 ```
 
-Claude / Anthropic 配置见下方 Shared Environment。Have Some "Ai" 只在 `FormalTurnRouter` 判定用户正在尝试回答正式 A/B 题时调用 Claude judge。chitchat、侧问、评论、unclear_speech 和 noise 都不进入 Claude judge，也不保存正式答案；chitchat 的前 1-2 回合可在话术层调用 Claude 生成 `reply_text`。
+文本 LLM 配置见下方 Shared Environment，可选 Anthropic 或 Ark。Have Some "Ai" 会在 Food Gate 本地规则弱证据或不确定时调用一次入口分类，只输出 `want_food / want_chat / no_food / unclear_speech`，失败时按本地规则兜底。正式题阶段复用同一次 LLM judge 判断 `answer` / `chitchat`；只有 `answer` 会继续映射 A / B / unclear 并可能保存正式答案。judge 返回 `chitchat` 时不保存正式答案、不写 voice interpretation、不推进题目；chitchat 的前 1-2 回合可在话术层调用配置的文本 LLM provider 生成 `reply_text`。
 
-AI 店主运行语境放在 `backend/prompts/shopkeeper_runtime_context.md`，由 `prompt_context.py` 缓存读取，只注入 `ShopkeeperReplyService` 的自由闲聊 system prompt。它不能影响 Claude rubric、`ScoringEngine`、food assignment 或任何 `meal_*` 落库逻辑。
+AI 店主运行语境放在 `backend/prompts/shopkeeper_runtime_context.md`，由 `prompt_context.py` 缓存读取，只注入 `ShopkeeperReplyService` 的自由闲聊 system prompt。它不能影响 Food Gate 入口分类、LLM rubric、`ScoringEngine`、food assignment 或任何 `meal_*` 落库逻辑。
 
 ### 豆包语音 smoke test
 
@@ -371,7 +403,7 @@ AI 店主运行语境放在 `backend/prompts/shopkeeper_runtime_context.md`，�
 4. 期望先听到 Language Gate；说 English / 中文，或直接用明确的英文 / 中文回答来选择本次会话语言。
 5. 随后听到 Food Gate / 店主开场；TTS 播放期间页面可能显示 `doubao speaking`，后端会发送 `mic.muted_for_tts`，此时麦克风音频不会送 ASR，这是预期的回声防护。
 6. TTS 结束后应收到 `mic.resumed_after_tts`，再对着麦克风回答要不要吃。
-7. 想吃后进入两道正式题；只有正式题 `answer_attempt` 会触发 Claude judge。完成两道 A/B 后才出现 `score` / 食物分配。
+7. 想吃后进入两道正式题；正式题 judge 会区分 `answer` / `chitchat`，只有两道 accepted A/B 后才出现 `score` / 食物分配。
 
 ### 语音排障
 
@@ -423,6 +455,7 @@ pip install -e ".[dev,api]"
 官方 Anthropic：
 
 ```env
+ENTITY_LLM_PROVIDER=anthropic
 ANTHROPIC_API_KEY=your_official_key_here
 ENTITY_DB_PATH=data/memory.db
 ENTITY_CONFIG_DIR=config/
@@ -433,6 +466,7 @@ ENTITY_LOG_LEVEL=INFO
 供应商 Anthropic 兼容接口：
 
 ```env
+ENTITY_LLM_PROVIDER=anthropic
 ANTHROPIC_AUTH_TOKEN=your_supplier_token_here
 ANTHROPIC_BASE_URL=https://your-provider.example
 ENTITY_LLM_MODEL=your_supplier_model_name
@@ -445,9 +479,24 @@ ENTITY_LOG_LEVEL=INFO
 非标准消息接口：
 
 ```env
+ENTITY_LLM_PROVIDER=anthropic
 ANTHROPIC_AUTH_TOKEN=your_supplier_token_here
 ENTITY_LLM_MODEL=your_supplier_model_name
 ENTITY_LLM_MESSAGES_ENDPOINT=https://your-provider.example/path/to/messages
+ENTITY_DB_PATH=data/memory.db
+ENTITY_CONFIG_DIR=config/
+ENTITY_PROMPTS_DIR=prompts/
+ENTITY_LOG_LEVEL=INFO
+```
+
+火山方舟 Ark / 豆包 Chat Completions：
+
+```env
+ENTITY_LLM_PROVIDER=ark
+ARK_API_KEY=your_ark_api_key_here
+ARK_BASE_URL=https://ark.cn-beijing.volces.com/api/v3
+ENTITY_LLM_MODEL=doubao-seed-2-0-pro-260215
+ENTITY_LLM_ARK_THINKING=disabled
 ENTITY_DB_PATH=data/memory.db
 ENTITY_CONFIG_DIR=config/
 ENTITY_PROMPTS_DIR=prompts/
@@ -558,7 +607,7 @@ pytest
 
 上述子集用于快速验证 Have Some "Ai" 语音主链路、状态机和 API。
 
-当前最新完整验证：`pytest` 为 `310 passed`；`/display` 禁止入口静态扫描无命中，确认展示页没有 `getUserMedia`、`conversation-stream`、真实语音 WebSocket、答案提交、分配或工作人员队列入口。
+当前最新完整验证：`pytest` 为 `505 passed`；`/display` / `/particle-display` 禁止真实入口静态扫描无命中；`/particle-display` 保留待机 wake 按钮，但自身仍不直接调用参与者创建、`conversation-stream`、真实语音 WebSocket、答案提交、分配或工作人员队列入口。
 
 当前文档状态：README 与 `docs/TECH_STACK.md` / `docs/progress.md` 记录的是当前本机环境和 Have Some "Ai" 语音原型状态；`docs/PRD.md`、`docs/APP_FLOW.md`、`docs/BACKEND_STRUCTURE.md`、`docs/IMPLEMENTATION_PLAN.md` 仍主要是 The "Stranger" 的 v0.1 设计文档。
 

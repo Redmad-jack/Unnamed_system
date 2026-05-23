@@ -137,9 +137,9 @@
 - 如何应用：新增语音能力时先检查职责边界：ASR 只转文字，TTS 只播文本，业务决策都留在本地服务层
 
 **L25：chitchat 不是 unclear**
-- 规则：ASR final 在正式题阶段必须先经过 `FormalTurnRouter`；只有 `answer_attempt` 才能调用 Claude A/B/unclear judge
+- 规则：正式题 judge 可以返回 `answer` 或 `chitchat`；只有 `answer` 才能继续映射 A/B/unclear
 - 原因：店主式装置允许闲聊、侧问和评论；把 chitchat 当 unclear 会让系统像答题机器人，也会污染 voice interpretation 日志
-- 如何应用：正式题 chitchat 由 ConversationHost 接住并在第 3 回合拉回当前题；测试必须断言 chitchat 时 Claude judge call count 为 0
+- 如何应用：正式题 `chitchat` 不写 `meal_answers`、不写 `meal_voice_answer_interpretations`，由 ConversationHost 接住并在第 3 回合拉回当前题
 
 **L26：TTS 失败不能静默破坏收麦链路**
 - 规则：流式语音中 TTS provider 失败必须向前端发送明确 `tts.error`，并始终发送 `mic.resumed_after_tts` 恢复 ASR 上行
@@ -172,9 +172,9 @@
 - 如何应用：改 `src/have_some_ai/chat.py` 或 `questions.yaml` 里的可听见话术时，同时搜索旧关键词并更新相关测试与文档
 
 **L32：正式题默认路由不能吞掉明显跑题句**
-- 规则：`FormalTurnRouter` 在默认进入 `answer_attempt` 前，必须先识别明显和当前题无关的实质口述并路由到 `chitchat`
-- 原因：把所有非关键词输入都送进 Claude judge 会把闲聊表现成 unclear 答题，破坏模式 B 的店主式互动边界
-- 如何应用：新增正式题路由规则时测试三件事：不调用 rubric、不写 `meal_answers`、第 3 次 chitchat 仍拉回当前题
+- 规则：正式题的实质口述可以交给同一次 judge 判断 `answer` / `chitchat`，但 `chitchat` 必须停在话术层
+- 原因：只靠关键词路由会漏掉“有吧 / 应该有吧 / 我觉得没有”这类真实答题；但把不相关内容当 unclear 也会破坏店主式互动边界
+- 如何应用：新增正式题判断规则时测试三件事：短肯定/否定进入 judge 且可映射 A/B；不相关内容返回 chitchat；chitchat 不写 `meal_answers` 和 voice interpretation
 
 **L33：展示页核心文本必须同时控字号和控容器**
 - 规则：`/display` 的字幕、题目、选项、结果和错误文案调整字号时，要同步检查卡片 max-height / overflow containment
@@ -217,9 +217,39 @@
 - 如何应用：新增展示文字层时保持只读 `GET /api/v1/display-state`，question 模式按首行题目/后续选项拆分，result 模式显示结果标题和副标题
 
 **L41：正式题泛选项词不能吞掉闲聊**
-- 规则：`FormalTurnRouter` 匹配正式题选项语义时，`有`、`没有`、`yes`、`no` 这类泛词只能作为短直接回答匹配；不能在长句闲聊里做子串命中
-- 原因：AI/是非类问题很容易让观众闲聊句中的“有”误触发 `answer_attempt`，绕过 chitchat，现场表现为系统又像答题机器
-- 如何应用：先识别侧聊/跑题，再处理强选项语义；泛词匹配必须有回归测试确认不调用 rubric、不新增 `meal_answers`
+- 规则：正式题里的 `有`、`没有`、`yes`、`no` 及带语气的短肯定/否定应进入同一次 judge；是否是闲聊由 judge 的 `route` 决定
+- 原因：AI/是非类问题里，短肯定/否定经常是真实答题，过窄的本地路由会把观众回答误当闲聊
+- 如何应用：回归测试同时覆盖“我觉得有 / 应该没有吧 / 算是吧”进入 A/B 判断，以及“旁边机器声音怪 / 我现在紧张”返回 chitchat 且不落库
+
+**L42：LLM judge 炸值要先归一化再落日志**
+- 规则：正式题 judge 的 `route`、`status`、`label` 可能互相矛盾；A/B label 优先作为 `answer/accepted`，`route=answer` 但 `status=chitchat` 且无 A/B label 时必须归一化为 `unclear`
+- 原因：一次坏 JSON 不应污染 `raw_llm_json` 语义，也不应把“像是在回答但无法判断”的内容误送进闲聊分支
+- 如何应用：测试覆盖 label 与 status 冲突、answer/chitchat 冲突、低置信度和 malformed JSON repair；服务层仍只按归一化后的 `route` 决定是否写 voice interpretation
+
+**L43：Food Gate 默认实质口述应进入聊天线**
+- 规则：Food Gate 问“想吃点什么，还是说说话？”时，用本地证据判断食物意图、拒绝食物、聊天/提问和语气词；食物证据胜出才抽正式题，聊天/提问进入 `talk_only_chat`，语气词继续重问
+- 原因：观众直接开始闲聊时，如果系统重复问 Food Gate，会显得没有听懂；但“整点吃的 / 干饭 / 我饿了”也不能被默认闲聊吞掉
+- 如何应用：Food Gate 测试要同时覆盖“整点吃的 / 干饭 / I want to eat”进入正式题，“我要问你个问题 / This is a great project”进入 `talk_only_chat`，以及“不想吃 / 我不饿”进入 `not_eating_chat`
+
+**L44：入口语义证据要区分强弱，不要只用子串**
+- 规则：Food Gate 的 `hungry/food/给我来/试试/参加` 这类证据必须区分强食物、弱食物、拒绝食物和聊天证据；弱食物证据遇到明确聊天证据时应让位给聊天线
+- 原因：`not hungry`、`no food`、`给我来讲讲`、`想试试聊天` 都会被朴素子串匹配误送进正式题
+- 如何应用：每次新增入口词都要放进路由矩阵测试，同时覆盖相反语义例子；正式题短句也不要在本地截断，交给 formal judge 决定 answer/chitchat
+
+**L45：解释型问题要先于食物意图子串**
+- 规则：Food Gate 中带有“为什么 / 意义 / 代表什么 / why / what does”等结构的问题，如果主题是 AI 下厨、食物、汤、沙拉或艾苗，应先进聊天解释线，不应被“吃的 / food”等食物子串送入正式题
+- 原因：“你为什么做吃的”是在问作品设定，不是在点餐；如果先匹配食物子串，会让店主跳过解释直接抽正式题
+- 如何应用：入口路由测试要覆盖“你为什么做吃的 / 食物有什么意义 / What does the food mean”进入 `talk_only_chat` 且不抽题，同时保留“整点吃的 / I want food”进入正式题
+
+**L46：Food Gate LLM 只能补歧义入口**
+- 规则：Food Gate 可以在本地弱证据或不确定实质输入时调用文本 LLM 判断 `want_food / want_chat / no_food / unclear_speech`，但强本地证据仍优先，LLM 失败必须按本地规则兜底
+- 原因：“吃点吧”这类短口语可能被 exact/phrase 规则漏掉；让 LLM 只补入口意图可以改善现场理解，同时不污染正式题 judge、评分和食物分配
+- 如何应用：Food Gate LLM 测试必须断言不写 `meal_answers`、不写 `meal_voice_answer_interpretations`、不调用正式题 `RubricInterpreter`；正式 A/B 和 food assignment 仍只在两道正式题 accepted 后发生
+
+**L47：`BroadcastChannel` 只在同一浏览器源内可靠**
+- 规则：跨电脑展示拓扑中，不要依赖 `/particle-display` wake 按钮通过 `BroadcastChannel` 唤醒控制页
+- 原因：`BroadcastChannel` 不跨设备；iMac 展示页和拯救者控制页即使访问同一服务，也运行在不同浏览器实例里
+- 如何应用：拯救者主控现场用拯救者控制页按钮或接在拯救者上的实体按钮启动观众；展示页保持只读展示
 
 ---
 

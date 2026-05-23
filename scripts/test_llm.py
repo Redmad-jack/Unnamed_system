@@ -43,14 +43,22 @@ def main() -> None:
     cfg_table.add_column("Key", style="cyan", no_wrap=True)
     cfg_table.add_column("Value")
 
+    provider = (os.environ.get("ENTITY_LLM_PROVIDER") or "anthropic").strip().lower()
     api_key = os.environ.get("ANTHROPIC_API_KEY")
     auth_token = os.environ.get("ANTHROPIC_AUTH_TOKEN")
     base_url = os.environ.get("ANTHROPIC_BASE_URL")
+    ark_api_key = os.environ.get("ARK_API_KEY")
+    ark_base_url = os.environ.get("ARK_BASE_URL")
+    ark_thinking = os.environ.get("ENTITY_LLM_ARK_THINKING")
     model_env = os.environ.get("ENTITY_LLM_MODEL")
     endpoint = os.environ.get("ENTITY_LLM_MESSAGES_ENDPOINT")
     disable_proxy = os.environ.get("ENTITY_LLM_DISABLE_SYSTEM_PROXY")
 
-    if endpoint:
+    if provider == "ark":
+        mode = "ark (Volcengine Ark chat completions)" if ark_api_key else "[red]ark missing ARK_API_KEY[/red]"
+    elif provider != "anthropic":
+        mode = f"[red]invalid provider: {provider}[/red]"
+    elif endpoint:
         mode = "custom endpoint"
     elif auth_token:
         mode = "supplier (auth_token)"
@@ -60,10 +68,14 @@ def main() -> None:
         mode = "[red]none configured[/red]"
 
     cfg_table.add_row("Mode", f"[bold]{mode}[/bold]")
+    cfg_table.add_row("ENTITY_LLM_PROVIDER", provider)
     cfg_table.add_row("ANTHROPIC_API_KEY", _redact(api_key))
     cfg_table.add_row("ANTHROPIC_AUTH_TOKEN", _redact(auth_token))
     cfg_table.add_row("ANTHROPIC_BASE_URL", base_url or "[dim]not set[/dim]")
+    cfg_table.add_row("ARK_API_KEY", _redact(ark_api_key))
+    cfg_table.add_row("ARK_BASE_URL", ark_base_url or "[dim]not set[/dim]")
     cfg_table.add_row("ENTITY_LLM_MODEL", model_env or "[dim]not set (default)[/dim]")
+    cfg_table.add_row("ENTITY_LLM_ARK_THINKING", ark_thinking or "[dim]not set (default)[/dim]")
     cfg_table.add_row("ENTITY_LLM_MESSAGES_ENDPOINT", endpoint or "[dim]not set[/dim]")
     cfg_table.add_row("ENTITY_LLM_DISABLE_SYSTEM_PROXY", disable_proxy or "[dim]not set[/dim]")
 
@@ -98,11 +110,13 @@ def main() -> None:
     if result:
         result_table.add_row("Status", "[green bold]✓ SUCCESS[/green bold]")
         result_table.add_row("Latency", f"{duration_ms} ms")
+        result_table.add_row("Provider", client._provider)
         result_table.add_row("Model", client._model)
         result_table.add_row("Response", f'[italic]"{result.strip()}"[/italic]')
     else:
         result_table.add_row("Status", "[red bold]✗ FAILED[/red bold] (empty response)")
         result_table.add_row("Latency", f"{duration_ms} ms")
+        result_table.add_row("Provider", client._provider)
         result_table.add_row("Model", client._model)
 
     color = "green" if result else "red"

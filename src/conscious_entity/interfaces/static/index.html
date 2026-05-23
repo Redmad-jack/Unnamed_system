@@ -401,9 +401,13 @@ async function pollLLMConfig() {
     const d = await fetchJSON('/api/v1/config/llm');
     const rows = [
       ['Mode', d.mode],
+      ['Provider', d.ENTITY_LLM_PROVIDER || 'anthropic'],
       ['API Key', d.ANTHROPIC_API_KEY || '—'],
       ['Auth Token', d.ANTHROPIC_AUTH_TOKEN || '—'],
       ['Base URL', d.ANTHROPIC_BASE_URL || '—'],
+      ['Ark Key', d.ARK_API_KEY || '—'],
+      ['Ark Base', d.ARK_BASE_URL || '—'],
+      ['Ark Thinking', d.ENTITY_LLM_ARK_THINKING || '—'],
       ['Model', d.ENTITY_LLM_MODEL || '—'],
       ['Endpoint', d.ENTITY_LLM_MESSAGES_ENDPOINT || '—'],
     ];

@@ -11,6 +11,7 @@ from have_some_ai.config import load_have_some_ai_config
 from have_some_ai.conversation import (
     CHAT_MODE_A_NO_FOOD,
     CHAT_MODE_B_WANT_FOOD,
+    CHAT_MODE_C_TALK_ONLY,
     ConversationOrchestrator,
 )
 from have_some_ai.db import run_migrations
@@ -19,7 +20,7 @@ from have_some_ai.questionnaire import QuestionBank
 from have_some_ai.repository import MealRepository
 from have_some_ai.scoring import ScoringEngine
 from have_some_ai.service import MealService
-from have_some_ai.voice import RubricInterpretation
+from have_some_ai.voice import FoodGateIntentInterpretation, RubricInterpretation
 
 
 class FixedReplyService:
@@ -35,6 +36,19 @@ class FakeRubricInterpreter:
     def interpret(self, **kwargs):
         self.calls.append(kwargs)
         return self._results.pop(0)
+
+
+class FakeFoodGateIntentInterpreter:
+    def __init__(self, results):
+        self._results = list(results)
+        self.calls = []
+
+    def interpret_food_gate(self, **kwargs):
+        self.calls.append(kwargs)
+        result = self._results.pop(0)
+        if isinstance(result, Exception):
+            raise result
+        return result
 
 
 class CountingScoringEngine(ScoringEngine):
@@ -88,7 +102,7 @@ def test_language_gate_infers_english_before_food_gate_without_draws():
         )
         assert result["reply_text"] == (
             "Your outfit looks pretty good today. I might buy some tonight and "
-            "make my staff wear them on shift. Want something to eat?"
+            "make my staff wear them on shift. Do you want something to eat, or do you want to talk?"
         )
         assert detail["draws"] == []
         assert detail["answers"] == []
@@ -152,7 +166,7 @@ def test_no_food_enters_not_eating_chat_and_never_draws_questions():
         conn.close()
 
 
-def test_food_gate_chitchat_is_not_unclear_and_does_not_default_to_no_food():
+def test_food_gate_chat_question_enters_talk_only_and_does_not_default_to_no_food():
     conn, service, orchestrator, _repo = _conversation_stack([])
     try:
         participant = service.create_participant()
@@ -163,11 +177,385 @@ def test_food_gate_chitchat_is_not_unclear_and_does_not_default_to_no_food():
 
         assert unclear["stage"] == "food_gate"
         assert unclear["interpretation"] == {"route": "unclear_speech"}
-        assert chitchat["stage"] == "food_gate"
-        assert chitchat["interpretation"] == {"route": "chitchat", "count": 1}
-        assert chitchat["next_action"] == "answer_food_gate"
-        assert chitchat["chat_mode"] is None
+        assert chitchat["stage"] == "talk_only_chat"
+        assert chitchat["interpretation"] == {"status": "WANT_CHAT"}
+        assert chitchat["next_action"] == "talk_only_chat"
+        assert chitchat["chat_mode"] == CHAT_MODE_C_TALK_ONLY
         assert service.participant_detail(participant.id)["draws"] == []
+    finally:
+        conn.close()
+
+
+@pytest.mark.parametrize(
+    "transcript",
+    [
+        "我们说说话吧",
+        "那我们说说话吧",
+        "那说说话吧",
+        "说说话吧",
+        "说说吧",
+        "聊聊天吧",
+        "我们聊聊天吧",
+        "那聊聊天吧",
+        "聊一下吧",
+        "聊一会儿吧",
+        "想聊天",
+        "我想聊天",
+        "我想和你聊天",
+        "我想和你说话",
+        "我想和你说说话",
+        "和你说说话",
+        "跟你说说话",
+        "跟你聊聊",
+        "和你聊聊",
+        "先聊聊",
+        "先说说话",
+        "不吃，聊聊吧",
+        "不想吃，想聊聊",
+        "我不饿，聊会儿",
+        "我只是想聊聊天",
+        "我就想说说话",
+        "可以聊天吗",
+        "能和你聊聊吗",
+        "你陪我聊会儿",
+        "我们先不吃，聊一下",
+        "我想问你点事",
+        "我想问你问题",
+        "我想知道你是谁",
+        "你是谁啊",
+        "你想聊什么",
+        "随便聊聊",
+        "说话",
+        "聊天",
+        "聊",
+        "talk",
+        "chat",
+        "let's talk",
+        "let us talk",
+        "can we talk",
+        "I want to talk",
+        "just talk",
+    ],
+)
+def test_food_gate_chat_intents_enter_talk_only_chat(transcript):
+    conn, service, orchestrator, _repo = _conversation_stack([])
+    try:
+        participant = service.create_participant()
+        _enter_food_gate(orchestrator, participant.id)
+
+        result = orchestrator.handle_turn(participant.id, transcript)
+        detail = service.participant_detail(participant.id)
+
+        assert result["stage"] == "talk_only_chat"
+        assert result["chat_mode"] == CHAT_MODE_C_TALK_ONLY
+        assert result["food_gate_result"] == "WANT_CHAT"
+        assert result["next_action"] == "talk_only_chat"
+        assert result["talk_only_chat_count"] == 0
+        assert detail["draws"] == []
+        assert detail["answers"] == []
+        assert result["assignment"] is None
+    finally:
+        conn.close()
+
+
+@pytest.mark.parametrize(
+    "transcript",
+    [
+        "我今天刚从学校过来，外面还在下雨",
+        "这个地方有点奇怪",
+        "你要不要先介绍一下自己",
+        "我要问你个问题",
+        "这个问题可以换一个吗",
+        "你还好吗",
+        "I want to ask you something",
+        "What is this project?",
+        "This is a great project",
+        "给我来讲讲",
+        "想试试聊天",
+        "想参加聊天",
+    ],
+)
+def test_food_gate_default_substantive_speech_enters_talk_only_chat(transcript):
+    conn, service, orchestrator, _repo = _conversation_stack([])
+    try:
+        participant = service.create_participant()
+        _enter_food_gate(orchestrator, participant.id)
+
+        result = orchestrator.handle_turn(participant.id, transcript)
+        detail = service.participant_detail(participant.id)
+
+        assert result["stage"] == "talk_only_chat"
+        assert result["chat_mode"] == CHAT_MODE_C_TALK_ONLY
+        assert result["food_gate_result"] == "WANT_CHAT"
+        assert result["next_action"] == "talk_only_chat"
+        assert result["talk_only_chat_count"] == 0
+        assert detail["draws"] == []
+        assert detail["answers"] == []
+        assert result["assignment"] is None
+    finally:
+        conn.close()
+
+
+@pytest.mark.parametrize(
+    "transcript",
+    [
+        "你为什么做吃的",
+        "为什么是一个AI来做吃的",
+        "你为什么来这里做吃的",
+        "食物有什么意义",
+        "这些食物代表什么",
+        "为什么是艾苗",
+        "Why are you serving food?",
+        "What does the food mean?",
+    ],
+)
+def test_food_gate_explanation_questions_enter_talk_only_and_reply_now(transcript):
+    conn, service, orchestrator, _repo = _conversation_stack([])
+    try:
+        participant = service.create_participant()
+        _enter_food_gate(orchestrator, participant.id)
+
+        result = orchestrator.handle_turn(participant.id, transcript)
+        detail = service.participant_detail(participant.id)
+
+        assert result["stage"] == "talk_only_chat"
+        assert result["chat_mode"] == CHAT_MODE_C_TALK_ONLY
+        assert result["food_gate_result"] == "WANT_CHAT"
+        assert result["next_action"] == "talk_only_chat"
+        assert result["talk_only_chat_count"] == 1
+        assert result["interpretation"] == {"route": "chitchat", "count": 1}
+        assert detail["draws"] == []
+        assert detail["answers"] == []
+        assert result["assignment"] is None
+    finally:
+        conn.close()
+
+
+@pytest.mark.parametrize(
+    "transcript",
+    [
+        "吃",
+        "想吃",
+        "要吃",
+        "吃点",
+        "吃一点",
+        "想吃点什么",
+        "我要吃东西",
+        "来点吃的",
+        "整点吃的",
+        "整整点吃的",
+        "搞点饭",
+        "给我来点吃的",
+        "干饭",
+        "开饭",
+        "我饿了",
+        "好，吃",
+        "吃饭",
+        "参加",
+        "想试试",
+        "来吧",
+        "yes",
+        "ok",
+        "eat",
+        "food",
+        "meal",
+        "snack",
+        "want food",
+        "I want to eat",
+        "I would like something to eat",
+        "I'm hungry",
+        "想试试吃的",
+        "想参加吃的",
+    ],
+)
+def test_food_gate_food_intents_start_formal_questions(transcript):
+    conn, service, orchestrator, _repo = _conversation_stack([])
+    try:
+        participant = service.create_participant()
+        _enter_food_gate(orchestrator, participant.id)
+
+        result = orchestrator.handle_turn(participant.id, transcript)
+
+        assert result["stage"] == "formal_question_1"
+        assert result["chat_mode"] == CHAT_MODE_B_WANT_FOOD
+        assert result["food_gate_result"] == "WANT_FOOD"
+        assert result["next_action"] == "answer_formal_question"
+        assert len(service.participant_detail(participant.id)["draws"]) == 2
+    finally:
+        conn.close()
+
+
+@pytest.mark.parametrize("transcript", ["吃点吧", "吃点儿吧", "那吃点吧", "来点吧"])
+def test_food_gate_ambiguous_eating_intents_can_use_llm_to_start_formal_questions(
+    transcript,
+):
+    conn, service, orchestrator, repo = _conversation_stack(
+        [],
+        food_gate_results=[
+            FoodGateIntentInterpretation(
+                route="want_food",
+                confidence=0.91,
+                rationale="The visitor wants a little food.",
+                detected_language="zh",
+                raw_json={"route": "want_food"},
+            )
+        ],
+    )
+    try:
+        participant = service.create_participant()
+        _enter_food_gate(orchestrator, participant.id)
+
+        result = orchestrator.handle_turn(participant.id, transcript)
+
+        assert result["stage"] == "formal_question_1"
+        assert result["chat_mode"] == CHAT_MODE_B_WANT_FOOD
+        assert result["food_gate_result"] == "WANT_FOOD"
+        assert result["next_action"] == "answer_formal_question"
+        assert len(service.participant_detail(participant.id)["draws"]) == 2
+        assert repo.get_answers(participant.id) == []
+        assert repo.get_voice_interpretations(participant.id) == []
+        assert service._rubric_interpreter.calls == []
+        assert orchestrator._food_gate_interpreter.calls[0]["transcript"] == transcript
+    finally:
+        conn.close()
+
+
+@pytest.mark.parametrize("transcript", ["我要问你个问题", "这个项目是什么"])
+def test_food_gate_default_chat_intents_can_use_llm_to_enter_talk_only_chat(
+    transcript,
+):
+    conn, service, orchestrator, _repo = _conversation_stack(
+        [],
+        food_gate_results=[
+            FoodGateIntentInterpretation(
+                route="want_chat",
+                confidence=0.9,
+                rationale="The visitor is asking a side question.",
+                detected_language="zh",
+                raw_json={"route": "want_chat"},
+            )
+        ],
+    )
+    try:
+        participant = service.create_participant()
+        _enter_food_gate(orchestrator, participant.id)
+
+        result = orchestrator.handle_turn(participant.id, transcript)
+        detail = service.participant_detail(participant.id)
+
+        assert result["stage"] == "talk_only_chat"
+        assert result["chat_mode"] == CHAT_MODE_C_TALK_ONLY
+        assert result["food_gate_result"] == "WANT_CHAT"
+        assert detail["draws"] == []
+        assert detail["answers"] == []
+        assert service._rubric_interpreter.calls == []
+        assert orchestrator._food_gate_interpreter.calls[0]["transcript"] == transcript
+    finally:
+        conn.close()
+
+
+def test_food_gate_explicit_chat_intent_stays_local_and_skips_llm():
+    conn, service, orchestrator, _repo = _conversation_stack([], food_gate_results=[])
+    try:
+        participant = service.create_participant()
+        _enter_food_gate(orchestrator, participant.id)
+
+        result = orchestrator.handle_turn(participant.id, "说说话吧")
+
+        assert result["stage"] == "talk_only_chat"
+        assert result["chat_mode"] == CHAT_MODE_C_TALK_ONLY
+        assert result["food_gate_result"] == "WANT_CHAT"
+        assert service.participant_detail(participant.id)["draws"] == []
+        assert orchestrator._food_gate_interpreter.calls == []
+    finally:
+        conn.close()
+
+
+@pytest.mark.parametrize(
+    "transcript",
+    [
+        "不吃",
+        "不想吃",
+        "不要吃",
+        "不用",
+        "先不吃",
+        "算了",
+        "我不饿",
+        "不用吃",
+        "只是看看",
+        "路过",
+        "不参加",
+        "no",
+        "not now",
+        "no food",
+        "no thanks",
+        "not hungry",
+        "I am not hungry",
+        "I do not need food",
+    ],
+)
+def test_food_gate_no_food_intents_enter_not_eating_chat(transcript):
+    conn, service, orchestrator, _repo = _conversation_stack([], food_gate_results=[])
+    try:
+        participant = service.create_participant()
+        _enter_food_gate(orchestrator, participant.id)
+
+        result = orchestrator.handle_turn(participant.id, transcript)
+
+        assert result["stage"] == "not_eating_chat"
+        assert result["chat_mode"] == CHAT_MODE_A_NO_FOOD
+        assert result["food_gate_result"] == "NO_FOOD"
+        assert result["next_action"] == "not_eating_chat"
+        assert service.participant_detail(participant.id)["draws"] == []
+        assert service._rubric_interpreter.calls == []
+        assert orchestrator._food_gate_interpreter.calls == []
+    finally:
+        conn.close()
+
+
+@pytest.mark.parametrize("food_gate_result", [None, RuntimeError("llm unavailable")])
+def test_food_gate_llm_failure_uses_local_fallback(food_gate_result):
+    conn, service, orchestrator, _repo = _conversation_stack(
+        [],
+        food_gate_results=[food_gate_result],
+    )
+    try:
+        participant = service.create_participant()
+        _enter_food_gate(orchestrator, participant.id)
+
+        result = orchestrator.handle_turn(participant.id, "吃点吧")
+        detail = service.participant_detail(participant.id)
+
+        assert result["stage"] == "talk_only_chat"
+        assert result["chat_mode"] == CHAT_MODE_C_TALK_ONLY
+        assert result["food_gate_result"] == "WANT_CHAT"
+        assert detail["draws"] == []
+        assert detail["answers"] == []
+        assert service._rubric_interpreter.calls == []
+        assert len(orchestrator._food_gate_interpreter.calls) == 1
+    finally:
+        conn.close()
+
+
+def test_talk_only_chat_deletes_transient_participant_on_third_chat_turn():
+    conn, service, orchestrator, _repo = _conversation_stack([])
+    try:
+        participant = service.create_participant()
+        _enter_food_gate(orchestrator, participant.id)
+        entered = orchestrator.handle_turn(participant.id, "不吃，聊聊吧")
+
+        first = orchestrator.handle_turn(participant.id, "你是谁啊")
+        second = orchestrator.handle_turn(participant.id, "这个地方有点奇怪")
+        third = orchestrator.handle_turn(participant.id, "你想聊什么")
+
+        assert entered["stage"] == "talk_only_chat"
+        assert first["talk_only_chat_count"] == 1
+        assert second["talk_only_chat_count"] == 2
+        assert third["stage"] == "done"
+        assert third["next_action"] == "end_session"
+        assert third["participant_deleted"] is True
+        with pytest.raises(KeyError):
+            service.participant_detail(participant.id)
     finally:
         conn.close()
 
@@ -279,13 +667,15 @@ def test_two_accepted_answers_assign_aimiao_soup():
 
         result = orchestrator.handle_turn(participant.id, "我选 A")
 
-        assert result["stage"] == "farewell"
-        assert "我要分给你" in result["reply_text"]
-        assert "吃完你最好猜猜我为什么给你吃这个东西" in result["reply_text"]
+        assert result["stage"] == "post_assignment_chat"
+        assert "我给你定的是" in result["reply_text"]
+        assert "你是A零零一号顾客" in result["reply_text"]
+        assert "吃完最后想想我为什么给你这个" in result["reply_text"]
         assert "艾苗汤" in result["reply_text"]
         assert "Ai Miao soup" not in result["reply_text"]
         assert result["answered_count"] == 2
-        assert result["next_action"] == "end_session"
+        assert result["next_action"] == "post_assignment_chat"
+        assert result["post_assignment_chat_count"] == 0
         assert result["assignment"]["food_code"] == "aimiao_soup"
     finally:
         conn.close()
@@ -302,15 +692,13 @@ def test_assigned_turn_does_not_change_assignment():
         orchestrator.handle_turn(participant.id, "我选 A")
         ready = orchestrator.handle_turn(participant.id, "我选 B")
 
-        assigned = orchestrator.handle_turn(participant.id, "我想换一个")
+        followup = orchestrator.handle_turn(participant.id, "我想换一个")
 
-        assert assigned["stage"] == "assigned"
-        assert "换下一个人吧" in assigned["reply_text"]
-        assert "汤" in assigned["reply_text"]
-        assert "Soup" not in assigned["reply_text"]
-        assert assigned["answered_count"] == 2
-        assert assigned["assignment"]["assignment_id"] == ready["assignment"]["assignment_id"]
-        assert assigned["assignment"]["food_code"] == ready["assignment"]["food_code"]
+        assert followup["stage"] == "post_assignment_chat"
+        assert followup["post_assignment_chat_count"] == 1
+        assert followup["answered_count"] == 2
+        assert followup["assignment"]["assignment_id"] == ready["assignment"]["assignment_id"]
+        assert followup["assignment"]["food_code"] == ready["assignment"]["food_code"]
     finally:
         conn.close()
 
@@ -337,11 +725,16 @@ def test_scoring_engine_called_once_after_two_formal_answers():
         participant = service.create_participant()
         _enter_food_questions(orchestrator, participant.id)
         orchestrator.handle_turn(participant.id, "我选 A")
-        farewell = orchestrator.handle_turn(participant.id, "我选 B")
-        assigned = orchestrator.handle_turn(participant.id, "我想换一个")
+        ready = orchestrator.handle_turn(participant.id, "我选 B")
+        first = orchestrator.handle_turn(participant.id, "我想换一个")
+        second = orchestrator.handle_turn(participant.id, "为什么是这个")
+        done = orchestrator.handle_turn(participant.id, "还能再聊一句吗")
 
-        assert farewell["stage"] == "farewell"
-        assert assigned["stage"] == "assigned"
+        assert ready["stage"] == "post_assignment_chat"
+        assert first["stage"] == "post_assignment_chat"
+        assert second["stage"] == "post_assignment_chat"
+        assert done["stage"] == "done"
+        assert done["next_action"] == "end_session"
         assert scoring.calls == 1
     finally:
         conn.close()
@@ -368,7 +761,78 @@ def test_unclear_formal_answer_does_not_advance_or_store_answer():
         conn.close()
 
 
-def test_acknowledgement_during_formal_question_is_chitchat_without_rubric_call():
+@pytest.mark.parametrize(
+    "transcript",
+    [
+        "好",
+        "好吧",
+        "好的",
+        "行",
+        "行吧",
+        "可以",
+        "ok",
+        "sure",
+    ],
+)
+def test_acknowledgement_during_formal_question_can_be_chitchat_from_judge(
+    transcript,
+):
+    conn, service, orchestrator, repo = _conversation_stack([
+        RubricInterpretation(None, 0.9, "闲聊。", "Chitchat.", "zh", {}, route="chitchat"),
+    ])
+    try:
+        participant = service.create_participant()
+        question = _enter_food_questions(orchestrator, participant.id)
+
+        result = orchestrator.handle_turn(participant.id, transcript)
+
+        assert result["stage"] == "formal_question_1"
+        assert result["current_question_id"] == question["current_question_id"]
+        assert result["next_action"] == "repeat_current_question"
+        assert result["interpretation"] == {"route": "chitchat", "count": 1}
+        assert repo.get_answers(participant.id) == []
+        assert repo.get_voice_interpretations(participant.id) == []
+        assert service._rubric_interpreter.calls
+    finally:
+        conn.close()
+
+
+@pytest.mark.parametrize("transcript", ["好", "行", "可以", "ok", "sure"])
+def test_short_acknowledgement_can_be_accepted_by_formal_judge(transcript):
+    conn, service, orchestrator, repo = _conversation_stack([
+        RubricInterpretation("A", 0.9, "可映射到 A。", "Maps to A.", "zh", {}),
+    ])
+    try:
+        participant = service.create_participant()
+        _enter_food_questions(orchestrator, participant.id)
+
+        result = orchestrator.handle_turn(participant.id, transcript)
+
+        assert result["interpretation"]["status"] == "accepted"
+        assert result["interpretation"]["choice"] == "A"
+        assert len(repo.get_answers(participant.id)) == 1
+        assert len(repo.get_voice_interpretations(participant.id)) == 1
+        assert service._rubric_interpreter.calls
+    finally:
+        conn.close()
+
+
+@pytest.mark.parametrize(
+    ("transcript", "expected_next_action", "expected_route"),
+    [
+        ("", "answer_formal_question", None),
+        ("嗯", "repeat_current_question", "unclear_speech"),
+        ("啊", "repeat_current_question", "unclear_speech"),
+        ("呃", "repeat_current_question", "unclear_speech"),
+        ("um", "repeat_current_question", "unclear_speech"),
+        ("uh", "repeat_current_question", "unclear_speech"),
+    ],
+)
+def test_noise_and_fillers_during_formal_question_skip_rubric(
+    transcript,
+    expected_next_action,
+    expected_route,
+):
     conn, service, orchestrator, repo = _conversation_stack([
         RubricInterpretation("A", 0.9, "清楚。", "Clear.", "zh", {}),
     ])
@@ -376,20 +840,27 @@ def test_acknowledgement_during_formal_question_is_chitchat_without_rubric_call(
         participant = service.create_participant()
         question = _enter_food_questions(orchestrator, participant.id)
 
-        result = orchestrator.handle_turn(participant.id, "好吧")
+        result = orchestrator.handle_turn(participant.id, transcript)
 
         assert result["stage"] == "formal_question_1"
         assert result["current_question_id"] == question["current_question_id"]
-        assert result["next_action"] == "repeat_current_question"
-        assert result["interpretation"] == {"route": "chitchat", "count": 1}
+        assert result["next_action"] == expected_next_action
+        if expected_route is None:
+            assert result["interpretation"] is None
+        else:
+            assert result["interpretation"] == {"route": expected_route}
         assert repo.get_answers(participant.id) == []
         assert service._rubric_interpreter.calls == []
     finally:
         conn.close()
 
 
-def test_formal_chitchat_is_routed_before_judge_and_limited():
-    conn, service, orchestrator, repo = _conversation_stack([])
+def test_formal_chitchat_from_judge_is_not_stored_and_is_limited():
+    conn, service, orchestrator, repo = _conversation_stack([
+        RubricInterpretation(None, 0.9, "闲聊。", "Chitchat.", "zh", {}, route="chitchat"),
+        RubricInterpretation(None, 0.9, "闲聊。", "Chitchat.", "zh", {}, route="chitchat"),
+        RubricInterpretation(None, 0.9, "闲聊。", "Chitchat.", "zh", {}, route="chitchat"),
+    ])
     try:
         participant = service.create_participant()
         question = _enter_food_questions(orchestrator, participant.id)
@@ -405,13 +876,18 @@ def test_formal_chitchat_is_routed_before_judge_and_limited():
         assert "回到这题" in third["reply_text"]
         assert third["current_question_id"] == question["current_question_id"]
         assert repo.get_answers(participant.id) == []
-        assert service._rubric_interpreter.calls == []
+        assert repo.get_voice_interpretations(participant.id) == []
+        assert len(service._rubric_interpreter.calls) == 3
     finally:
         conn.close()
 
 
-def test_unrelated_formal_speech_enters_chitchat_without_rubric_and_is_limited():
-    conn, service, orchestrator, repo = _conversation_stack([])
+def test_unrelated_formal_speech_can_be_classified_as_chitchat_by_judge():
+    conn, service, orchestrator, repo = _conversation_stack([
+        RubricInterpretation(None, 0.9, "闲聊。", "Chitchat.", "zh", {}, route="chitchat"),
+        RubricInterpretation(None, 0.9, "闲聊。", "Chitchat.", "zh", {}, route="chitchat"),
+        RubricInterpretation(None, 0.9, "闲聊。", "Chitchat.", "zh", {}, route="chitchat"),
+    ])
     try:
         participant = service.create_participant()
         question = _enter_food_questions(orchestrator, participant.id)
@@ -431,14 +907,19 @@ def test_unrelated_formal_speech_enters_chitchat_without_rubric_and_is_limited()
         assert "回到这题" in third["reply_text"]
         assert third["current_question_id"] == question["current_question_id"]
         assert repo.get_answers(participant.id) == []
-        assert service._rubric_interpreter.calls == []
+        assert repo.get_voice_interpretations(participant.id) == []
+        assert len(service._rubric_interpreter.calls) == 3
     finally:
         conn.close()
 
 
 def test_formal_chitchat_with_generic_yes_no_words_is_not_answer_attempt():
     conn, service, orchestrator, repo = _conversation_stack(
-        [RubricInterpretation("A", 0.93, "清楚选择 A。", "Clear A.", "zh", {})],
+        [
+            RubricInterpretation("A", 0.93, "清楚选择 A。", "Clear A.", "zh", {}),
+            RubricInterpretation(None, 0.9, "闲聊。", "Chitchat.", "zh", {}, route="chitchat"),
+            RubricInterpretation(None, 0.9, "闲聊。", "Chitchat.", "zh", {}, route="chitchat"),
+        ],
         rng_seed=7,
     )
     try:
@@ -455,7 +936,40 @@ def test_formal_chitchat_with_generic_yes_no_words_is_not_answer_attempt():
         assert first["formal_chitchat_count"] == 1
         assert second["formal_chitchat_count"] == 2
         assert len(repo.get_answers(participant.id)) == 1
-        assert len(service._rubric_interpreter.calls) == 1
+        assert len(repo.get_voice_interpretations(participant.id)) == 1
+        assert len(service._rubric_interpreter.calls) == 3
+    finally:
+        conn.close()
+
+
+@pytest.mark.parametrize(
+    "transcript",
+    [
+        "我觉得你挺有意思",
+        "我喜欢这个地方",
+        "你这个店到底是干嘛的？",
+        "这个问题让我有点烦",
+        "我现在不太想回答",
+        "刚才那个人很好笑",
+    ],
+)
+def test_substantive_non_answer_formal_speech_defaults_to_chitchat(transcript):
+    conn, service, orchestrator, repo = _conversation_stack([
+        RubricInterpretation(None, 0.9, "闲聊。", "Chitchat.", "zh", {}, route="chitchat"),
+    ])
+    try:
+        participant = service.create_participant()
+        question = _enter_food_questions(orchestrator, participant.id)
+
+        result = orchestrator.handle_turn(participant.id, transcript)
+
+        assert result["stage"] == "formal_question_1"
+        assert result["current_question_id"] == question["current_question_id"]
+        assert result["next_action"] == "repeat_current_question"
+        assert result["interpretation"] == {"route": "chitchat", "count": 1}
+        assert repo.get_answers(participant.id) == []
+        assert repo.get_voice_interpretations(participant.id) == []
+        assert service._rubric_interpreter.calls
     finally:
         conn.close()
 
@@ -465,8 +979,20 @@ def test_formal_chitchat_with_generic_yes_no_words_is_not_answer_attempt():
     [
         ("我选 B", 7, RubricInterpretation("B", 0.93, "清楚选择 B。", "Clear B.", "zh", {})),
         ("我通常不关门", 2, RubricInterpretation("B", 0.9, "清楚。", "Clear.", "zh", {})),
+        ("我觉得有", 7, RubricInterpretation("A", 0.9, "清楚。", "Clear.", "zh", {})),
+        ("应该没有吧", 7, RubricInterpretation("B", 0.9, "清楚。", "Clear.", "zh", {})),
+        ("算是吧", 7, RubricInterpretation("A", 0.9, "清楚。", "Clear.", "zh", {})),
+        ("yes", 7, RubricInterpretation("A", 0.9, "清楚。", "Clear.", "en", {})),
+        ("probably yes", 7, RubricInterpretation("A", 0.9, "清楚。", "Clear.", "en", {})),
+        ("no", 7, RubricInterpretation("B", 0.9, "清楚。", "Clear.", "en", {})),
+        ("probably not", 7, RubricInterpretation("B", 0.9, "清楚。", "Clear.", "en", {})),
+        ("我选 A 吧", 7, RubricInterpretation("A", 0.9, "清楚。", "Clear.", "zh", {})),
+        ("我倾向 B", 7, RubricInterpretation("B", 0.9, "清楚。", "Clear.", "zh", {})),
+        ("有", 7, RubricInterpretation("A", 0.4, "不清楚。", "Unclear.", "zh", {})),
+        ("是", 7, RubricInterpretation("A", 0.4, "不清楚。", "Unclear.", "zh", {})),
         ("都行", 7, RubricInterpretation("B", 0.4, "不清楚。", "Unclear.", "zh", {})),
         ("不知道", 7, RubricInterpretation("A", 0.4, "不清楚。", "Unclear.", "zh", {})),
+        ("可能吧", 7, RubricInterpretation("A", 0.4, "不清楚。", "Unclear.", "zh", {})),
     ],
 )
 def test_formal_answer_like_speech_still_uses_rubric(transcript, rng_seed, rubric):
@@ -479,6 +1005,26 @@ def test_formal_answer_like_speech_still_uses_rubric(transcript, rng_seed, rubri
 
         assert result["interpretation"] != {"route": "chitchat", "count": 1}
         assert service._rubric_interpreter.calls
+    finally:
+        conn.close()
+
+
+def test_question_related_formal_speech_still_uses_rubric_on_second_question():
+    conn, service, orchestrator, repo = _conversation_stack([
+        RubricInterpretation("A", 0.93, "清楚选择 A。", "Clear A.", "zh", {}),
+        RubricInterpretation("B", 0.93, "清楚选择 B。", "Clear B.", "zh", {}),
+    ])
+    try:
+        participant = service.create_participant()
+        _enter_food_questions(orchestrator, participant.id)
+
+        first = orchestrator.handle_turn(participant.id, "我选 A")
+        second = orchestrator.handle_turn(participant.id, "我没有向 ai 道过歉")
+
+        assert first["stage"] == "formal_question_2"
+        assert second["interpretation"] != {"route": "chitchat", "count": 1}
+        assert len(repo.get_answers(participant.id)) == 2
+        assert len(service._rubric_interpreter.calls) == 2
     finally:
         conn.close()
 
@@ -518,7 +1064,7 @@ def test_conversation_turn_api_returns_language_gate(monkeypatch, tmp_path):
     assert payload["assignment"] is None
 
 
-def _conversation_stack(results, *, rng_seed=7):
+def _conversation_stack(results, *, rng_seed=7, food_gate_results=None):
     conn = sqlite3.connect(":memory:")
     conn.row_factory = sqlite3.Row
     run_migrations(conn)
@@ -532,7 +1078,20 @@ def _conversation_stack(results, *, rng_seed=7):
         ScoringEngine(configs["scoring"], bank),
         rubric_interpreter=FakeRubricInterpreter(results),
     )
-    return conn, service, ConversationOrchestrator(service), repo
+    food_gate_interpreter = (
+        FakeFoodGateIntentInterpreter(food_gate_results)
+        if food_gate_results is not None
+        else None
+    )
+    return (
+        conn,
+        service,
+        ConversationOrchestrator(
+            service,
+            food_gate_interpreter=food_gate_interpreter,
+        ),
+        repo,
+    )
 
 
 def _enter_food_questions(

@@ -9,7 +9,7 @@ Exhibition Systems: The "Stranger" + Have Some "Ai"
 - 每个版本的技术选型必须有明确理由，不随意引入新依赖
 - 生产依赖与开发依赖分开管理
 - 不允许在未经确认的情况下替换或升级版本
-- 离线可运行是硬约束（部署环境可能无外网，Claude API 除外）
+- 离线可运行是硬约束（部署环境可能无外网，文本 LLM / 语音云 API 除外）
 
 ---
 
@@ -46,15 +46,16 @@ urllib.request HTTPS check against https://pypi.org/simple/pip/: 200
 
 | 项目 | 版本 | 用途 | 版本锁定 |
 | --- | --- | --- | --- |
-| anthropic | latest stable | Claude API 客户端（表达层、反思层、Have Some "Ai" 正式题 judge 与闲聊话术） | 锁定在 pyproject.toml |
-| httpx | >=0.27.0 | Anthropic 兼容网关、推理时代语音网关 HTTP 调用 | 锁定在 pyproject.toml |
+| anthropic | latest stable | Anthropic provider 客户端（表达层、反思层、Have Some "Ai" 正式题 judge 与闲聊话术的默认 / 回退 provider） | 锁定在 pyproject.toml |
+| httpx | >=0.27.0 | Anthropic 兼容网关、火山方舟 Ark Chat Completions、推理时代语音网关 HTTP 调用 | 锁定在 pyproject.toml |
 | sentence-transformers | deferred | 本地 Embedding 模型（The "Stranger" 语义记忆检索，尚未接入当前主项目） | 当前未声明在 pyproject.toml |
 
-**Claude 模型分配：**
+**文本 LLM provider 分配：**
 
 - 表达层（ExpressionEngine）→ `claude-sonnet-4-6`（语气细节、开放生成）
 - 反思层（ReflectionEngine）→ `claude-haiku-4-5-20251001`（批量压缩，成本控制）
-- Have Some "Ai"：正式 A/B/unclear judge 只处理 `answer_attempt`；chitchat 话术层只生成 `reply_text`，不决定流程或食物
+- Have Some "Ai"：`ClaudeClient` 是文本 LLM 唯一入口，`ENTITY_LLM_PROVIDER=anthropic|ark`；默认仍为 `anthropic`，Ark 默认 `doubao-seed-2-0-pro-260215` + Chat Completions + `ENTITY_LLM_ARK_THINKING=disabled`
+- Have Some "Ai"：Food Gate 歧义入口可由文本 LLM 分类为 `want_food / want_chat / no_food / unclear_speech`；正式 A/B/unclear judge 只处理 `answer_attempt`；chitchat 话术层只生成 `reply_text`，不决定食物；provider 可为 Anthropic 或 Ark
 
 **Embedding 模型：**
 
@@ -167,10 +168,10 @@ Have Some "Ai" 双屏模式中，`/` 控制页承担真实录音、ASR/TTS、状
 | --- | --- |
 | AIHubMix OpenAI-compatible file STT | Have Some "Ai" 语音转文字，默认模型 `whisper-large-v3`，走 `/audio/transcriptions` |
 | OpenAI-compatible TTS | 非豆包 provider 的店主回复 fallback，默认模型 `gpt-4o-mini-tts` |
-| 火山引擎豆包 ASR 2.0 + TTS/ICL 2.0 | Have Some "Ai" 后端 WebSocket 分离接入：ASR 使用 `bigmodel_async` 常驻 session，只消费 `definite=true` 分句；TTS 使用 V3 双向流式 `tts/bidirection`，声音复刻资源 `seed-icl-2.0`，固定艾苗音色 `S_ud9II0522`，输出 PCM 24k；正式 A/B/unclear 判题仍由 Claude rubric judge 执行，chitchat 可由 Claude 话术层生成 `reply_text` |
+| 火山引擎豆包 ASR 2.0 + TTS/ICL 2.0 | Have Some "Ai" 后端 WebSocket 分离接入：ASR 使用 `bigmodel_async` 常驻 session，只消费 `definite=true` 分句；TTS 使用 V3 双向流式 `tts/bidirection`，声音复刻资源 `seed-icl-2.0`，按 `response_language` 选择复刻音色（中文 `S_sd9II0522`，英文 `S_r98II0522`，fallback 中文），输出 PCM 24k；Food Gate 歧义入口、正式 A/B/unclear 判题和 chitchat 话术走配置的文本 LLM provider（Anthropic 或 Ark） |
 | sentence-transformers | Conscious Entity 语义记忆检索（Embedding），当前仍为 deferred，未安装为项目依赖 |
 
-Have Some "Ai" 的 AI 店主运行语境保存在 `backend/prompts/shopkeeper_runtime_context.md`，只作为 `ShopkeeperReplyService` 自由闲聊 system prompt 的附加上下文，不进入正式 A/B rubric、`ScoringEngine`、food assignment 或数据库写入决策。
+Have Some "Ai" 的 AI 店主运行语境保存在 `backend/prompts/shopkeeper_runtime_context.md`，只作为 `ShopkeeperReplyService` 自由闲聊 system prompt 的附加上下文，不进入 Food Gate 入口分类、正式 A/B rubric、`ScoringEngine`、food assignment 或数据库写入决策。
 
 Have Some "Ai" 豆包音频接口：
 
@@ -190,7 +191,7 @@ curl -s http://127.0.0.1:8010/health
 curl -s http://127.0.0.1:8010/api/v1/voice-config
 ```
 
-打开 `http://127.0.0.1:8010/`，新建观众后使用 Start Voice；确认 Food Gate TTS、`mic.muted_for_tts` / `mic.resumed_after_tts`、ASR partial/final、正式 answer_attempt 的 Claude judge、TTS PCM 播放和两道正式题后的食物分配。若 8010 没有监听，先不要诊断浏览器麦克风或 TTS。
+打开 `http://127.0.0.1:8010/`，新建观众后使用 Start Voice；确认 Food Gate TTS、`mic.muted_for_tts` / `mic.resumed_after_tts`、ASR partial/final、Food Gate 歧义入口分类、正式 answer_attempt 的 LLM judge、TTS PCM 播放和两道正式题后的食物分配。若 8010 没有监听，先不要诊断浏览器麦克风或 TTS。
 
 ---
 
@@ -208,17 +209,27 @@ pyproject.toml        ← 项目配置 + 依赖声明
 
 ```env
 # Official Anthropic mode
+# ENTITY_LLM_PROVIDER=anthropic
 # ANTHROPIC_API_KEY=your_key_here
 
 # Supplier / Anthropic-compatible mode
+# ENTITY_LLM_PROVIDER=anthropic
 # ANTHROPIC_AUTH_TOKEN=your_supplier_token_here
 # ANTHROPIC_BASE_URL=https://your-provider.example
 # ENTITY_LLM_MODEL=your_supplier_model_name
 
 # Supplier / non-standard full endpoint mode
+# ENTITY_LLM_PROVIDER=anthropic
 # ANTHROPIC_AUTH_TOKEN=your_supplier_token_here
 # ENTITY_LLM_MODEL=your_supplier_model_name
 # ENTITY_LLM_MESSAGES_ENDPOINT=https://your-provider.example/path/to/messages
+
+# Volcengine Ark / Doubao Chat Completions mode
+# ENTITY_LLM_PROVIDER=ark
+# ARK_API_KEY=your_ark_api_key_here
+# ARK_BASE_URL=https://ark.cn-beijing.volces.com/api/v3
+# ENTITY_LLM_MODEL=doubao-seed-2-0-pro-260215
+# ENTITY_LLM_ARK_THINKING=disabled
 
 # Optional: bypass system proxy
 # ENTITY_LLM_DISABLE_SYSTEM_PROXY=true
@@ -255,19 +266,21 @@ DOUBAO_ASR_BITS=16
 DOUBAO_ASR_CHANNELS=1
 DOUBAO_TTS_ENDPOINT=wss://openspeech.bytedance.com/api/v3/tts/bidirection
 DOUBAO_TTS_RESOURCE_ID=seed-icl-2.0
+DOUBAO_TTS_SPEAKER_ZH=S_sd9II0522
+DOUBAO_TTS_SPEAKER_EN=S_r98II0522
 DOUBAO_TTS_AUDIO_FORMAT=pcm
 DOUBAO_TTS_SAMPLE_RATE=24000
 DOUBAO_TTS_SPEECH_RATE=0
 DOUBAO_TTS_LOUDNESS_RATE=0
 ```
 
-### 开发环境假设
+### 开发 / 现场环境假设
 
-- macOS 或 Linux（Windows 未测试）
-- Python 3.11+ 已安装
-- 本机优先使用 python.org Framework Python 3.13.5；不要使用 Anaconda Python 创建 `.venv`
-- 网络可访问 Anthropic API
-- 无需 Docker 或容器化（v0.1 阶段）
+- macOS 本机开发已验证；不要使用 Anaconda Python 创建 `.venv`
+- Windows 拯救者主控部署见 `docs/windows_lenovo_deployment.md` 和 `scripts/setup_windows.ps1`
+- Python 3.11+ 已安装，Windows 推荐 Python 3.13 x64
+- 网络可访问配置的文本 LLM API（Anthropic 或 Ark）和语音 API（豆包或 AIHubMix）
+- 无需 Docker 或容器化
 
 ---
 
@@ -275,5 +288,5 @@ DOUBAO_TTS_LOUDNESS_RATE=0
 
 - 不允许在 Python 代码中硬编码 API Key
 - 不允许未经确认擅自替换已锁定的依赖版本
-- 不允许为 LLM 调用引入 LangChain 等框架（直接使用 Anthropic SDK）
+- 不允许为 LLM 调用引入 LangChain 等框架（直接使用 provider SDK 或 `httpx`）
 - 不允许把 v0.2 语音 / Embedding 依赖伪装成 v0.1 核心依赖；新增依赖必须记录在 `pyproject.toml` 和本文件

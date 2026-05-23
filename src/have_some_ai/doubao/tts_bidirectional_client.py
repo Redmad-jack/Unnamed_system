@@ -4,7 +4,7 @@ import asyncio
 import os
 import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 import websockets
@@ -31,7 +31,16 @@ from have_some_ai.doubao.tts_protocol import (
 
 _DEFAULT_ENDPOINT = "wss://openspeech.bytedance.com/api/v3/tts/bidirection"
 _DEFAULT_RESOURCE_ID = "seed-icl-2.0"
-_FIXED_SPEAKER = "S_ud9II0522"
+DOUBAO_TTS_DEFAULT_SPEAKER_ZH = "S_sd9II0522"
+DOUBAO_TTS_DEFAULT_SPEAKER_EN = "S_r98II0522"
+_DEFAULT_RESPONSE_LANGUAGE = "zh"
+
+
+def doubao_tts_speakers_from_env() -> dict[str, str]:
+    return {
+        "zh": _string_env("DOUBAO_TTS_SPEAKER_ZH", DOUBAO_TTS_DEFAULT_SPEAKER_ZH),
+        "en": _string_env("DOUBAO_TTS_SPEAKER_EN", DOUBAO_TTS_DEFAULT_SPEAKER_EN),
+    }
 
 
 @dataclass(frozen=True)
@@ -39,7 +48,7 @@ class DoubaoTTSConfig:
     endpoint: str = _DEFAULT_ENDPOINT
     resource_id: str = _DEFAULT_RESOURCE_ID
     api_key: str = ""
-    speaker: str = _FIXED_SPEAKER
+    speakers_by_language: dict[str, str] = field(default_factory=doubao_tts_speakers_from_env)
     audio_format: str = "pcm"
     sample_rate: int = 24000
     speech_rate: int = 0
@@ -53,7 +62,7 @@ class DoubaoTTSConfig:
             endpoint=os.getenv("DOUBAO_TTS_ENDPOINT", _DEFAULT_ENDPOINT),
             resource_id=os.getenv("DOUBAO_TTS_RESOURCE_ID", _DEFAULT_RESOURCE_ID),
             api_key=api_key,
-            speaker=_FIXED_SPEAKER,
+            speakers_by_language=doubao_tts_speakers_from_env(),
             audio_format=os.getenv("DOUBAO_TTS_AUDIO_FORMAT", "pcm"),
             sample_rate=_int_env("DOUBAO_TTS_SAMPLE_RATE", 24000),
             speech_rate=_int_env("DOUBAO_TTS_SPEECH_RATE", 0),
@@ -67,6 +76,13 @@ class DoubaoTTSConfig:
 
     def has_credentials(self) -> bool:
         return bool(self.api_key)
+
+    def speaker_for_language(self, response_language: str | None) -> str:
+        language = "en" if response_language == "en" else _DEFAULT_RESPONSE_LANGUAGE
+        speaker = self.speakers_by_language.get(language)
+        if speaker:
+            return speaker
+        return self.speakers_by_language.get(_DEFAULT_RESPONSE_LANGUAGE, DOUBAO_TTS_DEFAULT_SPEAKER_ZH)
 
     def headers(self, connect_id: str) -> dict[str, str]:
         return {
@@ -116,10 +132,18 @@ class DoubaoTTSBidirectionalClient:
     def headers(self) -> dict[str, str]:
         return self.config.headers(self.connect_id)
 
-    async def synthesize(self, text: str) -> AsyncIterator[TTSEvent]:
+    async def synthesize(
+        self,
+        text: str,
+        *,
+        response_language: str | None = None,
+        speaker: str | None = None,
+    ) -> AsyncIterator[TTSEvent]:
         clean_text = text.strip()
         if not clean_text:
             return
+        selected_speaker = speaker.strip() if speaker and speaker.strip() else None
+        selected_speaker = selected_speaker or self.config.speaker_for_language(response_language)
         async with self._session_lock:
             await self.connect()
             session_id = str(uuid.uuid4())
@@ -127,7 +151,11 @@ class DoubaoTTSBidirectionalClient:
             self._session_started = False
             self._session_finishing = False
             try:
-                await self._send(TTS_START_SESSION, self.start_session_payload(), session_id=session_id)
+                await self._send(
+                    TTS_START_SESSION,
+                    self.start_session_payload(speaker=selected_speaker),
+                    session_id=session_id,
+                )
                 started = await self._wait_for(
                     {TTS_SESSION_STARTED},
                     timeout_seconds=8.0,
@@ -156,13 +184,20 @@ class DoubaoTTSBidirectionalClient:
                 self._session_started = False
                 self._session_finishing = False
 
-    def start_session_payload(self) -> dict[str, Any]:
+    def start_session_payload(
+        self,
+        *,
+        response_language: str | None = None,
+        speaker: str | None = None,
+    ) -> dict[str, Any]:
+        selected_speaker = speaker.strip() if speaker and speaker.strip() else None
+        selected_speaker = selected_speaker or self.config.speaker_for_language(response_language)
         return {
             "event": TTS_START_SESSION,
             "namespace": "BidirectionalTTS",
             "user": {"uid": self.uid},
             "req_params": {
-                "speaker": _FIXED_SPEAKER,
+                "speaker": selected_speaker,
                 "audio_params": {
                     "format": self.config.audio_format,
                     "sample_rate": self.config.sample_rate,
@@ -251,6 +286,13 @@ def _int_env(name: str, default: int) -> int:
         return int(value)
     except ValueError:
         return default
+
+
+def _string_env(name: str, default: str) -> str:
+    value = os.getenv(name)
+    if value is None or not value.strip():
+        return default
+    return value.strip()
 
 
 def _websocket_response_header(ws: Any, name: str) -> str | None:

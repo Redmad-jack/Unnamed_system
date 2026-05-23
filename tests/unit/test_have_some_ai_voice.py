@@ -37,7 +37,7 @@ from have_some_ai.doubao.tts_protocol import (
 )
 from have_some_ai.doubao.tts_bidirectional_client import DoubaoTTSBidirectionalClient
 from have_some_ai.questionnaire import QuestionBank
-from have_some_ai.voice import ClaudeRubricInterpreter
+from have_some_ai.voice import ClaudeFoodGateIntentInterpreter, ClaudeRubricInterpreter
 
 
 class FakeLLM:
@@ -63,6 +63,7 @@ def test_claude_rubric_judge_accepts_direct_a_choice():
 
     assert result.option_id == "A"
     assert result.confidence == 0.95
+    assert result.route == "answer"
     assert result.raw_json["label"] == "A"
 
 
@@ -79,6 +80,7 @@ def test_claude_rubric_judge_accepts_direct_b_choice():
 
     assert result.option_id == "B"
     assert result.confidence == 0.93
+    assert result.route == "answer"
     assert result.raw_json["label"] == "B"
 
 
@@ -111,8 +113,65 @@ def test_claude_rubric_judge_keeps_c_and_freeform_unclear():
     )
 
     assert result.option_id is None
+    assert result.route == "answer"
     assert result.raw_json["label"] == "unclear"
     assert result.raw_json["status"] == "unclear"
+
+
+def test_claude_rubric_judge_can_return_chitchat_route():
+    llm = FakeLLM(
+        '{"route":"chitchat","label":null,"status":"chitchat","confidence":0.87,'
+        '"rationale":"The visitor is commenting on the machine, not answering.",'
+        '"detected_language":"zh"}'
+    )
+    result = ClaudeRubricInterpreter(llm).interpret(
+        question=_question(),
+        transcript="旁边那个机器声音有点怪",
+        detected_language="zh",
+    )
+
+    assert result.route == "chitchat"
+    assert result.option_id is None
+    assert result.confidence == 0.87
+    assert result.raw_json["route"] == "chitchat"
+    assert result.raw_json["status"] == "chitchat"
+    assert result.raw_json["label"] is None
+
+
+def test_claude_rubric_judge_normalizes_inconsistent_answer_chitchat_status():
+    llm = FakeLLM(
+        '{"route":"answer","label":null,"status":"chitchat","confidence":0.82,'
+        '"rationale":"The visitor is trying to answer but did not choose.",'
+        '"detected_language":"zh"}'
+    )
+    result = ClaudeRubricInterpreter(llm).interpret(
+        question=_question(),
+        transcript="都可以吧",
+        detected_language="zh",
+    )
+
+    assert result.route == "answer"
+    assert result.option_id is None
+    assert result.raw_json["label"] == "unclear"
+    assert result.raw_json["status"] == "unclear"
+
+
+def test_claude_rubric_judge_label_wins_over_inconsistent_chitchat_status():
+    llm = FakeLLM(
+        '{"route":"chitchat","label":"A","status":"chitchat","confidence":0.91,'
+        '"rationale":"The visitor clearly chose A despite the bad status.",'
+        '"detected_language":"zh"}'
+    )
+    result = ClaudeRubricInterpreter(llm).interpret(
+        question=_question(),
+        transcript="A",
+        detected_language="zh",
+    )
+
+    assert result.route == "answer"
+    assert result.option_id == "A"
+    assert result.raw_json["label"] == "A"
+    assert result.raw_json["status"] == "accepted"
 
 
 def test_claude_prompt_forbids_flow_and_food_decisions():
@@ -125,12 +184,61 @@ def test_claude_prompt_forbids_flow_and_food_decisions():
     assert "Do not chat" in system
     assert "score, or assign food" in system
     assert "FormalTurnRouter" in system
-    assert '"label":"A"' in system
+    assert '"route":"answer","label":"A"' in system
+    assert '"route":"chitchat"' in system
     assert "Shopkeeper runtime context" not in system
 
     prompt_payload = json.loads(llm.calls[0]["messages"][0]["content"])
     assert set(prompt_payload["visible_choices"]) == {"A", "B"}
     assert "C" not in prompt_payload["visible_choices"]
+
+
+def test_claude_food_gate_interpreter_returns_want_food_for_soft_eating_intent():
+    llm = FakeLLM(
+        '{"route":"want_food","confidence":0.91,'
+        '"rationale":"The visitor said they want to eat a little.",'
+        '"detected_language":"zh"}'
+    )
+
+    result = ClaudeFoodGateIntentInterpreter(llm).interpret_food_gate(
+        food_gate_prompt="想吃点什么，还是说说话？",
+        transcript="吃点吧",
+        response_language="zh",
+        local_fallback_route="want_chat",
+    )
+
+    assert result is not None
+    assert result.route == "want_food"
+    assert result.confidence == 0.91
+    assert result.raw_json["route"] == "want_food"
+    prompt_payload = json.loads(llm.calls[0]["messages"][0]["content"])
+    assert prompt_payload["visitor_transcript"] == "吃点吧"
+    assert prompt_payload["local_fallback_route"] == "want_chat"
+    assert "Shopkeeper runtime context" not in llm.calls[0]["system"]
+    assert "Do not map to A/B" in llm.calls[0]["system"]
+
+
+def test_claude_food_gate_interpreter_returns_none_for_bad_or_low_confidence_output():
+    bad_json = ClaudeFoodGateIntentInterpreter(FakeLLM("not json")).interpret_food_gate(
+        food_gate_prompt="想吃点什么，还是说说话？",
+        transcript="吃点吧",
+        response_language="zh",
+        local_fallback_route="want_chat",
+    )
+    low_confidence = ClaudeFoodGateIntentInterpreter(
+        FakeLLM(
+            '{"route":"want_food","confidence":0.2,'
+            '"rationale":"Low confidence.","detected_language":"zh"}'
+        )
+    ).interpret_food_gate(
+        food_gate_prompt="想吃点什么，还是说说话？",
+        transcript="吃点吧",
+        response_language="zh",
+        local_fallback_route="want_chat",
+    )
+
+    assert bad_json is None
+    assert low_confidence is None
 
 
 def test_claude_rubric_judge_repairs_malformed_json():
@@ -253,9 +361,11 @@ def test_tts_start_connection_frame_shape():
     assert frame[12:12 + payload_size] == b"{}"
 
 
-def test_tts_start_session_payload_fixes_speaker_and_resource_id():
+def test_tts_start_session_payload_selects_language_speaker_and_resource_id():
     client = DoubaoTTSBidirectionalClient(DoubaoTTSConfig(api_key="tts-key"))
-    payload = client.start_session_payload()
+    payload = client.start_session_payload(response_language="zh")
+    english_payload = client.start_session_payload(response_language="en")
+    fallback_payload = client.start_session_payload(response_language=None)
     frame = encode_event_payload(TTS_START_SESSION, payload, session_id="session-long-id")
 
     offset = 8
@@ -263,10 +373,23 @@ def test_tts_start_session_payload_fixes_speaker_and_resource_id():
     offset += 4
     assert session_len == len("session-long-id".encode("utf-8"))
     assert DoubaoTTSConfig(api_key="tts-key").resource_id == "seed-icl-2.0"
-    assert payload["req_params"]["speaker"] == "S_ud9II0522"
+    assert payload["req_params"]["speaker"] == "S_sd9II0522"
+    assert english_payload["req_params"]["speaker"] == "S_r98II0522"
+    assert fallback_payload["req_params"]["speaker"] == "S_sd9II0522"
     assert payload["req_params"]["audio_params"]["format"] == "pcm"
     assert payload["req_params"]["audio_params"]["sample_rate"] == 24000
     assert payload["req_params"]["text"] == ""
+
+
+def test_tts_config_reads_language_speaker_env(monkeypatch):
+    monkeypatch.setenv("DOUBAO_TTS_SPEAKER_ZH", "S_custom_zh")
+    monkeypatch.setenv("DOUBAO_TTS_SPEAKER_EN", "S_custom_en")
+
+    config = DoubaoTTSConfig.from_env()
+
+    assert config.speaker_for_language("zh") == "S_custom_zh"
+    assert config.speaker_for_language("en") == "S_custom_en"
+    assert config.speaker_for_language("fr") == "S_custom_zh"
 
 
 def test_tts_headers_use_new_console_api_key_auth():
