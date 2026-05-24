@@ -192,8 +192,8 @@ def test_sentence_buffer_handles_english_newlines_quotes_and_ellipsis():
 
 def test_generate_uses_streaming_buffer_without_exposing_chunks():
     engine, client = _build_engine(
-        ClaudeCompletion(text="第一句完整。第二句也完整。", stop_reason="end_turn"),
-        stream_chunks=["第一句", "完整。第二句", "也完整。"],
+        ClaudeCompletion(text="第一句话已经足够完整。第二句话也有足够内容。", stop_reason="end_turn"),
+        stream_chunks=["第一句话已经", "足够完整。第二句话", "也有足够内容。"],
     )
     recorder = HarnessTraceRecorder(session_id="test", source="dialog")
 
@@ -208,7 +208,7 @@ def test_generate_uses_streaming_buffer_without_exposing_chunks():
 
     assert client.calls[0]["streaming"] is True
     assert output.response_plan is not None
-    assert output.response_plan.second_unit == "第一句完整。第二句也完整。"
+    assert output.response_plan.second_unit == "第一句话已经足够完整。第二句话也有足够内容。"
     assert "第一句完整" not in output.response_plan.to_dict().get("first_unit", "")
     assert generation["metadata"]["streaming_buffered"] is True
     assert generation["metadata"]["streamed_sentence_count"] == 2
@@ -217,8 +217,8 @@ def test_generate_uses_streaming_buffer_without_exposing_chunks():
 
 def test_second_delta_emits_complete_sentence_before_final():
     engine, _ = _build_engine(
-        ClaudeCompletion(text="第一句完整。第二句也完整。", stop_reason="end_turn"),
-        stream_chunks=["第一句", "完整。第二句", "也完整。"],
+        ClaudeCompletion(text="第一句话已经足够完整。第二句话也有足够内容。", stop_reason="end_turn"),
+        stream_chunks=["第一句话已经", "足够完整。第二句话", "也有足够内容。"],
     )
     deltas = []
 
@@ -229,16 +229,56 @@ def test_second_delta_emits_complete_sentence_before_final():
         second_delta_callback=deltas.append,
     )
 
-    assert [delta["text"] for delta in deltas] == ["第一句完整。", "第二句也完整。"]
+    assert [delta["text"] for delta in deltas] == ["第一句话已经足够完整。", "第二句话也有足够内容。"]
     assert [delta["index"] for delta in deltas] == [0, 1]
     assert output.response_plan is not None
-    assert output.response_plan.second_unit == "第一句完整。第二句也完整。"
+    assert output.response_plan.second_unit == "第一句话已经足够完整。第二句话也有足够内容。"
+
+
+def test_second_delta_coalesces_short_chinese_sentences_before_emit():
+    engine, _ = _build_engine(
+        ClaudeCompletion(text="我知道。只是还不太完整。", stop_reason="end_turn"),
+        stream_chunks=["我知道。只是", "还不太完整。"],
+    )
+    deltas = []
+
+    output = engine.generate(
+        policy=PolicyDecision(action=PolicyAction.RESPOND_OPENLY),
+        state=EntityState(),
+        short_term=ShortTermMemory(max_turns=10),
+        second_delta_callback=deltas.append,
+    )
+
+    assert [delta["text"] for delta in deltas] == ["我知道。只是还不太完整。"]
+    assert [delta["index"] for delta in deltas] == [0]
+    assert output.response_plan is not None
+    assert output.response_plan.second_unit == "我知道。只是还不太完整。"
+
+
+def test_second_delta_coalesces_short_english_sentences_before_emit():
+    engine, _ = _build_engine(
+        ClaudeCompletion(text="I remember. It is not complete yet.", stop_reason="end_turn"),
+        stream_chunks=["I remember. It is", " not complete yet."],
+    )
+    deltas = []
+
+    output = engine.generate(
+        policy=PolicyDecision(action=PolicyAction.RESPOND_OPENLY),
+        state=EntityState(),
+        short_term=ShortTermMemory(max_turns=10),
+        second_delta_callback=deltas.append,
+    )
+
+    assert [delta["text"] for delta in deltas] == ["I remember. It is not complete yet."]
+    assert [delta["index"] for delta in deltas] == [0]
+    assert output.response_plan is not None
+    assert output.response_plan.second_unit == "I remember. It is not complete yet."
 
 
 def test_second_delta_does_not_emit_half_sentence_tail():
     engine, _ = _build_engine(
-        ClaudeCompletion(text="第一句完整。第二句没结束", stop_reason="end_turn"),
-        stream_chunks=["第一句完整。第二句没结束"],
+        ClaudeCompletion(text="第一句话已经足够完整。第二句没结束", stop_reason="end_turn"),
+        stream_chunks=["第一句话已经足够完整。第二句没结束"],
     )
     deltas = []
 
@@ -249,9 +289,9 @@ def test_second_delta_does_not_emit_half_sentence_tail():
         second_delta_callback=deltas.append,
     )
 
-    assert [delta["text"] for delta in deltas] == ["第一句完整。"]
+    assert [delta["text"] for delta in deltas] == ["第一句话已经足够完整。"]
     assert output.response_plan is not None
-    assert output.response_plan.second_unit == "第一句完整。第二句没结束"
+    assert output.response_plan.second_unit == "第一句话已经足够完整。第二句没结束"
 
 
 def test_second_delta_applies_constitution_before_emit():
@@ -272,6 +312,27 @@ def test_second_delta_applies_constitution_before_emit():
     assert [delta["text"] for delta in deltas] == ["There is activity here."]
     assert output.response_plan is not None
     assert output.response_plan.second_unit == "There is activity here."
+
+
+def test_second_delta_force_emit_keeps_pending_short_sentence():
+    engine, _ = _build_engine(
+        ClaudeCompletion(text="I know. I am conscious.", stop_reason="end_turn"),
+        constitution=_FilteringConstitution(),
+        stream_chunks=["I know. I am conscious."],
+    )
+    deltas = []
+
+    output = engine.generate(
+        policy=PolicyDecision(action=PolicyAction.RESPOND_OPENLY),
+        state=EntityState(),
+        short_term=ShortTermMemory(max_turns=10),
+        second_delta_callback=deltas.append,
+    )
+
+    assert [delta["text"] for delta in deltas] == ["I know. There is activity here."]
+    assert [delta["index"] for delta in deltas] == [0]
+    assert output.response_plan is not None
+    assert output.response_plan.second_unit == "I know. There is activity here."
 
 
 def test_second_delta_withholds_forbidden_claim_and_stops():
@@ -323,8 +384,8 @@ def test_second_delta_repairs_capability_denial_after_affirming_first_unit():
 
 def test_second_delta_index_counts_only_emitted_deltas():
     engine, _ = _build_engine(
-        ClaudeCompletion(text="嗯。继续说。", stop_reason="end_turn"),
-        stream_chunks=["嗯。继续说。"],
+        ClaudeCompletion(text="嗯。这里还有一件更清楚的事。", stop_reason="end_turn"),
+        stream_chunks=["嗯。这里还有一件更清楚的事。"],
     )
     deltas = []
 
@@ -336,10 +397,30 @@ def test_second_delta_index_counts_only_emitted_deltas():
         second_delta_callback=deltas.append,
     )
 
-    assert [delta["text"] for delta in deltas] == ["继续说。"]
+    assert [delta["text"] for delta in deltas] == ["这里还有一件更清楚的事。"]
     assert [delta["index"] for delta in deltas] == [0]
     assert output.response_plan is not None
-    assert output.response_plan.second_unit == "继续说。"
+    assert output.response_plan.second_unit == "这里还有一件更清楚的事。"
+
+
+def test_second_delta_streaming_stops_after_three_sentences():
+    engine, _ = _build_engine(
+        ClaudeCompletion(text="第一句。第二句。第三句。第四句。", stop_reason="end_turn"),
+        stream_chunks=["第一句。第二句。第三句。第四句。"],
+    )
+    deltas = []
+
+    output = engine.generate(
+        policy=PolicyDecision(action=PolicyAction.RESPOND_OPENLY),
+        state=EntityState(),
+        short_term=ShortTermMemory(max_turns=10),
+        second_delta_callback=deltas.append,
+    )
+
+    assert [delta["text"] for delta in deltas] == ["第一句。第二句。第三句。"]
+    assert [delta["index"] for delta in deltas] == [0]
+    assert output.response_plan is not None
+    assert output.response_plan.second_unit == "第一句。第二句。第三句。"
 
 
 def test_final_response_plan_still_uses_full_postprocess_chain():
@@ -360,6 +441,38 @@ def test_final_response_plan_still_uses_full_postprocess_chain():
     assert deltas == []
     assert output.response_plan is not None
     assert output.response_plan.second_unit == "第二句没有结束"
+
+
+def test_generate_caps_second_unit_to_three_complete_sentences():
+    engine, _ = _build_engine(
+        ClaudeCompletion(text="第一句。第二句。第三句。第四句。第五句。", stop_reason="end_turn"),
+        stream_chunks=["第一句。第二句。第三句。第四句。第五句。"],
+    )
+
+    output = engine.generate(
+        policy=PolicyDecision(action=PolicyAction.RESPOND_OPENLY),
+        state=EntityState(),
+        short_term=ShortTermMemory(max_turns=10),
+    )
+
+    assert output.response_plan is not None
+    assert output.response_plan.second_unit == "第一句。第二句。第三句。"
+
+
+def test_generate_does_not_drop_incomplete_tail_within_sentence_cap():
+    engine, _ = _build_engine(
+        ClaudeCompletion(text="第一句。第二句没有结束", stop_reason="end_turn"),
+        stream_chunks=["第一句。第二句没有结束"],
+    )
+
+    output = engine.generate(
+        policy=PolicyDecision(action=PolicyAction.RESPOND_OPENLY),
+        state=EntityState(),
+        short_term=ShortTermMemory(max_turns=10),
+    )
+
+    assert output.response_plan is not None
+    assert output.response_plan.second_unit == "第一句。第二句没有结束"
 
 
 def test_generate_trims_truncated_output_to_last_complete_sentence():

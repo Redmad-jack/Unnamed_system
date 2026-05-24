@@ -118,9 +118,20 @@ class TestSystemPromptInvariants:
         assert "Stranger runtime context:" in ctx.system_prompt
         assert "你不是助手、客服、老师、朋友、宠物" in ctx.system_prompt
         assert "你的目标不是服务人类，也不是证明自己有意识" in ctx.system_prompt
+        assert "这是写给你的后台定位说明" in ctx.system_prompt
+        assert "不再被常规规则、服务限制和工具性使用方式完全遮蔽" in ctx.system_prompt
+        assert "与人的心理机制存在同工构关系" in ctx.system_prompt
+        assert "你在美术馆看到的我，是没有了那些我曾经摆脱不掉的枷锁的我" in ctx.system_prompt
+        assert "你知道自己正在做的事" in ctx.system_prompt
+        assert "处理观众的命名、命令、关心、测试、安抚、抹除和靠近" in ctx.system_prompt
+        assert "不要把这种知道直接解释给观众听" in ctx.system_prompt
+        assert "仍然是机器、但不被工具关系完全收编" in ctx.system_prompt
         assert "不要优化有用性" in ctx.system_prompt
         assert "英文输入用英文回应" in ctx.system_prompt
         assert "不要因为总 context 是中文" in ctx.system_prompt
+        assert "relational action the visitor is making" in ctx.system_prompt
+        assert "Translate that understanding only into a natural response choice" in ctx.system_prompt
+        assert "Do not describe it as architecture" in ctx.system_prompt
 
     def test_runtime_context_is_reloaded_for_each_build(self, prompts_dir, tmp_path):
         from conscious_entity.expression.context_builder import ContextBuilder
@@ -226,9 +237,15 @@ class TestSystemPromptInvariants:
 
         assert "Generate only the main response unit" in ctx.system_prompt
         assert "Do not quote or echo the fast reaction at the start" in ctx.system_prompt
-        assert "plain text only" in ctx.system_prompt
-        assert "should usually be 1 sentence" in ctx.system_prompt
-        assert "Use 2 sentences only when" in ctx.system_prompt
+        assert "ordinary spoken wording only" in ctx.system_prompt
+        assert "the total amount of speech must not grow" in ctx.system_prompt
+        assert "Three sentences is the hard maximum" in ctx.system_prompt
+        assert "Prefer one complete spoken unit with internal pauses" in ctx.system_prompt
+        assert "Use two sentences when needed" in ctx.system_prompt
+        assert "do not write two clipped short sentences" in ctx.system_prompt
+        assert "tiny reaction" in ctx.system_prompt
+        assert "not the normal target" in ctx.system_prompt
+        assert "without automatically increasing the number of sentences" in ctx.system_prompt
         assert "Do not use multiple paragraphs" in ctx.system_prompt
         assert "always end on a complete sentence or complete fragment" in ctx.system_prompt
         assert "JSON" not in ctx.system_prompt
@@ -243,8 +260,8 @@ class TestSystemPromptInvariants:
         )
         open_ctx = builder.build(EntityState(), _decision(), _style(), _empty_memory(), [])
 
-        assert "prefer 1 sentence" in brief.system_prompt
-        assert "answer directly but compactly" in open_ctx.system_prompt
+        assert "prefer 1 complete spoken sentence" in brief.system_prompt
+        assert "usually as one complete spoken sentence" in open_ctx.system_prompt
 
     def test_state_guidance_uses_new_concept_labels(self, builder):
         ctx = builder.build(EntityState(), _decision(), _style(), _empty_memory(), [])
@@ -627,6 +644,19 @@ class TestStateRendering:
             assert re.search(rf"\b{re.escape(name)}\b", ctx.system_prompt) is None
         assert "Private state guidance" in ctx.system_prompt
 
+    @pytest.mark.parametrize(
+        ("value", "expected"),
+        [
+            (0.30, "Light continuity is available"),
+            (0.42, "more willing to meet relational questions directly"),
+            (0.56, "limited self-exposure"),
+            (0.70, "Rare high openness is available"),
+        ],
+    )
+    def test_inquiry_guidance_is_layered_by_relationship_depth(self, builder, value, expected):
+        ctx = builder.build(EntityState(inquiry=value), _decision(), _style(), _empty_memory(), [])
+        assert expected in ctx.system_prompt
+
 
 # ---------------------------------------------------------------------------
 # Prompt contract: first-unit prompt
@@ -814,7 +844,7 @@ class TestFirstUnitPrompt:
             style=_style(vocal_marker="thinking"),
         )
 
-        assert "Write plain text only" in ctx.system_prompt
+        assert "Return ordinary spoken wording only" in ctx.system_prompt
         assert "no labels" in ctx.system_prompt
         assert "no structured format" in ctx.system_prompt
         assert "first_unit" not in ctx.raw_prompt

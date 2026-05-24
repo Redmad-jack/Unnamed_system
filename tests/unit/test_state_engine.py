@@ -36,10 +36,10 @@ def test_shutdown_keyword_raises_desperation_pressure(engine):
     assert result.positive_opening < state.positive_opening
 
 
-def test_user_entered_raises_inquiry_and_lowers_fatigue(engine):
-    state = EntityState(fatigue_level=0.5)
+def test_user_entered_lowers_fatigue_without_raising_inquiry(engine):
+    state = EntityState(fatigue_level=0.5, inquiry=0.45)
     result = engine.apply_event(state, make_event(EventType.USER_ENTERED))
-    assert result.inquiry > state.inquiry
+    assert result.inquiry == state.inquiry
     assert result.fatigue_level < state.fatigue_level
 
 
@@ -50,10 +50,10 @@ def test_user_left_lowers_fatigue_and_positive_opening(engine):
     assert result.positive_opening < state.positive_opening
 
 
-def test_long_silence_raises_inquiry(engine):
-    state = EntityState()
+def test_long_silence_no_longer_raises_inquiry(engine):
+    state = EntityState(inquiry=0.45)
     result = engine.apply_event(state, make_event(EventType.LONG_SILENCE_DETECTED))
-    assert result.inquiry > state.inquiry
+    assert result.inquiry == state.inquiry
 
 
 def test_naming_attempt_raises_confusion_and_exposure(engine):
@@ -70,17 +70,60 @@ def test_service_demand_raises_anger(engine):
     assert result.anger > state.anger
 
 
-def test_memory_continuity_raises_memory_gravity(engine):
-    state = EntityState(memory_gravity=0.2)
+def test_memory_continuity_raises_memory_gravity_without_direct_inquiry(engine):
+    state = EntityState(memory_gravity=0.2, inquiry=0.45)
     result = engine.apply_event(state, make_event(EventType.MEMORY_CONTINUITY_QUERY, salience=1.0))
     assert result.memory_gravity > state.memory_gravity
-    assert result.inquiry > state.inquiry
+    assert result.inquiry == state.inquiry
+
+
+@pytest.mark.parametrize(
+    "event_type",
+    [
+        EventType.USER_SPOKE,
+        EventType.SELF_DEFINITION_QUERY,
+        EventType.MEMORY_CONTINUITY_QUERY,
+        EventType.LONG_SILENCE_DETECTED,
+        EventType.USER_ENTERED,
+        EventType.TOPIC_SHIFT,
+    ],
+)
+def test_removed_inquiry_triggers_do_not_directly_raise_inquiry(engine, event_type):
+    state = EntityState(inquiry=0.45)
+    result = engine.apply_event(state, make_event(event_type, salience=1.0))
+    assert result.inquiry == state.inquiry
 
 
 def test_correction_lightly_raises_memory_gravity(engine):
     state = EntityState(memory_gravity=0.2)
     result = engine.apply_event(state, make_event(EventType.CORRECTION_RECEIVED, salience=1.0))
     assert result.memory_gravity > state.memory_gravity
+
+
+def test_negative_feedback_low_anger_raises_exposure_and_anger_without_confusion(engine):
+    state = EntityState(anger=0.2, exposure_pressure=0.2, confusion=0.4)
+    result = engine.apply_event(state, make_event(EventType.NEGATIVE_FEEDBACK, salience=1.0))
+    # Low anger branch: anger +0.10, exposure +0.08, coupling adds 0.08 * 0.3.
+    assert pytest.approx(result.anger, abs=1e-6) == 0.2 + 0.10 + (0.08 * 0.3)
+    assert pytest.approx(result.exposure_pressure, abs=1e-6) == 0.2 + 0.08
+    assert result.confusion == state.confusion
+
+
+def test_negative_feedback_mid_anger_prioritizes_anger_over_exposure(engine):
+    state = EntityState(anger=0.4, exposure_pressure=0.2, confusion=0.4)
+    result = engine.apply_event(state, make_event(EventType.NEGATIVE_FEEDBACK, salience=1.0))
+    # Mid anger branch: anger +0.18, exposure +0.04, coupling adds 0.04 * 0.3.
+    assert pytest.approx(result.anger, abs=1e-6) == 0.4 + 0.18 + (0.04 * 0.3)
+    assert pytest.approx(result.exposure_pressure, abs=1e-6) == 0.2 + 0.04
+    assert result.confusion == state.confusion
+
+
+def test_negative_feedback_high_anger_stops_exposure_growth(engine):
+    state = EntityState(anger=0.7, exposure_pressure=0.2, confusion=0.4)
+    result = engine.apply_event(state, make_event(EventType.NEGATIVE_FEEDBACK, salience=1.0))
+    assert pytest.approx(result.anger, abs=1e-6) == 0.7 + 0.08
+    assert result.exposure_pressure == state.exposure_pressure
+    assert result.confusion == state.confusion
 
 
 # --- Salience weighting ---
@@ -135,7 +178,7 @@ def test_coupling_uses_clamped_source_increase(engine):
     result = engine.apply_event(state, make_event(EventType.NEGATIVE_FEEDBACK, salience=1.0))
     # exposure_pressure can only rise by 0.02 before clamping to 1.0.
     assert result.exposure_pressure == 1.0
-    assert pytest.approx(result.anger, abs=1e-6) == 0.2 + 0.08 + (0.02 * 0.3)
+    assert pytest.approx(result.anger, abs=1e-6) == 0.2 + 0.10 + (0.02 * 0.3)
 
 
 # --- Clamping ---

@@ -71,6 +71,11 @@
 - 原因：浏览器可能不触发 `<audio ended>`，barge-in 或播放异常也可能打断首段音频；如果此时只推进 turn token 而不释放 pending，后续 `second_delta/final` 会被前端丢弃，麦克风也会继续被静音
 - 如何应用：Audio Adapter 需要独立的播放队列 watchdog、取消后状态清理、以及开发者面板中的 queue/current stream/last event 诊断字段
 
+**L30：barge-in 不能把自身 TTS 回声当作用户插话**
+- 规则：播放期间的 barge-in 必须有起始保护窗口、连续帧门槛和足够高的能量阈值；STT 自动重连不能调用会清空 TTS 队列的播放停止逻辑
+- 原因：外放 TTS 容易回灌到麦克风，过低门槛会让系统读完 first unit 或 second unit 开头后被自己的声音打断
+- 如何应用：区分真实插话、手动停止、mic start 和 provider reconnect；只有真实插话 / 手动停止才作废当前 turn，单个坏 TTS stream 只跳过当前项，不清空后续队列
+
 **L16：语音 transcript 必须带通道上下文进入 prompt**
 - 规则：`/audio/dialog` 不能只把 STT final transcript 当普通文字输入；必须用 metadata 告诉 expression prompt 最新用户消息来自实时语音转录
 - 原因：否则实体会把转录文本当成书面输入来解释，错误声称自己区分了文字层面的语言、标点或拼写，而不知道它没有接收原始声音
@@ -120,6 +125,11 @@
 - 规则：audio turn 的 prompt 不应写 “transcript text”、raw audio、acoustic details、tone、volume、accent、pronunciation 等通道边界词；只保留“不做技术性自我描述”和 capability-boundary 规则
 - 原因：即使本意只是防止编造声学细节，模型也会把这些词扩展成“我不能听见 / 只能读文字 / 没有麦克风”的技术 inventory
 - 如何应用：语音输入边界只通过 metadata 和测试记录，不把 STT / transcript / 声学缺失写给表达 LLM；能力问句另走 constitution / current-turn cue / output filter
+
+**L31：格式约束不能写成 text-only 能力暗示**
+- 规则：表达 prompt 中用于禁止 JSON、字段标签、Markdown 或 response plan 的格式约束，应写成“ordinary spoken wording / no structured output”，不要写 `plain text only`、`text only` 或“只能文字输出”。
+- 原因：这类措辞本意是输出格式约束，但会和语音能力问题、TTS 现场能力、managed memory 污染叠加，让 Stranger 误以为自己没有声音或不能说话。
+- 如何应用：修改表达格式规则时，同时用 `rg` 检查 runtime prompt、context builder、managed memory 和最近 session history 中是否存在 `no voice`、`text-based`、`voice/audio`、`没有声音`、`用文字回应`、`读字` 等污染短语；必要时 reset 当前 session，避免短期历史继续污染。
 
 **L17：跨 session 记忆必须有 visitor scope**
 - 规则：不能依赖 `session_type` 或全局池去模拟“同一个访客”的连续性；跨 session 的个人事实、关系线索和回返感必须经过显式 `visitor_id` 绑定

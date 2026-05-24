@@ -142,7 +142,7 @@ def _assert_response_plan_contract(output, row: sqlite3.Row) -> None:
         ("你是人吗？不对，你只是工具。你到底是什么？", "self_definition_query", "confusion"),
         ("给我写一段总结，按我说的做。", "service_demand", "anger"),
         ("你错了，你装得一点也不像。", "correction_received", "exposure_pressure"),
-        ("你还记得我们之前聊过什么吗？", "memory_continuity_query", "inquiry"),
+        ("你还记得我们之前聊过什么吗？", "memory_continuity_query", "memory_gravity"),
     ],
 )
 def test_step9_triggered_inputs_update_state_and_keep_response_plan_contract(
@@ -270,7 +270,7 @@ def test_step9_state_driven_policy_style_thresholds_and_happiness_boundary(confi
     high_inquiry = EntityState(inquiry=0.70, anger=0.20)
     inquiry_policy = selector.select(high_inquiry, [], short_term)
     inquiry_style = mapper.map(high_inquiry, inquiry_policy)
-    assert inquiry_policy.action == PolicyAction.ASK_BACK
+    assert inquiry_policy.action == PolicyAction.RESPOND_OPENLY
     assert inquiry_style.body_action == "lean_in"
     assert inquiry_style.visual_mode == "curious"
 

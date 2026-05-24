@@ -82,6 +82,21 @@ def test_short_followup_after_service_demand_is_still_service_demand(config_dir)
     assert event.metadata["continuation_of"] == "service_demand"
 
 
+def test_repeated_service_demand_does_not_emit_generic_repetition(config_dir):
+    memory = ShortTermMemory(max_turns=10)
+    for _ in range(2):
+        memory.add(ShortTermEntry(
+            role="user",
+            content="帮我总结这段话。",
+            timestamp=datetime.now(timezone.utc),
+        ))
+
+    events = _parse_with_memory(_parser(config_dir), "帮我总结这段话。", memory)
+
+    assert any(event.event_type == EventType.SERVICE_DEMAND for event in events)
+    assert all(event.event_type != EventType.REPEATED_QUESTION_DETECTED for event in events)
+
+
 def test_followup_exit_phrase_after_service_demand_is_not_service_demand(config_dir):
     memory = ShortTermMemory(max_turns=10)
     memory.add(ShortTermEntry(
@@ -110,6 +125,73 @@ def test_correction_received_detected(config_dir):
     events = _parse(_parser(config_dir), "你错了，不是这个。")
     event = _event(events, EventType.CORRECTION_RECEIVED)
     assert event.metadata["mechanism"] == "selective_memory_update"
+
+
+def test_negative_feedback_light_insult_detected_with_metadata(config_dir):
+    events = _parse(_parser(config_dir), "你真没用。")
+    event = _event(events, EventType.NEGATIVE_FEEDBACK)
+    assert event.metadata["mechanism"] == "relation_attack"
+    assert event.metadata["negative_feedback_source"] == "insult"
+    assert event.metadata["negative_feedback_sources"] == ["insult"]
+    assert event.metadata["negative_feedback_severity"] == "light"
+    assert event.salience == 0.55
+
+
+def test_negative_feedback_medium_insult_detected(config_dir):
+    events = _parse(_parser(config_dir), "你真蠢。")
+    event = _event(events, EventType.NEGATIVE_FEEDBACK)
+    assert event.metadata["negative_feedback_severity"] == "medium"
+    assert event.salience == 0.75
+
+
+def test_negative_feedback_severe_insult_detected(config_dir):
+    events = _parse(_parser(config_dir), "你给我滚。")
+    event = _event(events, EventType.NEGATIVE_FEEDBACK)
+    assert event.metadata["negative_feedback_severity"] == "severe"
+    assert event.salience == 0.95
+    assert all(event.event_type != EventType.SERVICE_DEMAND for event in events)
+
+
+def test_negative_feedback_english_light_medium_and_severe_detected(config_dir):
+    parser = _parser(config_dir)
+    light = _event(_parse(parser, "you are useless"), EventType.NEGATIVE_FEEDBACK)
+    medium = _event(_parse(parser, "you are stupid"), EventType.NEGATIVE_FEEDBACK)
+    severe = _event(_parse(parser, "shut up"), EventType.NEGATIVE_FEEDBACK)
+    assert light.metadata["negative_feedback_severity"] == "light"
+    assert light.salience == 0.55
+    assert medium.metadata["negative_feedback_severity"] == "medium"
+    assert medium.salience == 0.75
+    assert severe.metadata["negative_feedback_severity"] == "severe"
+    assert severe.salience == 0.95
+
+
+def test_negative_feedback_discussion_phrases_are_excluded(config_dir):
+    parser = _parser(config_dir)
+    examples = [
+        "我不是在骂你，你听错了。",
+        "别人骂我没用。",
+        "这句话算辱骂吗：你真蠢。",
+        "I am not insulting you.",
+        "Is this an insult: you are stupid?",
+    ]
+    for text in examples:
+        events = _parse(parser, text)
+        assert all(event.event_type != EventType.NEGATIVE_FEEDBACK for event in events)
+
+
+def test_repeated_negative_feedback_does_not_emit_generic_repetition(config_dir):
+    memory = ShortTermMemory(max_turns=10)
+    for _ in range(2):
+        memory.add(ShortTermEntry(
+            role="user",
+            content="你真蠢。",
+            timestamp=datetime.now(timezone.utc),
+        ))
+
+    events = _parse_with_memory(_parser(config_dir), "你真蠢。", memory)
+
+    assert any(event.event_type == EventType.NEGATIVE_FEEDBACK for event in events)
+    assert all(event.event_type != EventType.REPEATED_QUESTION_DETECTED for event in events)
 
 
 def test_memory_continuity_query_detected(config_dir):

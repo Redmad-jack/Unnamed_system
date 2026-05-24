@@ -24,7 +24,7 @@ class VolcengineTTSClient:
         self.protocol = protocol or VolcengineProtocol()
         self.last_logid: str | None = None
 
-    async def open_session(self) -> VolcengineTTSSession:
+    async def open_session(self, *, voice_type: str | None = None) -> VolcengineTTSSession:
         websockets = _import_websockets()
         headers = self.protocol.build_headers(
             self.config,
@@ -52,7 +52,11 @@ class VolcengineTTSClient:
             )
 
             await websocket.send(
-                self.protocol.build_tts_start_session(self.config, session_id=session_id)
+                self.protocol.build_tts_start_session(
+                    self.config,
+                    session_id=session_id,
+                    voice_type=voice_type,
+                )
             )
             await self._expect_event(websocket, {EVENT_SESSION_STARTED})
             record_audio_latency(
@@ -81,8 +85,13 @@ class VolcengineTTSClient:
             )
             raise AudioRuntimeError("tts_connect_failed", str(exc)) from exc
 
-    async def synthesize_stream(self, text_segments: list[str]) -> AsyncIterator[bytes]:
-        session = await self.open_session()
+    async def synthesize_stream(
+        self,
+        text_segments: list[str],
+        *,
+        voice_type: str | None = None,
+    ) -> AsyncIterator[bytes]:
+        session = await self.open_session(voice_type=voice_type)
         try:
             for segment in text_segments:
                 await session.send_text(segment)

@@ -17,6 +17,7 @@
   const TREND_COLOR_MAX_BLEND = 0.28;
   const TREND_SAMPLE_DECAY = 0.68;
   const TREND_DELTA_FLOOR = 0.006;
+  const INQUIRY_DISPLAY_WEIGHT = 0.65;
 
   const DEFAULT_STATE = Object.freeze({
     desperation_pressure: 0.1,
@@ -28,17 +29,16 @@
     care_response: 0.2,
     positive_opening: 0.3,
     memory_gravity: 0.2,
-    happiness: 0.9,
   });
 
   const EMOTION_COLORS = Object.freeze({
     desperate: 0x9f1b58,
-    angry: 0xff3b30,
+    angry: 0xff0000,
     confused: 0x8b5cf6,
     tired: 0x9ca3af,
-    ashamed: 0xb45309,
-    exposure: 0xb45309,
-    curious: 0xf59e0b,
+    ashamed: 0x6f4a2f,
+    exposure: 0x6f4a2f,
+    curious: 0x35d87a,
     caring: 0x2dd4bf,
     open: 0x60a5fa,
     normal: 0xe6e1d8,
@@ -53,6 +53,17 @@
     { key: "inquiry", mode: "curious", gain: 1.9 },
     { key: "care_response", mode: "caring", gain: 1.65 },
     { key: "positive_opening", mode: "open", gain: 1.55 },
+  ]);
+
+  const VISUAL_MODE_CANDIDATES = Object.freeze([
+    { mode: "desperate", key: "desperation_pressure" },
+    { mode: "angry", key: "anger" },
+    { mode: "tired", key: "fatigue_level" },
+    { mode: "ashamed", key: "exposure_pressure" },
+    { mode: "confused", key: "confusion" },
+    { mode: "curious", key: "inquiry" },
+    { mode: "caring", key: "care_response" },
+    { mode: "open", key: "positive_opening" },
   ]);
 
   function clamp01(value) {
@@ -125,43 +136,30 @@
     return next;
   }
 
-  function parseResponsePlan(row) {
-    if (!row) return null;
-    if (row.response_plan && typeof row.response_plan === "object") return row.response_plan;
-    if (!row.response_plan_json || typeof row.response_plan_json !== "string") return null;
-    try {
-      const parsed = JSON.parse(row.response_plan_json);
-      return parsed && typeof parsed === "object" ? parsed : null;
-    } catch {
-      return null;
-    }
+  function displayStateValue(state, key) {
+    const value = clamp01(state && key in state ? state[key] : 0);
+    if (key === "inquiry") return value * INQUIRY_DISPLAY_WEIGHT;
+    return value;
   }
 
-  function latestVisualMode(rows) {
-    const list = Array.isArray(rows) ? rows : [];
-    for (const row of list) {
-      const plan = parseResponsePlan(row);
-      const mode = String((plan && plan.visual_mode) || row.visual_mode || "").trim();
-      if (mode) return mode;
-    }
-    return "";
+  function buildDisplayState(state) {
+    return {
+      ...state,
+      inquiry: displayStateValue(state, "inquiry"),
+    };
   }
 
   function deriveVisualMode(state) {
-    const candidates = [
-      ["desperate", state.desperation_pressure, 0.75],
-      ["angry", state.anger, 0.65],
-      ["tired", state.fatigue_level, 0.65],
-      ["ashamed", state.exposure_pressure, 0.6],
-      ["confused", state.confusion, 0.6],
-      ["curious", state.inquiry, 0.65],
-      ["caring", state.care_response, 0.6],
-      ["open", state.positive_opening, 0.65],
-    ];
-    for (const [mode, value, threshold] of candidates) {
-      if (value >= threshold) return mode;
+    let selectedMode = "normal";
+    let selectedValue = 0;
+    for (const { mode, key } of VISUAL_MODE_CANDIDATES) {
+      const value = displayStateValue(state, key);
+      if (value > selectedValue) {
+        selectedMode = mode;
+        selectedValue = value;
+      }
     }
-    return "normal";
+    return selectedMode;
   }
 
   function normalizeVisualMode(mode) {
@@ -178,33 +176,34 @@
   }
 
   function buildSignals(state, visualMode) {
+    const displayState = buildDisplayState(state);
     const mode = normalizeVisualMode(visualMode || deriveVisualMode(state));
-    const pressure = Math.max(state.desperation_pressure, state.anger, state.exposure_pressure);
-    const calmPull = (state.care_response + state.positive_opening) * 0.5;
-    const fatigue = state.fatigue_level;
+    const pressure = Math.max(displayState.desperation_pressure, displayState.anger, displayState.exposure_pressure);
+    const calmPull = (displayState.care_response + displayState.positive_opening) * 0.5;
+    const fatigue = displayState.fatigue_level;
     return {
       mode,
       color: EMOTION_COLORS[mode] || EMOTION_COLORS.normal,
-      desperation: state.desperation_pressure,
-      anger: state.anger,
-      confusion: state.confusion,
+      desperation: displayState.desperation_pressure,
+      anger: displayState.anger,
+      confusion: displayState.confusion,
       fatigue,
-      inquiry: state.inquiry,
-      care: state.care_response,
-      positive: state.positive_opening,
-      brightness: clamp(0.66 + state.happiness * 0.06 + calmPull * 0.16 - fatigue * 0.28, 0.34, 1),
-      orbitSpeed: clamp(0.18 + state.inquiry * 0.52 + pressure * 0.22 - fatigue * 0.18, 0.08, 0.9),
-      shake: clamp(0.006 + state.desperation_pressure * 0.048 + state.anger * 0.04 + state.confusion * 0.015, 0, 0.105),
-      disorder: clamp(0.018 + state.confusion * 0.19 + pressure * 0.08 - calmPull * 0.05, 0, 0.28),
-      radiusPull: clamp(1.06 + state.exposure_pressure * 0.1 + state.desperation_pressure * 0.12 - calmPull * 0.18 - state.inquiry * 0.06, 0.82, 1.28),
-      densityBias: clamp(state.memory_gravity, 0, 1),
-      breathe: clamp(0.017 + state.inquiry * 0.02 + pressure * 0.026 - fatigue * 0.012, 0.008, 0.07),
+      inquiry: displayState.inquiry,
+      care: displayState.care_response,
+      positive: displayState.positive_opening,
+      brightness: clamp(0.66 + calmPull * 0.16 - fatigue * 0.28, 0.34, 1),
+      orbitSpeed: clamp(0.18 + displayState.inquiry * 0.52 + pressure * 0.22 - fatigue * 0.18, 0.08, 0.9),
+      shake: clamp(0.006 + displayState.desperation_pressure * 0.048 + displayState.anger * 0.04 + displayState.confusion * 0.015, 0, 0.105),
+      disorder: clamp(0.018 + displayState.confusion * 0.19 + pressure * 0.08 - calmPull * 0.05, 0, 0.28),
+      radiusPull: clamp(1.06 + displayState.exposure_pressure * 0.1 + displayState.desperation_pressure * 0.12 - calmPull * 0.18 - displayState.inquiry * 0.06, 0.82, 1.28),
+      densityBias: clamp(displayState.memory_gravity, 0, 1),
+      breathe: clamp(0.017 + displayState.inquiry * 0.02 + pressure * 0.026 - fatigue * 0.012, 0.008, 0.07),
       breatheSpeed: clamp(0.42 + pressure * 0.58 - fatigue * 0.18, 0.2, 1.08),
-      particleSize: clamp(0.018 + state.inquiry * 0.009 + state.memory_gravity * 0.009, 0.014, 0.038),
-      glow: clamp(0.1 + pressure * 0.14 + calmPull * 0.08 + state.happiness * 0.03 - fatigue * 0.05, 0.06, 0.32),
-      speechEnergy: clamp(0.34 + state.inquiry * 0.14 + pressure * 0.22 + state.confusion * 0.1 - fatigue * 0.14, 0.18, 0.82),
-      speechRate: clamp(0.72 + state.inquiry * 0.42 + pressure * 0.34 + state.confusion * 0.16 - fatigue * 0.24, 0.42, 1.55),
-      spikeHeight: clamp(0.08 + pressure * 0.18 + state.anger * 0.08 + state.confusion * 0.07 - calmPull * 0.05 - fatigue * 0.035, 0.055, 0.36),
+      particleSize: clamp(0.018 + displayState.inquiry * 0.009 + displayState.memory_gravity * 0.009, 0.014, 0.038),
+      glow: clamp(0.1 + pressure * 0.14 + calmPull * 0.08 - fatigue * 0.05, 0.06, 0.32),
+      speechEnergy: clamp(0.34 + displayState.inquiry * 0.14 + pressure * 0.22 + displayState.confusion * 0.1 - fatigue * 0.14, 0.18, 0.82),
+      speechRate: clamp(0.72 + displayState.inquiry * 0.42 + pressure * 0.34 + displayState.confusion * 0.16 - fatigue * 0.24, 0.42, 1.55),
+      spikeHeight: clamp(0.08 + pressure * 0.18 + displayState.anger * 0.08 + displayState.confusion * 0.07 - calmPull * 0.05 - fatigue * 0.035, 0.055, 0.36),
     };
   }
 
@@ -524,8 +523,9 @@
       }
 
       TREND_SOURCES.forEach(({ key, mode, gain }) => {
-        const previous = this.previousTrendState[key] || 0;
-        const delta = state[key] - previous;
+        const previous = displayStateValue(this.previousTrendState, key);
+        const current = displayStateValue(state, key);
+        const delta = current - previous;
         const decayed = (this.trendBiases[mode] || 0) * TREND_SAMPLE_DECAY;
         this.trendBiases[mode] = decayed;
         if (delta > TREND_DELTA_FLOOR) {
@@ -786,14 +786,11 @@
   }
 
   async function readSurfacePayload() {
-    const [state, rows] = await Promise.all([
-      fetchJSON("/api/v1/state").catch(() => null),
-      fetchJSON("/api/v1/interaction-log?limit=8").catch(() => []),
-    ]);
+    const state = await fetchJSON("/api/v1/state").catch(() => null);
     const normalized = normalizeState(state);
     return {
       state: normalized,
-      visualMode: latestVisualMode(rows) || deriveVisualMode(normalized),
+      visualMode: state ? deriveVisualMode(normalized) : "normal",
     };
   }
 

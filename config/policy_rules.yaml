@@ -129,13 +129,17 @@ rules:
         confusion: { gte: 0.65 }
     action: ask_back
 
-  - id: "inquiry_high_ask_back"
-    description: "High inquiry with low anger — ask back"
+  - id: "inquiry_high_open"
+    description: "High relationship-depth inquiry with low pressure — respond more openly"
     conditions:
       state:
         inquiry: { gte: 0.60 }
         anger: { lt: 0.50 }
-    action: ask_back
+        exposure_pressure: { lt: 0.50 }
+        desperation_pressure: { lt: 0.50 }
+        fatigue_level: { lt: 0.70 }
+        confusion: { lt: 0.70 }
+    action: respond_openly
 
   - id: "care_response_soft"
     description: "Care response can open only when anger and desperation are low"

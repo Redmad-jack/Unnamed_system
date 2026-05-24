@@ -137,13 +137,16 @@ class BrokenIdentityGating:
         raise RuntimeError("gating failed")
 
 
-def _request(loop=None, audio_manager=None, identity_gating=None):
-    return SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(
+def _request(loop=None, audio_manager=None, identity_gating=None, first_unit_gate_enabled=None):
+    state = SimpleNamespace(
         loop=loop or FakeLoop(),
         loop_lock=asyncio.Lock(),
         audio_manager=audio_manager or FakeAudioManager(),
         identity_gating=identity_gating,
-    )))
+    )
+    if first_unit_gate_enabled is not None:
+        state.first_unit_gate_enabled = first_unit_gate_enabled
+    return SimpleNamespace(app=SimpleNamespace(state=state))
 
 
 async def _collect_streaming_response(response):
@@ -163,6 +166,20 @@ def test_audio_status_delegates_to_manager():
     result = asyncio.run(api.audio_status(_request()))
 
     assert result["enabled"] is True
+
+
+def test_runtime_first_unit_gate_get_and_post():
+    request = _request(first_unit_gate_enabled=False)
+
+    initial = asyncio.run(api.runtime_first_unit_gate(request))
+    updated = asyncio.run(api.runtime_first_unit_gate_update(
+        api.FirstUnitGateRequest(enabled=True),
+        request,
+    ))
+
+    assert initial == {"enabled": False}
+    assert updated == {"enabled": True}
+    assert request.app.state.first_unit_gate_enabled is True
 
 
 def test_dialog_returns_response_plan():
@@ -270,6 +287,25 @@ def test_audio_progressive_creates_tts_streams_for_first_and_second_delta():
     assert events[-1]["should_speak"] is False
     assert events[-1]["text"] == "我记得一点。"
     assert events[-1]["response_plan"]["combined_text"] == "唉。\n我记得一点。"
+
+
+def test_audio_progressive_does_not_create_first_tts_for_empty_first_unit():
+    loop = FakeLoop(first_unit="", second_unit="我记得一点。")
+    manager = FakeAudioManager()
+
+    response = asyncio.run(api.audio_dialog_progressive(
+        AudioDialogRequest(transcript="你好？", audio_session_id="aud"),
+        _request(loop=loop, audio_manager=manager),
+    ))
+    events = asyncio.run(_collect_streaming_response(response))
+
+    assert [event["phase"] for event in events] == ["first_unit", "second_delta", "final"]
+    assert events[0]["text"] == ""
+    assert events[0]["tts_stream_id"] is None
+    assert events[0]["should_speak"] is False
+    assert manager.created_texts == [
+        ("我记得一点。", "dialog_second_delta"),
+    ]
 
 
 def test_audio_progressive_falls_back_to_final_tts_when_no_second_delta_emitted():

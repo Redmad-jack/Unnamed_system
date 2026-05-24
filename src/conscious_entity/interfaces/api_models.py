@@ -36,6 +36,10 @@ class BodyCommandRequest(BaseModel):
     command: str
 
 
+class FirstUnitGateRequest(BaseModel):
+    enabled: bool
+
+
 class LLMConfigRequest(BaseModel):
     mode: str
     model: Optional[str] = None

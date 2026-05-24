@@ -5,6 +5,7 @@
 data/memory.db
 data/memory.db-shm
 data/memory.db-wal
+data/memory.backup-*
 data/export.json
 data/embeddings_cache/
 data/latency_logs/

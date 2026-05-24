@@ -138,6 +138,26 @@ def test_tts_start_connection_and_session_frames():
     assert payload["req_params"]["audio_params"] == {"format": "mp3", "sample_rate": 24000}
 
 
+def test_tts_start_session_accepts_stream_voice_override_and_model():
+    protocol = VolcengineProtocol()
+    config = AudioConfig(
+        tts_voice_type="fallback_voice",
+        output_format="mp3",
+        tts_sample_rate=24000,
+        tts_model="seed-tts-2.0-standard",
+    )
+
+    session = protocol.build_tts_start_session(
+        config,
+        session_id="sess",
+        voice_type="test-en-voice",
+    )
+    _event, _session_id, payload = _event_payload(session)
+
+    assert payload["req_params"]["speaker"] == "test-en-voice"
+    assert payload["req_params"]["model"] == "seed-tts-2.0-standard"
+
+
 def test_tts_task_and_finish_session_frames():
     protocol = VolcengineProtocol()
 

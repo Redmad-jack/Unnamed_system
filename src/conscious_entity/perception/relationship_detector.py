@@ -85,14 +85,24 @@ class RelationshipDetector:
                     )
                 )
             for raw_pattern in rule.get("patterns", []) or []:
+                if isinstance(raw_pattern, dict):
+                    pattern_text = raw_pattern.get("pattern")
+                    if not pattern_text:
+                        continue
+                    pattern_metadata = dict(raw_pattern.get("metadata", {}) or {})
+                else:
+                    pattern_text = raw_pattern
+                    pattern_metadata = {}
+                compiled_metadata = dict(static_metadata)
+                compiled_metadata.update(pattern_metadata)
                 self._patterns.append(
                     _CompiledPattern(
                         event_type=event_type,
                         mechanism=mechanism,
                         posture=posture,
-                        pattern=re.compile(str(raw_pattern), re.IGNORECASE),
+                        pattern=re.compile(str(pattern_text), re.IGNORECASE),
                         exclude_patterns=exclude_patterns,
-                        static_metadata=static_metadata,
+                        static_metadata=compiled_metadata,
                     )
                 )
 

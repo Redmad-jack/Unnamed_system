@@ -267,11 +267,6 @@ class LocalManagedMemoryProvider:
             if hit_count and self._config.state_influence_enabled
             else 0.0
         )
-        inquiry_delta = (
-            min(0.04, 0.01 * hit_count)
-            if hit_count and self._config.state_influence_enabled
-            else 0.0
-        )
         positive_opening_delta = (
             min(0.02, 0.005 * hit_count)
             if hit_count and self._config.state_influence_enabled
@@ -302,8 +297,6 @@ class LocalManagedMemoryProvider:
         deltas = {}
         if memory_gravity_delta:
             deltas["memory_gravity"] = memory_gravity_delta
-        if inquiry_delta:
-            deltas["inquiry"] = inquiry_delta
         if positive_opening_delta:
             deltas["positive_opening"] = positive_opening_delta
         state_influence = {

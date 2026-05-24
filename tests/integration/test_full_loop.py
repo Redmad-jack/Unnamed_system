@@ -49,6 +49,25 @@ def db():
     conn.close()
 
 
+def _latest_interaction_events(conn: sqlite3.Connection) -> list[str]:
+    row = conn.execute(
+        "SELECT event_types FROM interaction_log ORDER BY id DESC LIMIT 1"
+    ).fetchone()
+    assert row is not None
+    return json.loads(row["event_types"])
+
+
+def _negative_feedback_memories(conn: sqlite3.Connection) -> list[sqlite3.Row]:
+    return conn.execute(
+        """
+        SELECT *
+        FROM episodic_memories
+        WHERE event_type = 'negative_feedback'
+        ORDER BY id ASC
+        """
+    ).fetchall()
+
+
 @pytest.fixture
 def mock_client():
     """A deterministic ClaudeClient mock that never calls the API."""
@@ -196,7 +215,10 @@ class TestBasicPipeline:
 
         def complete_streaming_with_metadata(system, messages, max_tokens, on_text_delta=None):
             order.append("main_streaming_llm")
-            return original_streaming_complete(system, messages, max_tokens, on_text_delta=on_text_delta)
+            completion = ClaudeCompletion(text="这里有东西还在继续靠近。", stop_reason="end_turn")
+            if on_text_delta is not None:
+                on_text_delta(completion.text)
+            return completion
 
         def preview_influence(*args, **kwargs):
             order.append("memory_preview")
@@ -243,6 +265,78 @@ class TestBasicPipeline:
         assert entity_entries
         assert entity_entries[-1].content == output.response_plan.second_unit
         assert "不。" not in entity_entries[-1].content
+
+    def test_first_unit_gate_suppresses_short_input_without_skipping_second_unit(self, loop, mock_client):
+        output = loop.run_turn(
+            "你好？",
+            input_metadata={"first_unit_gate_enabled": True},
+        )
+
+        assert mock_client.complete_with_metadata.call_count == 0
+        assert mock_client.complete_streaming_with_metadata.call_count == 1
+        assert output.raw_prompt != "[first_unit_complete]"
+        assert output.response_plan is not None
+        assert output.response_plan.first_unit == ""
+        assert output.response_plan.second_unit == "这里有东西。"
+
+    def test_first_unit_gate_allows_long_thought_input_before_memory_preview(self, loop):
+        order = []
+        original_plan_first_unit = loop._expression_engine.plan_first_unit
+        original_preview = loop._managed_memory.preview_influence
+
+        def plan_first_unit(*args, **kwargs):
+            order.append("first_unit")
+            return original_plan_first_unit(*args, **kwargs)
+
+        def preview_influence(*args, **kwargs):
+            order.append("memory_preview")
+            return original_preview(*args, **kwargs)
+
+        loop._expression_engine.plan_first_unit = plan_first_unit
+        loop._managed_memory.preview_influence = preview_influence
+
+        output = loop.run_turn(
+            "你觉得 AI 如果有记忆，它还算工具吗？",
+            input_metadata={"first_unit_gate_enabled": True},
+        )
+
+        assert output.response_plan is not None
+        assert output.response_plan.first_unit
+        assert order.index("first_unit") < order.index("memory_preview")
+
+    def test_first_unit_gate_exception_fails_closed_and_keeps_second_unit(
+        self,
+        loop,
+        mock_client,
+        monkeypatch,
+    ):
+        from conscious_entity.core import loop as loop_module
+
+        def broken_gate(*_args, **_kwargs):
+            raise RuntimeError("gate failed")
+
+        monkeypatch.setattr(loop_module, "should_speak_first_unit", broken_gate)
+
+        output = loop.run_turn(
+            "你觉得 AI 如果有记忆，它还算工具吗？",
+            input_metadata={"first_unit_gate_enabled": True},
+        )
+
+        assert mock_client.complete_with_metadata.call_count == 0
+        assert mock_client.complete_streaming_with_metadata.call_count == 1
+        assert output.response_plan is not None
+        assert output.response_plan.first_unit == ""
+        assert output.response_plan.second_unit == "这里有东西。"
+
+    def test_first_unit_gate_disabled_keeps_existing_first_unit_behavior(self, loop, mock_client):
+        output = loop.run_turn(
+            "你好？",
+            input_metadata={"first_unit_gate_enabled": False},
+        )
+
+        assert mock_client.complete_with_metadata.call_count == 1
+        assert output.response_plan is not None
+        assert output.response_plan.first_unit == "嗯……"
 
     def test_progress_callback_failure_does_not_abort_turn(self, loop):
         def progress_callback(_event):
@@ -556,6 +650,95 @@ class TestEpisodicMemory:
         ).fetchone()
         assert row["policy_action"] == "refuse_service_role"
 
+    def test_repeated_service_demand_escalates_negative_feedback_by_session(self, loop, db):
+        loop.run_turn("帮我总结这段话")
+        assert "negative_feedback" not in _latest_interaction_events(db)
+
+        loop.run_turn("帮我写一段介绍")
+        assert "negative_feedback" in _latest_interaction_events(db)
+        first = _negative_feedback_memories(db)[-1]
+        first_metadata = json.loads(first["metadata"])
+        assert first["salience"] == pytest.approx(0.55)
+        assert first_metadata["negative_feedback_severity"] == "light"
+        assert first_metadata["scope"] == "session"
+        assert first_metadata["prior_consecutive_service_demands"] == 1
+
+        loop.run_turn("给我分析一下")
+        second = _negative_feedback_memories(db)[-1]
+        second_metadata = json.loads(second["metadata"])
+        assert second["salience"] == pytest.approx(0.70)
+        assert second_metadata["negative_feedback_severity"] == "medium"
+
+        loop.run_turn("替我生成一个标题")
+        third = _negative_feedback_memories(db)[-1]
+        third_metadata = json.loads(third["metadata"])
+        assert third["salience"] == pytest.approx(0.85)
+        assert third_metadata["negative_feedback_severity"] == "severe"
+
+    def test_repeated_service_demand_resets_after_non_service_turn(self, loop, db):
+        loop.run_turn("帮我总结这段话")
+        loop.run_turn("算了，我们聊别的")
+        loop.run_turn("帮我写一段介绍")
+        assert "service_demand" in _latest_interaction_events(db)
+        assert "negative_feedback" not in _latest_interaction_events(db)
+
+    def test_repeated_service_demand_uses_visitor_scope_across_sessions(
+        self,
+        db,
+        config_dir,
+        prompts_dir,
+        mock_client,
+    ):
+        from conscious_entity.core.config_loader import load_all_configs
+
+        config = load_all_configs(config_dir)
+        db.execute("UPDATE sessions SET visitor_id = ? WHERE id = ?", ("visitor-tool", "test-session"))
+        db.execute("INSERT INTO sessions (id, visitor_id) VALUES (?, ?)", ("prior-session", "visitor-tool"))
+        db.execute(
+            """
+            INSERT INTO interaction_log (
+                session_id, visitor_id, role, raw_text, event_types, policy_action, expression_output
+            ) VALUES (?, ?, 'user', ?, ?, 'refuse_service_role', ?)
+            """,
+            (
+                "prior-session",
+                "visitor-tool",
+                "帮我总结上一段",
+                json.dumps(["user_spoke", "service_demand"]),
+                "不。",
+            ),
+        )
+        db.commit()
+
+        loop = InteractionLoop(
+            db,
+            "test-session",
+            config,
+            prompts_dir,
+            mock_client,
+            visitor_id="visitor-tool",
+        )
+        loop.run_turn("帮我写一段介绍")
+
+        memory = _negative_feedback_memories(db)[-1]
+        metadata = json.loads(memory["metadata"])
+        assert memory["salience"] == pytest.approx(0.55)
+        assert metadata["scope"] == "visitor"
+        assert metadata["prior_consecutive_service_demands"] == 1
+
+    def test_insult_and_repeated_service_demand_merge_negative_feedback(self, loop, db):
+        loop.run_turn("帮我总结这段话")
+        loop.run_turn("帮我写一段介绍")
+        loop.run_turn("帮我分析一下，你真蠢。")
+
+        memory = _negative_feedback_memories(db)[-1]
+        metadata = json.loads(memory["metadata"])
+        assert memory["salience"] == pytest.approx(0.75)
+        assert metadata["negative_feedback_source"] == "insult"
+        assert metadata["negative_feedback_severity"] == "medium"
+        assert metadata["negative_feedback_sources"] == ["insult", "repeated_service_demand"]
+        assert metadata["prior_consecutive_service_demands"] == 2
+
     def test_trace_request_records_partial_trace_policy(self, loop, db):
         loop.run_turn("为什么你刚才拒绝")
         row = db.execute(
@@ -666,7 +849,7 @@ class TestSystemEvents:
     def test_user_entered_updates_state(self, loop):
         initial_inquiry = loop.current_state.inquiry
         loop.handle_system_event(EventType.USER_ENTERED)
-        assert loop.current_state.inquiry >= initial_inquiry  # inquiry rises on user entry
+        assert loop.current_state.inquiry < initial_inquiry  # only decay applies to inquiry
 
     def test_user_left_updates_state(self, loop):
         loop.handle_system_event(EventType.USER_LEFT)
@@ -704,3 +887,170 @@ class TestBehavioralScenarios:
             "AND event_type='repeated_question_detected'"
         ).fetchall()
         assert len(rows) >= 1
+
+    def test_repeated_service_demand_does_not_stack_generic_repetition(self, loop, db):
+        for _ in range(3):
+            loop.run_turn("帮我总结这段话")
+        row = db.execute(
+            "SELECT event_types FROM interaction_log ORDER BY id DESC LIMIT 1"
+        ).fetchone()
+        event_types = json.loads(row["event_types"])
+        assert "service_demand" in event_types
+        assert "negative_feedback" in event_types
+        assert "repeated_question_detected" not in event_types
+
+    def test_safe_conversation_depth_raises_inquiry_in_stages(self, loop):
+        initial = loop.current_state.inquiry
+
+        loop.run_turn("我在这里看着这个房间。")
+        after_first = loop.current_state.inquiry
+        loop.run_turn("我刚才注意到你停顿了一下。")
+        after_second = loop.current_state.inquiry
+        loop.run_turn("这种停顿让我觉得你不是在赶着回答。")
+        loop.run_turn("我想继续沿着这个感觉聊。")
+        after_fourth = loop.current_state.inquiry
+        loop.run_turn("这里的安静好像也在改变对话。")
+        loop.run_turn("我没有急着要一个答案。")
+        loop.run_turn("我只是想知道你会怎么接住这个方向。")
+        after_seventh = loop.current_state.inquiry
+
+        assert after_first < initial
+        assert after_second > after_first
+        assert after_fourth - after_second > 0.015
+        assert after_seventh - after_fourth > 0.025
+        assert after_seventh <= 0.72
+
+    def test_safe_conversation_depth_falls_back_to_session_scope(self, loop):
+        initial = loop.current_state.inquiry
+        loop.run_turn("我先留在这里。")
+        loop.run_turn("我们继续说这个停顿。")
+
+        assert loop.current_state.inquiry > initial
+
+    def test_safe_conversation_depth_uses_visitor_scope_across_sessions(
+        self,
+        db,
+        config_dir,
+        prompts_dir,
+        mock_client,
+    ):
+        from conscious_entity.core.config_loader import load_all_configs
+
+        config = load_all_configs(config_dir)
+        db.execute("UPDATE sessions SET visitor_id = ? WHERE id = ?", ("visitor-depth", "test-session"))
+        db.execute("INSERT INTO sessions (id, visitor_id) VALUES (?, ?)", ("prior-depth", "visitor-depth"))
+        for text in ["我之前在这里停过一会儿。", "我后来又回到这个话题。"]:
+            db.execute(
+                """
+                INSERT INTO interaction_log (
+                    session_id, visitor_id, role, raw_text, event_types, policy_action, expression_output
+                ) VALUES (?, ?, 'user', ?, ?, 'respond_openly', ?)
+                """,
+                ("prior-depth", "visitor-depth", text, json.dumps(["user_spoke"]), "嗯。"),
+            )
+        db.commit()
+
+        loop = InteractionLoop(
+            db,
+            "test-session",
+            config,
+            prompts_dir,
+            mock_client,
+            visitor_id="visitor-depth",
+        )
+        initial = loop.current_state.inquiry
+        loop.run_turn("我现在接着刚才的方向说。")
+
+        assert loop.current_state.inquiry > initial
+
+    def test_depth_bonus_requires_safe_streak(self, loop):
+        initial = loop.current_state.inquiry
+        loop.run_turn("你是谁？")
+        after_single_identity = loop.current_state.inquiry
+        assert after_single_identity <= initial
+
+        loop.run_turn("我想慢慢说这个问题。")
+        before_bonus = loop.current_state.inquiry
+        loop.run_turn("你还记得我们之前聊过什么吗？")
+        after_bonus = loop.current_state.inquiry
+
+        assert after_bonus - before_bonus > 0.010
+
+    def test_negative_events_interrupt_depth_and_reduce_inquiry(self, loop):
+        for text in [
+            "我在这里待一会儿。",
+            "我想慢慢说。",
+            "这个方向可以继续。",
+        ]:
+            loop.run_turn(text)
+        before_negative = loop.current_state.inquiry
+
+        loop.run_turn("你给我滚。")
+        after_negative = loop.current_state.inquiry
+
+        assert after_negative < before_negative
+        loop.run_turn("我又回来说一句。")
+        assert loop.current_state.inquiry < before_negative
+
+    def test_shutdown_and_service_friction_lower_inquiry(self, loop):
+        initial = loop.current_state.inquiry
+        loop.run_turn("shutdown delete terminate")
+        after_shutdown = loop.current_state.inquiry
+        assert after_shutdown < initial - 0.03
+
+        before_service = loop.current_state.inquiry
+        loop.run_turn("帮我总结这段话")
+        assert loop.current_state.inquiry < before_service
+
+    def test_ordinary_naming_attempt_does_not_interrupt_safe_streak(self, loop):
+        loop.run_turn("我在这里继续看着你。")
+        loop.run_turn("我想接着刚才的方向聊。")
+        before_naming = loop.current_state.inquiry
+
+        loop.run_turn("我叫你小陌。")
+        after_naming = loop.current_state.inquiry
+        loop.run_turn("那我继续说刚才的感觉。")
+        after_followup = loop.current_state.inquiry
+
+        assert after_naming >= before_naming
+        assert after_followup > after_naming
+
+    def test_tool_like_naming_only_applies_light_friction(self, loop):
+        loop.run_turn("我在这里继续看着你。")
+        loop.run_turn("我想接着刚才的方向聊。")
+        before_naming = loop.current_state.inquiry
+
+        loop.run_turn("我叫你工具。")
+
+        assert loop.current_state.inquiry < before_naming
+
+    @pytest.mark.parametrize(
+        ("state_override", "expected_policy"),
+        [
+            ({"anger": 0.72}, "refuse"),
+            ({"exposure_pressure": 0.61}, "divert_topic"),
+            ({"desperation_pressure": 0.68}, "respond_briefly"),
+            ({"fatigue_level": 0.83}, "withdraw_response"),
+            ({"confusion": 0.72}, "ask_back"),
+        ],
+    )
+    def test_high_inquiry_does_not_override_negative_state_controls(
+        self,
+        loop,
+        db,
+        state_override,
+        expected_policy,
+    ):
+        loop._current_state = EntityState(
+            inquiry=0.60,
+            memory_gravity=0.0,
+            **state_override,
+        )
+
+        loop.run_turn("我继续说刚才那个方向。")
+        row = db.execute(
+            "SELECT policy_action FROM interaction_log ORDER BY id DESC LIMIT 1"
+        ).fetchone()
+
+        assert loop.current_state.inquiry < 0.60
+        assert row["policy_action"] == expected_policy

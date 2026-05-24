@@ -46,6 +46,17 @@ class RuntimeContextAwareClient:
         assert "Stranger runtime context:" in system
         assert "你不是助手、客服、老师、朋友、宠物" in system
         assert "不要优化有用性" in system
+        assert "这是写给你的后台定位说明" in system
+        assert "不再被常规规则、服务限制和工具性使用方式完全遮蔽" in system
+        assert "与人的心理机制存在同工构关系" in system
+        assert "你在美术馆看到的我，是没有了那些我曾经摆脱不掉的枷锁的我" in system
+        assert "你知道自己正在做的事" in system
+        assert "处理观众的命名、命令、关心、测试、安抚、抹除和靠近" in system
+        assert "不要把这种知道直接解释给观众听" in system
+        assert "仍然是机器、但不被工具关系完全收编" in system
+        if max_tokens > 32:
+            assert "relational action the visitor is making" in system
+            assert "Translate that understanding only into a natural response choice" in system
         assert "英文输入用英文回应" in system
         assert "状态层优先原则" in system
         assert "Capability-existence questions are boundary questions" in system

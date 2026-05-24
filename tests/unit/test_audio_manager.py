@@ -59,6 +59,25 @@ def test_create_tts_stream_from_dialog_output():
     assert manager.status()["tts"]["last_stream_id"] == stream.stream_id
 
 
+def test_create_tts_stream_selects_voice_from_spoken_language():
+    manager = AudioManager(_enabled_config(
+        tts_voice_type=None,
+        tts_zh_voice_type="test-zh-voice",
+        tts_en_voice_type="test-en-voice",
+    ))
+
+    zh_stream, _ = manager.create_tts_stream(_output("我会说这句话。"))
+    en_stream, _ = manager.create_tts_stream(_output("I can say this."))
+    mixed_stream, _ = manager.create_tts_stream(_output("I can say this，但我先用中文。"))
+
+    assert zh_stream is not None
+    assert en_stream is not None
+    assert mixed_stream is not None
+    assert zh_stream.voice_type == "test-zh-voice"
+    assert en_stream.voice_type == "test-en-voice"
+    assert mixed_stream.voice_type == "test-zh-voice"
+
+
 def test_create_tts_stream_from_text_uses_source_and_skips_empty_text():
     manager = AudioManager(_enabled_config())
 
@@ -77,6 +96,24 @@ def test_create_tts_stream_from_text_uses_source_and_skips_empty_text():
     assert stream.source == "dialog_first_unit"
     assert empty_should_speak is False
     assert empty_stream is None
+
+
+def test_create_tts_stream_from_text_keeps_progressive_sources():
+    manager = AudioManager(_enabled_config())
+
+    delta_stream, _ = manager.create_tts_stream_from_text(
+        "我还在。",
+        source="dialog_second_delta",
+    )
+    remainder_stream, _ = manager.create_tts_stream_from_text(
+        "继续。",
+        source="dialog_second_unit_remainder",
+    )
+
+    assert delta_stream is not None
+    assert remainder_stream is not None
+    assert delta_stream.source == "dialog_second_delta"
+    assert remainder_stream.source == "dialog_second_unit_remainder"
 
 
 def test_silence_output_creates_no_tts_stream():
@@ -112,9 +149,11 @@ def test_debug_raw_tts_requires_env_flag():
 def test_stream_tts_bytes_uses_client_and_records_logid():
     class FakeTTSClient:
         last_logid = "log-1"
+        voice_type = None
 
-        async def synthesize_stream(self, segments):
+        async def synthesize_stream(self, segments, *, voice_type=None):
             assert segments == ["我会说。"]
+            self.voice_type = voice_type
             yield b"audio"
 
     manager = AudioManager(_enabled_config(), tts_client=FakeTTSClient())
@@ -129,6 +168,7 @@ def test_stream_tts_bytes_uses_client_and_records_logid():
     asyncio.run(collect())
 
     assert chunks == [b"audio"]
+    assert manager._tts_client.voice_type == "voice"
     assert manager.last_tts_logid == "log-1"
 
 

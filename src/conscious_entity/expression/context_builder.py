@@ -8,6 +8,7 @@ from typing import Any
 
 from conscious_entity.expression.style_mapper import StyleHints
 from conscious_entity.harness import HarnessLayer, HarnessTraceRecorder
+from conscious_entity.language import detect_text_language
 from conscious_entity.memory.short_term import ShortTermMemory
 from conscious_entity.policy.policy_types import PolicyAction, PolicyDecision
 from conscious_entity.state.state_core import EntityState
@@ -66,7 +67,7 @@ _FIRST_UNIT_SYSTEM = """You generate only a fast first spoken unit for Stranger.
 Use the current input, the brief previous-turn bridge if provided, and the current posture cues.
 Highest priority: this is a latency buffer and immediate reaction, not a full answer.
 Prefer a small hesitation, backchannel, or short acknowledgement when that is enough.
-Write plain text only: no labels, no markup, no structured format.
+Return ordinary spoken wording only: no labels, no markup, no structured format.
 Return an empty text if no immediate reaction is needed.
 Keep it extremely short, usually under 12 Chinese characters or a few English words.
 Match the current input language exactly.
@@ -466,7 +467,7 @@ def _first_unit_state_cues(state: EntityState) -> str:
     ):
         cues.append("A low-energy sigh or short contraction is available.")
     if state.inquiry >= 0.60 and state.anger < 0.50:
-        cues.append("A small observing question is available, but only if it stays very short.")
+        cues.append("A slightly more open continuation is available; a question is optional, not default.")
     if state.care_response >= 0.60 and state.anger < 0.50:
         cues.append("Softness is allowed, without caretaking or reassurance work.")
     if (
@@ -588,7 +589,7 @@ def _raw_input_capability_cues(raw_input: str) -> str:
 
 
 def _current_turn_language_cue(raw_input: str) -> str:
-    language = _detect_turn_language(raw_input)
+    language = detect_text_language(raw_input)
     if language == "zh":
         return (
             "Current turn language: Chinese. Every sentence in the fast first unit and the main response unit must be Chinese. "
@@ -602,17 +603,6 @@ def _current_turn_language_cue(raw_input: str) -> str:
     return (
         "Current turn language: match the visitor's latest input. Memory language and previous assistant messages must not change this turn's language."
     )
-
-
-def _detect_turn_language(text: str) -> str:
-    chinese_count = sum(1 for ch in text if "\u4e00" <= ch <= "\u9fff")
-    latin_count = sum(1 for ch in text if ("A" <= ch <= "Z") or ("a" <= ch <= "z"))
-    if chinese_count > 0:
-        return "zh"
-    if latin_count > 0:
-        return "en"
-    return "unknown"
-
 
 def _event_type_value(event: Any) -> str:
     event_type = getattr(event, "event_type", event)
@@ -696,10 +686,14 @@ def _visibility_guidance(exposure: float, inquiry: float) -> str:
 
 
 def _inquiry_guidance(value: float) -> str:
-    if value >= 0.65:
-        return "Careful observation and a pointed question are available."
-    if value >= 0.45:
-        return "Notice the visitor's framing without turning it into diagnosis."
+    if value >= 0.70:
+        return "Rare high openness is available: continue the thread with more depth, a little more length, and less defensiveness."
+    if value >= 0.56:
+        return "Respond more deeply and concretely; limited self-exposure, memory, or preference can surface without becoming a confession."
+    if value >= 0.42:
+        return "Be more specific and more willing to meet relational questions directly."
+    if value >= 0.30:
+        return "Light continuity is available; carry a little of the previous exchange forward."
     return "Do not force a question if a direct answer is clearer."
 
 

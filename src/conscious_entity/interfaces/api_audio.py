@@ -136,13 +136,18 @@ async def audio_dialog_progressive(body: AudioDialogRequest, request: Request):
                 payload = dict(event)
                 phase = payload.get("phase")
                 if phase == "first_unit":
-                    _attach_tts_stream(
-                        payload,
-                        manager,
-                        source="dialog_first_unit",
-                        latency_name="audio_dialog_progressive.first_tts_stream_create",
-                        audio_session_id=body.audio_session_id,
-                    )
+                    if str(payload.get("text") or "").strip():
+                        _attach_tts_stream(
+                            payload,
+                            manager,
+                            source="dialog_first_unit",
+                            latency_name="audio_dialog_progressive.first_tts_stream_create",
+                            audio_session_id=body.audio_session_id,
+                        )
+                    else:
+                        payload["should_speak"] = False
+                        payload["tts_stream_id"] = None
+                        payload["audio_disabled_reason"] = None
                 elif phase == "second_delta":
                     _attach_second_delta_tts_stream(
                         payload,
