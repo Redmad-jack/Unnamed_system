@@ -45,8 +45,8 @@ Status values: `in_progress`, `done`
 
 | File | Agent | Status | Started |
 |------|-------|--------|---------|
-| docs/progress.md | Codex | in_progress | 2026-05-24 15:05 CST |
-| agents/task-registry.md | Codex | in_progress | 2026-05-24 15:05 CST |
+| docs/progress.md | Codex | done | 2026-05-24 15:05 CST |
+| agents/task-registry.md | Codex | done | 2026-05-24 15:05 CST |
 | firmware/stranger_esp32s3/platformio.ini | Codex | done | 2026-05-24 03:42 CST |
 | firmware/stranger_esp32s3/src/config.h | Codex | done | 2026-05-24 03:42 CST |
 | firmware/stranger_esp32s3/src/main.cpp | Codex | done | 2026-05-24 03:42 CST |
