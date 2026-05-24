@@ -42,6 +42,15 @@ def _int_or_none(value: Any) -> int | None:
         return None
 
 
+def _float_or_none(value: Any) -> float | None:
+    try:
+        if value is None:
+            return None
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
 def _default_tof_sensor(channel: int, name: str) -> dict[str, Any]:
     return {
         "channel": channel,
@@ -71,6 +80,27 @@ def _default_motor_state(motor: int) -> dict[str, Any]:
     }
 
 
+def _default_imu_state() -> dict[str, Any]:
+    return {
+        "present": False,
+        "initialized": False,
+        "fresh": False,
+        "state": "unknown",
+        "status": "unknown",
+        "age_ms": None,
+        "event_count": 0,
+        "reset_count": 0,
+        "yaw_deg": None,
+        "pitch_deg": None,
+        "roll_deg": None,
+        "quat": {"real": None, "i": None, "j": None, "k": None},
+        "gyro_rad_s": {"x": None, "y": None, "z": None},
+        "accel_m_s2": {"x": None, "y": None, "z": None},
+        "last_error": None,
+        "last_update_ms": None,
+    }
+
+
 class BodyTelemetryStore:
     """Small in-process cache for ESP32 body telemetry."""
 
@@ -80,6 +110,7 @@ class BodyTelemetryStore:
         self._last_packet: dict[str, Any] | None = None
         self._status: dict[str, Any] = {}
         self._obstacle: dict[str, Any] = {}
+        self._imu_state: dict[str, Any] = _default_imu_state()
         self._motor_output: dict[str, Any] = {}
         self._last_ack: dict[str, Any] | None = None
         self._last_error: dict[str, Any] | None = None
@@ -108,6 +139,9 @@ class BodyTelemetryStore:
             self._ingest_obstacle(payload, now)
         elif msg_type == "status":
             self._status = {**self._status, **payload, "last_update_ms": now}
+            self._ingest_status_imu_fields(payload, now)
+        elif msg_type == "imu":
+            self._ingest_imu(payload, now)
         elif msg_type == "motor_state":
             self._ingest_motor_state(payload, now)
         elif msg_type == "motor_output":
@@ -146,9 +180,14 @@ class BodyTelemetryStore:
                 "avoidance_enabled": self._status.get("avoidance_enabled"),
                 "roam_enabled": self._status.get("roam_enabled"),
                 "roam_mode": self._status.get("roam_mode"),
+                "imu_present": self._status.get("imu_present", self._imu_state.get("present")),
+                "imu_initialized": self._status.get("imu_initialized", self._imu_state.get("initialized")),
+                "imu_fresh": self._status.get("imu_fresh", self._imu_state.get("fresh")),
+                "imu_state": self._status.get("imu_state", self._imu_state.get("state")),
             },
             "motion": self._motion_summary(motor_states),
             "obstacle": self._obstacle_summary(),
+            "imu": copy.deepcopy(self._imu_state),
             "tof": {
                 "tca_0x70": tca_connected,
                 "expected_count": len(TOF_CHANNELS),
@@ -214,6 +253,63 @@ class BodyTelemetryStore:
         if "state" not in normalized and "safety_state" in normalized:
             normalized["state"] = normalized["safety_state"]
         self._obstacle = normalized
+
+    def _ingest_status_imu_fields(self, payload: dict[str, Any], now: int) -> None:
+        if not any(key in payload for key in ("imu_present", "imu_initialized", "imu_fresh", "imu_state")):
+            return
+        self._imu_state = {
+            **self._imu_state,
+            "present": bool(payload.get("imu_present", self._imu_state.get("present"))),
+            "initialized": bool(payload.get("imu_initialized", self._imu_state.get("initialized"))),
+            "fresh": bool(payload.get("imu_fresh", self._imu_state.get("fresh"))),
+            "state": str(payload.get("imu_state") or self._imu_state.get("state") or "unknown"),
+            "status": str(payload.get("imu_state") or self._imu_state.get("status") or "unknown"),
+            "last_update_ms": now,
+        }
+
+    def _ingest_imu(self, payload: dict[str, Any], now: int) -> None:
+        state = str(payload.get("state") or payload.get("status") or "unknown")
+        quat = payload.get("quat") if isinstance(payload.get("quat"), dict) else {}
+        gyro = payload.get("gyro_rad_s") if isinstance(payload.get("gyro_rad_s"), dict) else {}
+        accel = payload.get("accel_m_s2") if isinstance(payload.get("accel_m_s2"), dict) else {}
+        self._imu_state = {
+            **self._imu_state,
+            "present": bool(payload.get("present", self._imu_state.get("present"))),
+            "initialized": bool(payload.get("initialized", self._imu_state.get("initialized"))),
+            "fresh": bool(payload.get("fresh", self._imu_state.get("fresh"))),
+            "state": state,
+            "status": state,
+            "age_ms": _int_or_none(payload.get("age_ms")),
+            "event_count": _int_or_none(payload.get("event_count")) or 0,
+            "reset_count": _int_or_none(payload.get("reset_count")) or 0,
+            "yaw_deg": _float_or_none(payload.get("yaw_deg")),
+            "pitch_deg": _float_or_none(payload.get("pitch_deg")),
+            "roll_deg": _float_or_none(payload.get("roll_deg")),
+            "quat": {
+                "real": _float_or_none(quat.get("real")),
+                "i": _float_or_none(quat.get("i")),
+                "j": _float_or_none(quat.get("j")),
+                "k": _float_or_none(quat.get("k")),
+            },
+            "gyro_rad_s": {
+                "x": _float_or_none(gyro.get("x")),
+                "y": _float_or_none(gyro.get("y")),
+                "z": _float_or_none(gyro.get("z")),
+            },
+            "accel_m_s2": {
+                "x": _float_or_none(accel.get("x")),
+                "y": _float_or_none(accel.get("y")),
+                "z": _float_or_none(accel.get("z")),
+            },
+            "last_error": payload.get("last_error"),
+            "last_update_ms": now,
+        }
+        self._status.update({
+            "imu_present": self._imu_state["present"],
+            "imu_initialized": self._imu_state["initialized"],
+            "imu_fresh": self._imu_state["fresh"],
+            "imu_state": self._imu_state["state"],
+        })
 
     def _ingest_motor_state(self, payload: dict[str, Any], now: int) -> None:
         motor = _int_or_none(payload.get("motor"))

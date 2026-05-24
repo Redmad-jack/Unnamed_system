@@ -45,6 +45,41 @@ Status values: `in_progress`, `done`
 
 | File | Agent | Status | Started |
 |------|-------|--------|---------|
+| docs/progress.md | Codex | in_progress | 2026-05-24 15:05 CST |
+| agents/task-registry.md | Codex | in_progress | 2026-05-24 15:05 CST |
+| firmware/stranger_esp32s3/platformio.ini | Codex | done | 2026-05-24 03:42 CST |
+| firmware/stranger_esp32s3/src/config.h | Codex | done | 2026-05-24 03:42 CST |
+| firmware/stranger_esp32s3/src/main.cpp | Codex | done | 2026-05-24 03:42 CST |
+| firmware/stranger_esp32s3/src/imu_monitor.h | Codex | done | 2026-05-24 03:42 CST |
+| firmware/stranger_esp32s3/src/imu_monitor.cpp | Codex | done | 2026-05-24 03:42 CST |
+| firmware/stranger_esp32s3/src/serial_protocol.h | Codex | done | 2026-05-24 03:42 CST |
+| firmware/stranger_esp32s3/src/serial_protocol.cpp | Codex | done | 2026-05-24 03:42 CST |
+| src/conscious_entity/body/protocol.py | Codex | done | 2026-05-24 03:42 CST |
+| src/conscious_entity/body/telemetry.py | Codex | done | 2026-05-24 03:42 CST |
+| src/conscious_entity/interfaces/static/dashboard.js | Codex | done | 2026-05-24 03:42 CST |
+| tests/unit/test_body_protocol.py | Codex | done | 2026-05-24 03:42 CST |
+| tests/unit/test_body_telemetry.py | Codex | done | 2026-05-24 03:42 CST |
+| tests/unit/test_body_serial_bridge.py | Codex | done | 2026-05-24 03:42 CST |
+| firmware/stranger_esp32s3/README.md | Codex | done | 2026-05-24 03:42 CST |
+| docs/references/hardware.md | Codex | done | 2026-05-24 03:42 CST |
+| docs/references/system_logic.md | Codex | done | 2026-05-24 03:42 CST |
+| docs/BACKEND_STRUCTURE.md | Codex | done | 2026-05-24 03:42 CST |
+| docs/progress.md | Codex | done | 2026-05-24 03:42 CST |
+| agents/task-registry.md | Codex | done | 2026-05-24 03:42 CST |
+| docs/references/hardware.md | Codex | done | 2026-05-23 23:52 CST |
+| agents/task-registry.md | Codex | done | 2026-05-23 23:52 CST |
+| src/conscious_entity/interfaces/static/dashboard.js | Codex | done | 2026-05-23 17:14 CST |
+| src/conscious_entity/interfaces/static/dashboard.css | Codex | done | 2026-05-23 17:14 CST |
+| docs/progress.md | Codex | done | 2026-05-23 17:14 CST |
+| agents/task-registry.md | Codex | done | 2026-05-23 17:14 CST |
+| src/conscious_entity/interfaces/static/dashboard.js | Codex | done | 2026-05-23 01:42 CST |
+| src/conscious_entity/interfaces/static/dashboard.css | Codex | done | 2026-05-23 01:42 CST |
+| docs/progress.md | Codex | done | 2026-05-23 01:42 CST |
+| agents/task-registry.md | Codex | done | 2026-05-23 01:42 CST |
+| src/conscious_entity/interfaces/static/dashboard.js | Codex | done | 2026-05-23 01:28 CST |
+| src/conscious_entity/interfaces/static/dashboard.css | Codex | done | 2026-05-23 01:28 CST |
+| docs/progress.md | Codex | done | 2026-05-23 01:28 CST |
+| agents/task-registry.md | Codex | done | 2026-05-23 01:28 CST |
 | src/conscious_entity/identity/face.py | Codex | done | 2026-05-22 19:04 CST |
 | src/conscious_entity/identity/session_gating.py | Codex | done | 2026-05-22 19:04 CST |
 | src/conscious_entity/expression/context_builder.py | Codex | done | 2026-05-22 19:04 CST |
@@ -217,6 +252,8 @@ Status values: `in_progress`, `done`
 | tests/unit/test_api_audio.py | Codex | done | 2026-05-21 11:05 CST |
 | tests/unit/test_api_latency.py | Codex | done | 2026-05-21 11:05 CST |
 | tests/unit/test_api_export.py | Codex | done | 2026-05-21 11:05 CST |
+| src/conscious_entity/interfaces/static/dashboard.js | Codex | done | 2026-05-23 01:07 CST |
+| src/conscious_entity/interfaces/static/dashboard.css | Codex | done | 2026-05-23 01:07 CST |
 | tests/conftest.py | Codex | done | 2026-05-21 11:05 CST |
 | docs/BACKEND_STRUCTURE.md | Codex | done | 2026-05-21 11:05 CST |
 | docs/progress.md | Codex | done | 2026-05-21 11:05 CST |

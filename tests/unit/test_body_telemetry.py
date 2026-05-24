@@ -65,6 +65,40 @@ def test_body_telemetry_derives_motion_from_motor_outputs():
     assert spin["motion"]["motor_duties"] == {"m1": -90.0, "m2": 90.0, "m3": -90.0, "m4": 90.0}
 
 
+def test_body_telemetry_tracks_imu_state():
+    store = BodyTelemetryStore()
+
+    snapshot = store.ingest({
+        "type": "imu",
+        "present": True,
+        "initialized": True,
+        "fresh": True,
+        "state": "ok",
+        "age_ms": 12,
+        "event_count": 7,
+        "reset_count": 1,
+        "yaw_deg": 12.5,
+        "pitch_deg": -1.25,
+        "roll_deg": 3.75,
+        "quat": {"real": 0.99, "i": 0.01, "j": 0.02, "k": 0.03},
+        "gyro_rad_s": {"x": 0.1, "y": -0.2, "z": 0.3},
+        "accel_m_s2": {"x": 0.0, "y": 0.1, "z": 9.8},
+        "last_error": "none",
+    })
+
+    assert snapshot["controller"]["imu_present"] is True
+    assert snapshot["controller"]["imu_initialized"] is True
+    assert snapshot["controller"]["imu_fresh"] is True
+    assert snapshot["controller"]["imu_state"] == "ok"
+    assert snapshot["imu"]["present"] is True
+    assert snapshot["imu"]["fresh"] is True
+    assert snapshot["imu"]["yaw_deg"] == 12.5
+    assert snapshot["imu"]["pitch_deg"] == -1.25
+    assert snapshot["imu"]["roll_deg"] == 3.75
+    assert snapshot["imu"]["gyro_rad_s"]["z"] == 0.3
+    assert snapshot["imu"]["accel_m_s2"]["z"] == 9.8
+
+
 def test_body_telemetry_prefers_live_motor_state_over_stale_status():
     store = BodyTelemetryStore()
 

@@ -3,6 +3,7 @@
 #include <Arduino.h>
 
 #include "chassis.h"
+#include "imu_monitor.h"
 #include "motor_driver.h"
 #include "obstacle_gate.h"
 #include "roam_controller.h"
@@ -13,7 +14,8 @@ namespace stranger {
 class SerialProtocol {
  public:
   SerialProtocol(MotorDriver &motors, ChassisController &chassis,
-                 TofScanner &tof, ObstacleGate &gate, RoamController &roam);
+                 TofScanner &tof, ObstacleGate &gate, RoamController &roam,
+                 ImuMonitor &imu);
 
   void update();
   void printHelp();
@@ -39,6 +41,7 @@ class SerialProtocol {
   TofScanner &tof_;
   ObstacleGate &gate_;
   RoamController &roam_;
+  ImuMonitor &imu_;
   String line_;
   bool telemetryEnabled_ = true;
 };

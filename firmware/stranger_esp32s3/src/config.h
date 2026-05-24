@@ -11,6 +11,13 @@ constexpr uint32_t I2C_FREQ_HZ = 100000;
 constexpr uint8_t PIN_BOARD_RGB = 48;
 constexpr uint8_t BOARD_RGB_WS2812_COUNT = 8;
 
+constexpr uint8_t PIN_IMU_SCK = 15;
+constexpr uint8_t PIN_IMU_MISO = 16;
+constexpr uint8_t PIN_IMU_MOSI = 17;
+constexpr uint8_t PIN_IMU_CS = 18;
+constexpr uint8_t PIN_IMU_INT = 21;
+constexpr uint8_t PIN_IMU_RST = 47;
+
 constexpr uint8_t TCA9548A_ADDR = 0x70;
 constexpr uint8_t VL53L1X_ADDR = 0x29;
 constexpr uint8_t TOF_SENSOR_COUNT = 4;
@@ -34,6 +41,11 @@ constexpr uint16_t TOF_POLL_INTERVAL_MS = 80;
 constexpr uint16_t TOF_INIT_RETRY_MS = 1000;
 constexpr uint16_t TOF_SENSOR_TIMEOUT_MS = 80;
 constexpr uint32_t TOF_TIMING_BUDGET_US = 50000;
+
+constexpr uint32_t IMU_REPORT_INTERVAL_US = 20000;
+constexpr uint16_t IMU_STALE_MS = 500;
+constexpr uint16_t IMU_POLL_INTERVAL_MS = 10;
+constexpr uint16_t IMU_INIT_RETRY_MS = 1000;
 
 constexpr int OBSTACLE_SLOW_MAX_DUTY = 45;
 constexpr int OBSTACLE_TURN_BIAS_DUTY = 20;

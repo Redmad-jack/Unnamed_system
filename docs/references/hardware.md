@@ -28,7 +28,7 @@ Out of current scope:
 - Shopkeeper entity
 - ESP32 + PCM5102A audio playback
 - Wheel encoders
-- IMU control-loop integration; BNO085 SPI wiring is reserved below for a later phase
+- IMU control-loop integration; BNO085 SPI is currently bring-up telemetry only and does not participate in safety gating yet
 - Full SLAM, precise odometry, or map-based navigation
 
 The first hardware milestone is **local ToF obstacle avoidance**, then motor behavior and body presentation can be integrated into the Stranger runtime.
@@ -157,12 +157,16 @@ This wiring plan is the current recommended plan for the first ESP32-S3 body con
 | M3 DIR | GPIO12 | Motor driver `D3` | Direction can be inverted in firmware if needed |
 | M4 PWM | GPIO7 | Motor driver `P4` | LEDC PWM |
 | M4 DIR | GPIO13 | Motor driver `D4` | Direction can be inverted in firmware if needed |
-| BNO085 SPI SCK | GPIO15 | BNO085 `SCL` | Optional later IMU; SPI mode, not I2C |
-| BNO085 SPI MISO | GPIO16 | BNO085 `SDA` | Optional later IMU; BNO085 -> ESP32-S3 |
-| BNO085 SPI MOSI | GPIO17 | BNO085 `DI` | Optional later IMU; ESP32-S3 -> BNO085 |
-| BNO085 SPI CS | GPIO18 | BNO085 `CS` | Optional later IMU chip select |
-| BNO085 INT | GPIO21 | BNO085 `INT` | Optional later IMU data-ready interrupt |
-| BNO085 RST | GPIO47 | BNO085 `RST` | Optional later IMU reset |
+| TCRT5000 front-left D0 | GPIO38 | Front-left ground-line sensor `D0` | Digital input; first build uses D0 only |
+| TCRT5000 front-right D0 | GPIO39 | Front-right ground-line sensor `D0` | Digital input; first build uses D0 only |
+| TCRT5000 rear-left D0 | GPIO40 | Rear-left ground-line sensor `D0` | Digital input; first build uses D0 only |
+| TCRT5000 rear-right D0 | GPIO41 | Rear-right ground-line sensor `D0` | Digital input; first build uses D0 only |
+| BNO085 SPI SCK | GPIO15 | BNO085 `SCL` | SPI mode, not I2C |
+| BNO085 SPI MISO | GPIO16 | BNO085 `SDA` | BNO085 -> ESP32-S3 |
+| BNO085 SPI MOSI | GPIO17 | BNO085 `DI` | ESP32-S3 -> BNO085 |
+| BNO085 SPI CS | GPIO18 | BNO085 `CS` | IMU chip select |
+| BNO085 INT | GPIO21 | BNO085 `INT` | Data-ready interrupt |
+| BNO085 RST | GPIO47 | BNO085 `RST` | IMU reset |
 | Serial command | USB | Mac mini | Use USB CDC / serial monitor first |
 
 Avoid using ESP32-S3 pins that are tied to USB D+/D-, boot mode, flash, PSRAM, or board-specific onboard peripherals. If the chosen development board exposes a safer documented I2C pair, prefer the board's documented pair and update this table before firmware is finalized.
@@ -251,9 +255,54 @@ Optional VL53L1X pins:
 
 Because TCA9548A isolates the sensors by channel, `XSHUT` address reassignment is not needed for the first four-sensor build.
 
-### Optional ESP32-S3 to BNO085 IMU wiring
+### ESP32-S3 to TCRT5000 ground-line sensor wiring
 
-This is a reserved wiring plan for a later heading / turn-confirmation phase. It is not part of the current ToF-first bring-up. The BNO085 should not be connected through the TCA9548A ToF multiplexer.
+The TCRT5000 modules are a separate ground-line hard-stop layer. They are **not I2C devices** and should not be connected through the TCA9548A.
+
+First build policy:
+
+- Use each TCRT5000 module's `D0` digital output only.
+- Leave `A0` unconnected for the first build.
+- Power every TCRT5000 module from the ESP32-S3 `3V3` sensor power bus, not from `5V`.
+- Connect every TCRT5000 `GND` to the shared ESP32-S3 logic `GND` bus.
+- Do not bare-parallel the `D0` signal lines. Keep one GPIO per sensor for bring-up and diagnosis.
+
+Common power wiring:
+
+| TCRT5000 pin | ESP32-S3 / rail | Notes |
+|---|---|---|
+| `VCC` | ESP32-S3 `3V3` sensor power bus | Shared by all four TCRT5000 modules |
+| `GND` | ESP32-S3 `GND` bus | Shared logic ground |
+| `A0` | Not connected | Reserved only if analog reflectance becomes necessary later |
+
+Digital signal wiring:
+
+| Physical placement | TCRT5000 pin | ESP32-S3 GPIO | Purpose |
+|---|---|---:|---|
+| Front-left underside | `D0` | GPIO38 | Front-left black tape / boundary trigger |
+| Front-right underside | `D0` | GPIO39 | Front-right black tape / boundary trigger |
+| Rear-left underside | `D0` | GPIO40 | Rear-left black tape / boundary trigger |
+| Rear-right underside | `D0` | GPIO41 | Rear-right black tape / boundary trigger |
+
+Runtime semantics:
+
+- Any active TCRT5000 trigger means ground-line hard stop.
+- TCRT hard stop has higher priority than ToF avoidance, roam mode, or Mac mini motion command.
+- Firmware should support per-channel active polarity / inversion, because TCRT5000 breakout boards may output either active-low or active-high depending on comparator wiring and threshold setting.
+- Firmware should debounce the D0 inputs before treating them as stable, but the first response should still be conservative.
+
+Physical installation notes:
+
+- Place the four sensors under the body near the front-left, front-right, rear-left, and rear-right edges.
+- Keep each sensor close enough to the floor for the specific module and floor material.
+- Tune the module potentiometer on the actual floor and black tape used in the exhibition space.
+- If 3V3 or GND fan-out becomes physically crowded, use a small soldered power bus / harness with insulation and strain relief. Do not twist bare wires together as a final installation.
+
+### ESP32-S3 to BNO085 IMU wiring
+
+The BNO085 is connected for the current bring-up as an observation-only IMU safety sensor. The first firmware version initializes the sensor, reads quaternion / yaw / pitch / roll, calibrated gyro, and accelerometer telemetry, and reports it to the Mac-side Dashboard. It does **not** set tilt / impact thresholds, stop motors, steer the chassis, or gate keyboard / gamepad / roam commands yet.
+
+The BNO085 should not be connected through the TCA9548A ToF multiplexer.
 
 Use **SPI** for the Adafruit BNO085 breakout when possible. The BNO08x I2C path is known to be troublesome with some ESP32 / ESP32-S3 and I2C multiplexer combinations, while SPI keeps the IMU off the ToF safety bus.
 
@@ -274,10 +323,17 @@ SPI and control pins:
 | `SDA` | `MISO` | GPIO16 | BNO085 data to ESP32-S3 |
 | `DI` | `MOSI` | GPIO17 | ESP32-S3 data to BNO085 |
 | `CS` | chip select | GPIO18 | Keep separate from motor / ToF pins |
-| `INT` | data ready | GPIO21 | Input interrupt; optional in early polling tests but recommended |
-| `RST` | reset | GPIO47 | Output reset; recommended for recovery |
+| `INT` | data ready | GPIO21 | Required for stable SPI with the Adafruit BNO085 breakout |
+| `RST` | reset | GPIO47 | Required for stable SPI recovery |
 
-Planned IMU responsibilities:
+Current IMU responsibilities:
+
+- Confirm that SPI wiring and BNO085 reports are stable
+- Report yaw / pitch / roll for manual observation during movement
+- Report gyro and acceleration ranges for later threshold design
+- Count sensor resets and expose stale / not_found / no_update status
+
+Deferred IMU responsibilities:
 
 - Short-turn yaw confirmation for commands such as `turn 45` or `spin_angle 90`
 - Heading hold during low-speed open-loop driving
@@ -289,6 +345,7 @@ Limits:
 - The IMU does not replace wheel encoders.
 - It should not be used as factual distance traveled.
 - It should not be treated as full localization, odometry, SLAM, or path replay.
+- Current firmware does not use IMU readings to stop or alter motor output.
 
 ### ESP32-S3 to motor driver control wiring
 
@@ -361,16 +418,27 @@ Important boundaries:
 
 ### Power wiring overview
 
-| Subsystem | Power source | Notes |
-|---|---|---|
-| Mac mini | Dedicated Mac mini supply / mobile AC or battery solution | Upper computer |
-| ESP32-S3 | USB from Mac mini for first build | Also provides serial |
-| TCA9548A | ESP32-S3 `3V3` | Logic only |
-| VL53L1X x4 | TCA9548A channel `VCC` to sensor `VIN` | Keep logic at 3.3V |
-| Motor driver signal side | ESP32-S3 `3V3` and `GND` to `+V` / `-V` | Isolated signal input side |
-| Motor driver motor bus | Separate motor supply / battery | Must match 36JP555 and driver current demand |
-| Small speaker | Mac mini audio / USB / own power | Do not route through ESP32 |
-| Small screen | Mac mini HDMI / USB-C and screen power | Do not expose debug dashboard to visitors |
+| Subsystem / board | VCC / positive connection | GND / negative connection | Notes |
+|---|---|---|---|
+| Mac mini | Dedicated Mac mini supply / mobile AC or battery solution | Mac mini power return | Upper computer |
+| ESP32-S3 | USB from Mac mini for first build | USB ground from Mac mini | Also provides serial command and telemetry |
+| TCA9548A upstream side | ESP32-S3 `3V3` to TCA9548A `VCC` | ESP32-S3 `GND` to TCA9548A `GND` | Keep upstream I2C at 3.3V |
+| VL53L1X ToF sensors x4 | TCA9548A selected channel `VCC` to sensor `VIN` | TCA9548A selected channel `GND` to sensor `GND` | Channel `SCLn` / `SDAn` connect to sensor `SCL` / `SDA` |
+| TCRT5000 ground-line sensors x4 | ESP32-S3 `3V3` sensor power bus to each `VCC` | ESP32-S3 `GND` bus to each `GND` | D0 lines go separately to GPIO38-GPIO41; A0 unused |
+| BNO085 IMU | ESP32-S3 `3V3` to BNO085 `VIN` | ESP32-S3 `GND` to BNO085 `GND` | SPI telemetry bring-up; observation only |
+| Motor driver signal side | ESP32-S3 `3V3` to driver signal `+V` | ESP32-S3 `GND` to driver signal `-V` | Isolated signal input side; PWM/DIR reference this ground |
+| Motor driver motor bus | Separate motor supply positive to motor bus `VCC` / `+` | Separate motor supply negative to motor bus `GND` / `-` | Must match 36JP555 and driver current demand |
+| 36JP555 motors x4 | Motor driver channel output terminal | Motor driver channel output terminal | Do not connect motors directly to ESP32-S3 |
+| Small speaker | Mac mini audio / USB / own power | Speaker power return | Do not route audio through ESP32 |
+| Small screen | Mac mini HDMI / USB-C and screen power | Screen power return | Body-state surface, not developer dashboard |
+
+Power distribution notes:
+
+- All ESP32-S3 logic modules must share the ESP32-S3 logic `GND` unless a vendor manual explicitly requires isolation.
+- The ESP32-S3 `3V3` and `GND` rails may be distributed with a small soldered bus / harness if there are not enough physical header holes.
+- Signal lines should remain separate unless a deliberate circuit such as diode-OR, open-drain OR, or an IO expander is added.
+- Motor bus positive must never be connected to ESP32-S3 `5V`, `3V3`, or any GPIO.
+- If the ESP32-S3 `3V3` rail becomes unstable after adding ToF, TCRT5000, and IMU modules, add a separate regulated 3.3V sensor supply and keep its ground common with ESP32-S3 logic ground.
 
 ### First power-on checklist
 
@@ -379,12 +447,13 @@ Important boundaries:
 3. Confirm TCA9548A appears at I2C address `0x70`.
 4. Confirm each VL53L1X responds only on its selected TCA9548A channel.
 5. Confirm Serial telemetry prints four distance values.
-6. Connect motor driver signal-side `+V` / `-V`, still with motor bus power disconnected.
-7. Confirm PWM and DIR pins idle to safe values (`PWM = 0`).
-8. Connect one motor channel only with low current / low PWM for first motor test.
-9. Verify forward / reverse / brake for one motor.
-10. Repeat for M2-M4.
-11. Only after each motor channel is verified, test four-wheel low-speed motion with ToF obstacle gate enabled.
+6. Confirm each TCRT5000 `D0` input changes state when it sees the actual black tape.
+7. Connect motor driver signal-side `+V` / `-V`, still with motor bus power disconnected.
+8. Confirm PWM and DIR pins idle to safe values (`PWM = 0`).
+9. Connect one motor channel only with low current / low PWM for first motor test.
+10. Verify forward / reverse / brake for one motor.
+11. Repeat for M2-M4.
+12. Only after each motor channel is verified, test four-wheel low-speed motion with ToF obstacle gate enabled.
 
 ---
 
@@ -567,9 +636,9 @@ The system may use PWM duration as a rough motion estimate, but it must not trea
 If stable route repetition or stronger turn confirmation becomes necessary later, add:
 
 1. Wheel or motor encoders for actual wheel rotation feedback
-2. A six-axis IMU for short-turn yaw confirmation
+2. Later use of the already connected BNO085 for short-turn yaw confirmation
 
-The IMU is intentionally deferred for now. The current implementation should finish ToF-based obstacle avoidance first.
+The BNO085 is currently a telemetry-only bring-up sensor. Turn confirmation, heading hold, tilt thresholds, impact thresholds, and automatic safety actions remain deferred until normal driving data is observed.
 
 ---
 
@@ -722,6 +791,8 @@ The current plan intentionally sequences these after the first ToF avoidance mil
 | Lower controller | ESP32-S3 development board | 1 | Body controller |
 | I2C multiplexer | TCA9548A expansion board | 1 | Expands one I2C bus to ToF channels |
 | ToF sensor | VL53L1X breakout | 4 | Local obstacle sensing |
+| Ground-line sensor | TCRT5000 module | 4 | Black tape boundary / hard-stop input |
+| IMU | Adafruit BNO085 breakout | 1 | SPI telemetry bring-up; not yet a motion gate |
 | Motor driver | Fierce four-channel brushed DC motor driver Ver2.3 | 1 | PWM + DIR control |
 | Drive motor | 36JP555 brushed DC geared motor | 4 | No encoder in current phase |
 | Display | Small screen | 1 | Body-state surface |
@@ -733,7 +804,7 @@ Deferred:
 
 | Category | Part | Reason |
 |---|---|---|
-| IMU | Six-axis IMU | Deferred until ToF avoidance is stable |
+| IMU safety thresholds | BNO085 rule integration | Deferred until telemetry ranges are observed on the real chassis |
 | Wheel feedback | Encoders | Deferred because current route accepts small drift |
 | Audio DAC | PCM5102A | Removed from active plan |
 
@@ -831,9 +902,9 @@ Stranger runtime state / expression output
 - Implement the small screen as body-state surface
 - Map Stranger expression/state into screen modes without exposing operator internals
 
-### Deferred Phase: IMU / encoder additions
+### Deferred Phase: IMU rule / encoder additions
 
-- Add six-axis IMU only if turn confirmation becomes necessary
+- Use BNO085 telemetry for turn confirmation, heading hold, tilt detection, or impact detection only after observing real motion ranges
 - Add encoders only if route repetition, straight-line correction, or odometry becomes necessary
 
 ---

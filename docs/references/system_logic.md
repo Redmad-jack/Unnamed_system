@@ -22,10 +22,11 @@
 2. 基于 ToF 的本地下位机避障 gate
 3. 四路电机的低速开环移动
 4. Mac mini 与 ESP32-S3 的 USB Serial 通信
+5. BNO085 IMU SPI bring-up 与可观测 telemetry
 
 当前暂缓：
 
-- IMU 控制闭环接入；BNO085 SPI 引脚已作为后续扩展预留
+- IMU 控制闭环接入：当前只观测 BNO085 数据，不设置阈值、不自动停机、不参与 roam gate
 - 编码器
 - 稳定巡路 / 精确里程计
 - SLAM / 地图导航
@@ -49,7 +50,7 @@ graph TB
             STATE["State / Memory / Policy / Expression"]
             AUDIO["TTS / Audio output"]
             SCREEN_DRV["小屏幕渲染或页面服务"]
-            BODY_BRIDGE["Body Bridge（后续接入）"]
+            BODY_BRIDGE["BodyBridge USB Serial"]
             DB[("SQLite memory.db")]
             LLM["Claude / Anthropic-compatible API"]
         end
@@ -58,6 +59,7 @@ graph TB
             SERIAL["USB Serial protocol"]
             TOF_GATE["ToF obstacle gate"]
             I2C["I2C master"]
+            SPI["SPI master"]
             PWM["PWM + DIR motor output"]
         end
 
@@ -67,6 +69,7 @@ graph TB
             TFR["VL53L1X front_right"]
             TL["VL53L1X left"]
             TR["VL53L1X right"]
+            IMU["BNO085 IMU"]
         end
 
         subgraph DRIVE ["移动执行"]
@@ -86,6 +89,7 @@ graph TB
     V -- "物理靠近 / 障碍物" --> TFR
     V -- "侧向距离变化" --> TL
     V -- "侧向距离变化" --> TR
+    V -- "搬动 / 倾斜 / 碰撞" --> IMU
 
     LOOP --> STATE
     STATE --> DB
@@ -99,12 +103,14 @@ graph TB
     BODY_BRIDGE -- "motion intent / body mode" --> SERIAL
     SERIAL --> TOF_GATE
     I2C --> MUX
+    SPI --> IMU
     MUX --> TFL & TFR & TL & TR
     TFL & TFR & TL & TR --> TOF_GATE
     TOF_GATE --> PWM
     PWM --> DRIVER
     DRIVER --> M1 & M2 & M3 & M4
     TOF_GATE -- "distance / safety telemetry" --> BODY_BRIDGE
+    IMU -- "orientation / gyro / accel telemetry" --> BODY_BRIDGE
 ```
 
 ### 2.2 三个运行层
@@ -112,8 +118,8 @@ graph TB
 | 层次 | 硬件 / 模块 | 职责 |
 |---|---|---|
 | 意图与表达层 | Mac mini / Stranger runtime | 状态、记忆、策略、表达、声音、小屏幕状态、运动意图 |
-| 本地身体控制层 | ESP32-S3 | ToF 轮询、本地避障 gate、最终电机 PWM + DIR 输出 |
-| 物理层 | VL53L1X、TCA9548A、电机驱动、36JP555 | 距离感知与开环低速移动 |
+| 本地身体控制层 | ESP32-S3 | ToF 轮询、BNO085 telemetry、本地避障 gate、最终电机 PWM + DIR 输出 |
+| 物理层 | VL53L1X、TCA9548A、BNO085、电机驱动、36JP555 | 距离感知、姿态观测与开环低速移动 |
 
 核心边界：Mac mini 可以提出移动意图，但 ESP32-S3 必须在输出电机前应用本地 ToF 避障限制。
 
@@ -216,9 +222,9 @@ ESP32-S3 不运行：
 | BNO085 INT | GPIO21 | BNO085 `INT` |
 | BNO085 RST | GPIO47 | BNO085 `RST` |
 
-#### 可选 BNO085 IMU SPI 接线
+#### BNO085 IMU SPI 接线
 
-该接线是后续 heading / 转向确认阶段的预留方案，不属于当前 ToF-first 联调阻塞项。BNO085 不应挂在 TCA9548A 下游，避免 IMU 通信影响 ToF 安全总线。
+该接线已进入当前 bring-up 阶段。BNO085 第一版只作为可观测 IMU telemetry：固件初始化 SPI、读取 yaw / pitch / roll、quaternion、gyro、accel 并上报 Dashboard。它暂时不设置倾斜 / 撞击阈值，不自动停机，不拦截键盘 / 手柄 / roam。BNO085 不应挂在 TCA9548A 下游，避免 IMU 通信影响 ToF 安全总线。
 
 | BNO085 引脚 | ESP32-S3 / 电源 | 用途 |
 |---|---|---|
@@ -230,12 +236,18 @@ ESP32-S3 不运行：
 | `SDA` | GPIO16 | SPI `MISO`，BNO085 到 ESP32-S3 |
 | `DI` | GPIO17 | SPI `MOSI`，ESP32-S3 到 BNO085 |
 | `CS` | GPIO18 | SPI chip select |
-| `INT` | GPIO21 | data-ready interrupt |
-| `RST` | GPIO47 | IMU reset |
+| `INT` | GPIO21 | data-ready interrupt，SPI 稳定工作需要接入 |
+| `RST` | GPIO47 | IMU reset，SPI 恢复需要接入 |
 
-BNO085 加入后的职责边界：
+BNO085 当前职责：
 
-- 可用于短时间 yaw 转向确认、heading hold、角速度限制、倾斜 / 搬起 / 碰撞检测
+- 观察 yaw / pitch / roll、gyro、accel 在正常行驶、转向、搬起、碰撞时的范围
+- 暴露 `ok` / `not_found` / `report_error` / `no_update` / `stale` 等 IMU 状态
+- 为后续阈值和安全策略提供现场数据
+
+BNO085 后续可承担的职责：
+
+- 短时间 yaw 转向确认、heading hold、角速度限制、倾斜 / 搬起 / 碰撞检测
 - 不用于真实里程、全局定位、SLAM 或路径复现
 - 不替代编码器；若后续需要稳定里程和轮速闭环，仍需轮端编码器
 
@@ -332,7 +344,7 @@ TCA9548A channel connector 与 VL53L1X module connector 的线序不同，必须
 |---|---|
 | `body/protocol.py` | 将 Dashboard allowlist command / teleop intent 转成 ESP32 当前文本命令 |
 | `body/serial_bridge.py` | USB Serial connect/disconnect、读 ESP32 JSON line、写命令、将 telemetry 推入缓存 |
-| `body/telemetry.py` | 缓存 ToF、obstacle、motion、motor state、ack/error，供 Hardware 面板显示 |
+| `body/telemetry.py` | 缓存 ToF、BNO085 IMU、obstacle、motion、motor state、ack/error，供 Hardware 面板显示 |
 
 后续可新增：
 
@@ -639,7 +651,7 @@ gantt
 
 后续可选阶段：
 
-- 若转向角度需要更稳定，再加入六轴 IMU
+- 若转向角度需要更稳定，再把 BNO085 telemetry 接入 heading / turn control
 - 若需要稳定巡路、直线修正或里程估计，再加入编码器
 
 ---

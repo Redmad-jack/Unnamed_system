@@ -64,6 +64,12 @@ PlatformIO `.cpp` files do not get the same automatic `Arduino.h` insertion that
 | M3 DIR | GPIO12 |
 | M4 PWM | GPIO7 |
 | M4 DIR | GPIO13 |
+| BNO085 SPI SCK | GPIO15 |
+| BNO085 SPI MISO | GPIO16 |
+| BNO085 SPI MOSI | GPIO17 |
+| BNO085 SPI CS | GPIO18 |
+| BNO085 INT | GPIO21 |
+| BNO085 RST | GPIO47 |
 | Board WS2812 RGB | GPIO48 |
 
 The motor outputs initialize to `PWM=0`. The firmware will not move motors on boot.
@@ -73,7 +79,7 @@ not used as a power, fault, or motion status indicator.
 
 Motor commands are guarded by `arm`. After `arm`, the firmware allows short timed motor pulses for testing. The arm window expires after 60 seconds and all motor pulses auto-stop.
 
-The first local safety loop is ToF based. It does not estimate pose, distance traveled, or heading. Without encoders or IMU, motion is open-loop and low-speed only; the closed loop is limited to near-field obstacle reaction.
+The first local safety loop is ToF based. It does not estimate pose, distance traveled, or heading. Without encoders, motion remains open-loop and low-speed only; the closed loop is limited to near-field obstacle reaction. BNO085 IMU data is currently observation-only telemetry and does not stop or steer the chassis.
 
 ## Firmware structure
 
@@ -85,6 +91,7 @@ The firmware is split by responsibility:
 | `motor_driver.*` | PWM/DIR output, arm/disarm, auto-stop, single-motor tests |
 | `chassis.*` | 4WD differential mixing for throttle + turn, with obstacle gate filtering |
 | `tof_scan.*` | TCA9548A / VL53L1X channel scan and distance telemetry |
+| `imu_monitor.*` | BNO085 SPI initialization, yaw/pitch/roll, gyro, accel telemetry |
 | `obstacle_gate.*` | ToF safety state, slow-zone clipping, hard-stop blocking |
 | `roam_controller.*` | ESP32-local low-speed reactive roaming |
 | `serial_protocol.*` | Text and JSON serial command parsing |
@@ -100,6 +107,7 @@ help
 status
 scan
 tof
+imu
 telemetry on
 telemetry off
 avoidance on
@@ -121,6 +129,7 @@ Examples:
 ```text
 scan
 tof
+imu
 telemetry off
 arm
 motor 1 70 500
@@ -143,7 +152,9 @@ disarm
 
 `motors off` immediately stops all PWM outputs and disarms the motor test gate.
 
-`telemetry off` stops automatic `tof`, `obstacle`, and `heartbeat` output so manual motor tests are readable. Manual commands such as `status`, `tof`, and `scan` still print on demand. Use `telemetry on` to resume automatic telemetry for the Mac-side bridge.
+`imu` prints one BNO085 telemetry snapshot. In the current firmware it is a safety-observation sensor only: no tilt threshold, impact threshold, heading hold, or automatic motor stop is applied.
+
+`telemetry off` stops automatic `tof`, `obstacle`, `imu`, and `heartbeat` output so manual motor tests are readable. Manual commands such as `status`, `tof`, `imu`, and `scan` still print on demand. Use `telemetry on` to resume automatic telemetry for the Mac-side bridge.
 
 Use a low duty first. If a motor does not move at duty 60-70, increase gradually. For isolated bench diagnosis, the firmware allows duty up to 250 out of the ESP32's 8-bit PWM range.
 
@@ -188,6 +199,7 @@ JSON commands are also accepted for the later Mac mini bridge:
 {"cmd":"arm"}
 {"cmd":"status"}
 {"cmd":"tof"}
+{"cmd":"imu"}
 {"cmd":"telemetry","enabled":false}
 {"cmd":"avoidance","enabled":true}
 {"cmd":"roam","enabled":true}
@@ -198,6 +210,23 @@ JSON commands are also accepted for the later Mac mini bridge:
 ```
 
 Use `scan` after wiring the TCA9548A and VL53L1X sensors. The expected first result is TCA9548A at `0x70`, then VL53L1X at `0x29` on channels 0-3. Use `tof` after `scan` succeeds to inspect per-channel `distance_mm`, freshness, and VL53L1X range status.
+
+Use `imu` after wiring the BNO085 in SPI mode. Expected bring-up output is `present=true`, `initialized=true`, `fresh=true`, and `state="ok"`. Slowly tilt or rotate the body and confirm `yaw_deg`, `pitch_deg`, `roll_deg`, `gyro_rad_s`, and `accel_m_s2` change. If the IMU is disconnected or in the wrong interface mode, `state` should remain `not_found`, `report_error`, `no_update`, or `stale`, but manual chassis control is not blocked by IMU state in this version.
+
+BNO085 SPI wiring details:
+
+| BNO085 pin | ESP32-S3 / power | Notes |
+|---|---|---|
+| `VIN` | `3V3` | Keep logic at 3.3V |
+| `GND` | `GND` | Shared logic ground |
+| `SCL` | GPIO15 | SPI SCK |
+| `SDA` | GPIO16 | SPI MISO, BNO085 to ESP32-S3 |
+| `DI` | GPIO17 | SPI MOSI, ESP32-S3 to BNO085 |
+| `CS` | GPIO18 | SPI chip select |
+| `INT` | GPIO21 | Data-ready interrupt, required for stable SPI |
+| `RST` | GPIO47 | Reset, required for stable SPI |
+| `P0/PS0` | `3V3` | SPI mode select |
+| `P1/PS1` | `3V3` | SPI mode select |
 
 `roam start` requires `arm` and `avoidance on`. Roam is local to the ESP32 and only uses conservative primitives: slow forward, slow-zone steering bias, hard-stop escape reverse, and turn-away.
 

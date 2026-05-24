@@ -8,12 +8,14 @@ namespace stranger {
 
 SerialProtocol::SerialProtocol(MotorDriver &motors,
                                ChassisController &chassis, TofScanner &tof,
-                               ObstacleGate &gate, RoamController &roam)
+                               ObstacleGate &gate, RoamController &roam,
+                               ImuMonitor &imu)
     : motors_(motors),
       chassis_(chassis),
       tof_(tof),
       gate_(gate),
-      roam_(roam) {}
+      roam_(roam),
+      imu_(imu) {}
 
 void SerialProtocol::update() {
   while (Serial.available() > 0) {
@@ -33,6 +35,7 @@ void SerialProtocol::printHelp() {
   Serial.println("  status");
   Serial.println("  scan");
   Serial.println("  tof");
+  Serial.println("  imu");
   Serial.println("  telemetry on");
   Serial.println("  telemetry off");
   Serial.println("  avoidance on");
@@ -50,6 +53,7 @@ void SerialProtocol::printHelp() {
   Serial.println("  test all [duty 1..250] [duration_ms <= 30000]");
   Serial.println("JSON examples:");
   Serial.println("  {\"cmd\":\"tof\"}");
+  Serial.println("  {\"cmd\":\"imu\"}");
   Serial.println("  {\"cmd\":\"telemetry\",\"enabled\":false}");
   Serial.println("  {\"cmd\":\"avoidance\",\"enabled\":true}");
   Serial.println("  {\"cmd\":\"roam\",\"enabled\":true}");
@@ -64,14 +68,20 @@ void SerialProtocol::printStatus() {
       "\"max_test_duty\":%d,\"max_duration_ms\":%u,\"tca_0x70\":%s,"
       "\"sda\":%u,\"scl\":%u,"
       "\"last_left\":%d,\"last_right\":%d,\"avoidance_enabled\":%s,"
-      "\"obstacle_state\":\"%s\",\"roam_enabled\":%s,\"roam_mode\":\"%s\"}\n",
+      "\"obstacle_state\":\"%s\",\"roam_enabled\":%s,\"roam_mode\":\"%s\","
+      "\"imu_present\":%s,\"imu_initialized\":%s,\"imu_fresh\":%s,"
+      "\"imu_state\":\"%s\"}\n",
       static_cast<unsigned long>(millis()), motors_.isArmed() ? "true" : "false",
       MOTOR_TEST_MAX_DUTY, MOTOR_TEST_MAX_MS,
       tof_.tcaPresent() ? "true" : "false", PIN_I2C_SDA, PIN_I2C_SCL,
       mix.left, mix.right, gate_.enabled() ? "true" : "false", gate_.stateName(),
-      roam_.enabled() ? "true" : "false", roam_.mode());
+      roam_.enabled() ? "true" : "false", roam_.mode(),
+      imu_.present() ? "true" : "false",
+      imu_.initialized() ? "true" : "false", imu_.fresh() ? "true" : "false",
+      imu_.stateName());
   motors_.printStatus(Serial);
   gate_.printState(Serial);
+  imu_.printTelemetry(Serial);
 }
 
 void SerialProtocol::printHeartbeat() {
@@ -82,6 +92,7 @@ void SerialProtocol::printHeartbeat() {
 void SerialProtocol::printTelemetry() {
   tof_.printTelemetry(Serial);
   gate_.printState(Serial);
+  imu_.printTelemetry(Serial);
 }
 
 bool SerialProtocol::telemetryEnabled() const { return telemetryEnabled_; }
@@ -116,6 +127,10 @@ void SerialProtocol::handleText(String command) {
   }
   if (command == "tof") {
     printTelemetry();
+    return;
+  }
+  if (command == "imu") {
+    imu_.printTelemetry(Serial);
     return;
   }
   if (command == "telemetry on") {
@@ -260,6 +275,10 @@ void SerialProtocol::handleJson(const String &line) {
   }
   if (strcmp(cmd, "tof") == 0) {
     printTelemetry();
+    return;
+  }
+  if (strcmp(cmd, "imu") == 0) {
+    imu_.printTelemetry(Serial);
     return;
   }
   if (strcmp(cmd, "telemetry") == 0) {

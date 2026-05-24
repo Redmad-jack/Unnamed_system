@@ -40,13 +40,16 @@ def test_body_serial_bridge_ingests_json_lines_into_telemetry():
         b'{"type":"tof","tca_0x70":true,"sensors":[{"channel":0,"present":true,"initialized":true,"range_valid":true,"distance_mm":120}]}'
     )
     bridge.ingest_line('{"type":"obstacle","state":"clear","avoidance_enabled":true}')
+    bridge.ingest_line('{"type":"imu","present":true,"initialized":true,"fresh":true,"state":"ok","yaw_deg":4.5}')
 
     status = bridge.status()
     snapshot = store.snapshot()
-    assert status["rx_count"] == 2
+    assert status["rx_count"] == 3
     assert snapshot["controller"]["tca_0x70"] is True
     assert snapshot["tof"]["sensors"][0]["distance_mm"] == 120
     assert snapshot["obstacle"]["state"] == "clear"
+    assert snapshot["imu"]["present"] is True
+    assert snapshot["imu"]["yaw_deg"] == 4.5
 
 
 def test_body_serial_bridge_connects_sends_and_disconnects_with_fake_serial():

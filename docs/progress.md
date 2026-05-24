@@ -11,7 +11,7 @@
 - 当前核心能力：Stranger 文本协议、最高优先级艺术运行 context、热加载 prompt partial、本轮语言强制优先与错语言兜底、非否认式能力边界正向模板与输入通道防自我否认约束、含“恋旧” memory_gravity 的新心理状态机、带上一轮轻量 bridge 的 pre-memory 轻量 `first_unit` + 已说出口 first 去重续写的 memory-aware `second_unit` 按句文本/audio progressive 输出、main LLM 后端 streaming buffer、two-stage / sentence-queued TTS、短期/情节/反思记忆、匿名 visitor profile 与跨 session visitor 记忆召回、Visitor Identity & Session Gating V1（含结构化 match result / candidate confirmation 调试 API、自然确认解析、visitor memory permission 和开发者面板 auto-bind high confidence 开关）、本地 face signature capture / quality gate / 私有向量库 / historical matching / 后台 face candidate capture / signature deactivate、可解释/可选 embedding 召回、Memory Preview、managed memory proposal → commit、influence log / curation、Runtime Harness Trace、JSONL 端到端 latency 日志、可选 YOLO person presence detection（含 camera index 扫描/切换与 Browser Camera fallback）、可选火山 ASR 2.0 / TTS 2.0 双向流式 Audio Adapter、开发者面板 Audio playback queue / watchdog / barge-in 诊断
 - 当前验证基线：`PYTHONPATH=src python3 -m pytest -p no:debugging`，最近一次完整结果为 `576 passed`
 - 当前交接重点：下一步不再优先扩展 UI；voice signature 与 face/voice combined confidence 暂列 P1 optional，P0 收束为 face-only visitor identity 的现场阈值校准、数据库污染测试和 visitor memory continuity 验证；能力自我描述已改为非否认式边界，后续按该口径继续做行为测试调优
-- 当前硬件参考方案：`docs/references/hardware.md` 与 `docs/references/system_logic.md` 已更新为单 Stranger 移动身体方向：Mac mini 随身上位机 + 1 片 ESP32-S3 + TCA9548A + 4 个 VL53L1X + 四路有刷电机驱动 + 4 个 36JP555；`firmware/stranger_esp32s3` 已有 PlatformIO 下位机固件，包含串口协议、ToF telemetry / obstacle gate、四路电机测试、4WD 差速底盘开环控制和 ESP32 本地低速 roam
+- 当前硬件参考方案：`docs/references/hardware.md` 与 `docs/references/system_logic.md` 已更新为单 Stranger 移动身体方向：Mac mini 随身上位机 + 1 片 ESP32-S3 + TCA9548A + 4 个 VL53L1X + BNO085 SPI IMU + 四路有刷电机驱动 + 4 个 36JP555；`firmware/stranger_esp32s3` 已有 PlatformIO 下位机固件，包含串口协议、ToF telemetry / obstacle gate、BNO085 observation telemetry、四路电机测试、4WD 差速底盘开环控制和 ESP32 本地低速 roam；Dashboard Hardware tab 已能通过 BodyBridge 做键盘 / Xbox 手柄 teleop，控制前必须显式开启对应 Teleop 开关
 - 当前注意事项：`AGENTS.md` 与 `CLAUDE.md` 有用户侧未提交差异；除非明确要求，不应在常规任务中触碰
 
 ---
@@ -39,14 +39,40 @@
 
 ### P2：后续身体与展览阶段
 
-- [ ] 按 `docs/references/hardware.md` 的单 Stranger 移动身体方案推进硬件原型；下一步在真实 TCA9548A + 4 个 VL53L1X 接线后验证 `scan` / `tof` telemetry、遮挡响应和 ToF obstacle gate
+- [ ] 按 `docs/references/hardware.md` 的单 Stranger 移动身体方案推进硬件原型；下一步上传新固件后验证 BNO085 `imu` telemetry、Dashboard IMU 区块、以及真实 TCA9548A + 4 个 VL53L1X 的 `scan` / `tof` telemetry、遮挡响应和 ToF obstacle gate
 - [ ] 身体外观、声音风格、小屏幕身体表面和移动行为映射仍待设计；不要把小屏幕做成观众侧 dashboard
-- [ ] 更完整的运动安全策略、IMU、编码器、稳定巡路和底盘控制闭环暂缓，等 ToF 避障和低速开环游走稳定后再实现
+- [ ] 更完整的运动安全策略、IMU 阈值 / heading hold、编码器、稳定巡路和底盘控制闭环暂缓；BNO085 当前只做观测，不自动停机、不拦截 teleop / roam
 - [ ] 部署认证、访客身份策略最终版与展期终止仪式仍待设计确认
 
 ---
 
 ## Changelog
+
+### 2026-05-24：BNO085 IMU Bring-up / Safety Observation
+
+- [x] ESP32-S3 固件新增 `ImuMonitor`：按 `hardware.md` 的 SPI pin map 初始化 Adafruit BNO085，启用 `SH2_GAME_ROTATION_VECTOR`、`SH2_GYROSCOPE_CALIBRATED`、`SH2_ACCELEROMETER`
+- [x] 串口协议新增 `imu` / `{"cmd":"imu"}`，`status` 增加 `imu_present`、`imu_initialized`、`imu_fresh`、`imu_state`，周期 telemetry 增加 `type:"imu"`
+- [x] 上位机 `BodyTelemetryStore` 解析 `type:"imu"` 并在 `/api/v1/body/status` snapshot 中新增 `imu`；BodyBridge allowlist 与 fake serial 测试覆盖 `imu`
+- [x] Dashboard Hardware tab 新增 `imu` 按钮与 `IMU / BNO085` 区块，显示 online/fresh/state、yaw/pitch/roll、gyro、accel、event/reset 和 last error
+- [x] 当前 IMU 只作为可观测安全传感器：不设置倾斜 / 撞击阈值，不自动停机，不改变 keyboard / gamepad / roam / ToF obstacle gate
+- [x] 文档同步 `docs/references/hardware.md`、`docs/references/system_logic.md`、`docs/BACKEND_STRUCTURE.md` 与 `firmware/stranger_esp32s3/README.md`
+- [x] 验证：
+  - `~/.platformio/penv/bin/pio run -d firmware/stranger_esp32s3`
+  - `python3 -m pytest -p no:debugging tests/unit/test_body_protocol.py tests/unit/test_body_serial_bridge.py tests/unit/test_body_telemetry.py`（`14 passed`）
+  - `node --check src/conscious_entity/interfaces/static/dashboard.js`
+  - `git diff --check`
+
+### 2026-05-23：Dashboard Xbox Gamepad Teleop
+
+- [x] Hardware tab 新增 `Gamepad Teleop` 显式开关；未开启时手柄摇杆 / 扳机不会打开 teleop WebSocket，也不会发送 `drive`
+- [x] 接入浏览器 Gamepad API：左摇杆控制 throttle / turn，`RT` 加速到 `180`，`LT` 线性刹车到 `0`，`B` / `X` 发送 kill stop
+- [x] Controls 区域新增滑块式 `Obstacle Avoidance` 开关：开启时 ESP32 ToF obstacle gate 可以拦截键盘 / 手柄运动，关闭时进入纯手动调试控制；点击后 UI 先本地切换，避免等待下一包 ESP32 telemetry 时看起来无效
+- [x] 键盘 teleop 与手柄 teleop 互斥；切换、断开串口、手柄断开、WebSocket 关闭时都会停止当前 teleop，后端仍在关闭 / timeout 时发送 `motors off`
+- [x] Hardware tab 显示手柄 ID、index、当前 throttle / turn、LT / RT 百分比，便于现场确认有线 Xbox 手柄连通性
+- [x] 验证：
+  - `node --check src/conscious_entity/interfaces/static/dashboard.js`
+  - `python3 -m pytest -p no:debugging tests/unit/test_body_protocol.py tests/unit/test_body_serial_bridge.py tests/unit/test_body_telemetry.py`（`13 passed`）
+  - `git diff --check`
 
 ### 2026-05-22：Face-only Visitor Identity Closure
 

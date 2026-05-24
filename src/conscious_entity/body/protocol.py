@@ -19,6 +19,7 @@ ALLOWED_DISCRETE_COMMANDS = {
     "telemetry on",
     "telemetry off",
     "tof",
+    "imu",
     "status",
 }
 

@@ -1399,6 +1399,16 @@
     return `${(ms / 1000).toFixed(1)} s`;
   }
 
+  function numText(value, digits = 1, suffix = "") {
+    if (value === null || value === undefined || Number.isNaN(Number(value))) return "—";
+    return `${Number(value).toFixed(digits)}${suffix}`;
+  }
+
+  function vectorText(value, digits = 2) {
+    const source = value || {};
+    return `x ${numText(source.x, digits)} · y ${numText(source.y, digits)} · z ${numText(source.z, digits)}`;
+  }
+
   function motionDisplay(value) {
     return MOTION_LABELS[value] || value || "Unknown";
   }
@@ -1434,6 +1444,52 @@
     return { type: "intent", throttle, turn, duration_ms: 180 };
   }
 
+  function gamepadButtonValue(gamepad, index) {
+    const button = gamepad && gamepad.buttons ? gamepad.buttons[index] : null;
+    if (button === null || button === undefined) return 0;
+    if (typeof button === "number") return clamp(button, 0, 1);
+    return clamp(Number(button.value || (button.pressed ? 1 : 0)), 0, 1);
+  }
+
+  function applyGamepadDeadzone(value, deadzone = 0.12) {
+    const numeric = Number(value || 0);
+    if (Math.abs(numeric) < deadzone) return 0;
+    const sign = numeric < 0 ? -1 : 1;
+    return sign * ((Math.abs(numeric) - deadzone) / (1 - deadzone));
+  }
+
+  function firstConnectedGamepad() {
+    if (!navigator.getGamepads) return null;
+    return Array.from(navigator.getGamepads()).find((pad) => pad && pad.connected !== false) || null;
+  }
+
+  function computeGamepadIntent(gamepad) {
+    const axisX = applyGamepadDeadzone(gamepad && gamepad.axes ? gamepad.axes[0] : 0);
+    const axisY = applyGamepadDeadzone(gamepad && gamepad.axes ? gamepad.axes[1] : 0);
+    const brake = gamepadButtonValue(gamepad, 6);
+    const boost = gamepadButtonValue(gamepad, 7);
+    const kill = gamepadButtonValue(gamepad, 1) > 0.5 || gamepadButtonValue(gamepad, 2) > 0.5;
+    const speed = 80 + (180 - 80) * boost;
+    const brakeScale = 1 - brake;
+    return {
+      intent: kill
+        ? { type: "kill" }
+        : {
+            type: "intent",
+            throttle: Math.round(-axisY * speed * brakeScale),
+            turn: Math.round(axisX * speed * brakeScale),
+            duration_ms: 180,
+          },
+      debug: {
+        axis_x: axisX,
+        axis_y: axisY,
+        brake,
+        boost,
+        kill,
+      },
+    };
+  }
+
   function HardwareMotionPane() {
     const [body, setBody] = useState(null);
     const [bridge, setBridge] = useState(null);
@@ -1445,10 +1501,20 @@
     const [commandBusy, setCommandBusy] = useState("");
     const [teleopActive, setTeleopActive] = useState(false);
     const [teleopStatus, setTeleopStatus] = useState("idle");
+    const [avoidanceOverride, setAvoidanceOverride] = useState(null);
+    const [gamepadActive, setGamepadActive] = useState(false);
+    const [gamepadStatus, setGamepadStatus] = useState(
+      navigator.getGamepads ? "off" : "Gamepad API unavailable",
+    );
+    const [gamepadInfo, setGamepadInfo] = useState(null);
+    const [gamepadOutput, setGamepadOutput] = useState({ throttle: 0, turn: 0, brake: 0, boost: 0 });
     const keysRef = useRef(new Set());
     const teleopSocketRef = useRef(null);
     const teleopTimerRef = useRef(null);
     const sendTeleopRef = useRef(() => {});
+    const teleopIntentRef = useRef({ type: "intent", throttle: 0, turn: 0, duration_ms: 180 });
+    const gamepadFrameRef = useRef(null);
+    const gamepadLastSendRef = useRef(0);
 
     const load = useCallback(async () => {
       try {
@@ -1474,12 +1540,23 @@
     const controller = body && body.controller ? body.controller : {};
     const motion = body && body.motion ? body.motion : {};
     const obstacle = body && body.obstacle ? body.obstacle : {};
+    const imu = body && body.imu ? body.imu : {};
     const tof = body && body.tof ? body.tof : {};
     const sensors = Array.isArray(tof.sensors) ? tof.sensors : [];
     const motors = body && Array.isArray(body.motors) ? body.motors : [];
     const motorDuties = motion.motor_duties || {};
     const bridgeConnected = Boolean(bridge && bridge.connected);
     const bridgeEnabled = !bridge || bridge.enabled !== false;
+    const rawAvoidanceEnabled = Boolean(controller.avoidance_enabled);
+    const avoidanceEnabled = avoidanceOverride === null ? rawAvoidanceEnabled : avoidanceOverride;
+    const avoidanceBusy = commandBusy === "avoidance on" || commandBusy === "avoidance off";
+    const controlActive = teleopActive || gamepadActive;
+
+    useEffect(() => {
+      if (avoidanceOverride !== null && rawAvoidanceEnabled === avoidanceOverride) {
+        setAvoidanceOverride(null);
+      }
+    }, [avoidanceOverride, rawAvoidanceEnabled]);
 
     const connectBridge = async () => {
       const selectedPort = String(port || "").trim();
@@ -1495,6 +1572,7 @@
           body: JSON.stringify({ port: selectedPort, baud: Number(baud) || 115200 }),
         });
         setBridge(data);
+        setAvoidanceOverride(null);
         setBridgeError("");
       } catch (err) {
         setBridgeError(err.message);
@@ -1505,12 +1583,36 @@
 
     const disconnectBridge = async () => {
       setTeleopActive(false);
+      setGamepadActive(false);
+      setAvoidanceOverride(null);
       setCommandBusy("disconnect");
       try {
         const data = await fetchJSON("/api/v1/body/bridge/disconnect", { method: "POST" });
         setBridge(data);
         setBridgeError("");
       } catch (err) {
+        setBridgeError(err.message);
+      } finally {
+        setCommandBusy("");
+      }
+    };
+
+    const toggleAvoidance = async () => {
+      const nextEnabled = !avoidanceEnabled;
+      const command = nextEnabled ? "avoidance on" : "avoidance off";
+      setAvoidanceOverride(nextEnabled);
+      setCommandBusy(command);
+      try {
+        const data = await fetchJSON("/api/v1/body/command", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ command }),
+        });
+        setBridge(data);
+        setBridgeError("");
+        await load();
+      } catch (err) {
+        setAvoidanceOverride(null);
         setBridgeError(err.message);
       } finally {
         setCommandBusy("");
@@ -1538,7 +1640,7 @@
     const sendTeleopFrame = useCallback((overridePayload = null) => {
       const socket = teleopSocketRef.current;
       if (!socket || socket.readyState !== WebSocket.OPEN) return;
-      const payload = overridePayload || computeTeleopIntent(keysRef.current);
+      const payload = overridePayload || teleopIntentRef.current;
       socket.send(JSON.stringify(payload));
       if (payload.type === "kill") {
         setTeleopStatus("kill stop sent");
@@ -1549,7 +1651,7 @@
     sendTeleopRef.current = sendTeleopFrame;
 
     useEffect(() => {
-      if (!teleopActive) {
+      if (!controlActive) {
         if (teleopTimerRef.current) {
           window.clearInterval(teleopTimerRef.current);
           teleopTimerRef.current = null;
@@ -1559,11 +1661,13 @@
           teleopSocketRef.current = null;
         }
         keysRef.current.clear();
+        teleopIntentRef.current = { type: "intent", throttle: 0, turn: 0, duration_ms: 180 };
         return undefined;
       }
       if (!bridgeConnected) {
         setTeleopStatus("connect serial bridge first");
         setTeleopActive(false);
+        setGamepadActive(false);
         return undefined;
       }
       const socket = new WebSocket(`${window.location.protocol === "https:" ? "wss" : "ws"}://${window.location.host}/api/v1/body/teleop`);
@@ -1609,7 +1713,7 @@
         }
         keysRef.current.clear();
       };
-    }, [bridgeConnected, teleopActive]);
+    }, [bridgeConnected, controlActive]);
 
     useEffect(() => {
       if (!teleopActive) return undefined;
@@ -1623,20 +1727,25 @@
         if (event.code === "Space") {
           event.preventDefault();
           keysRef.current.clear();
+          teleopIntentRef.current = { type: "intent", throttle: 0, turn: 0, duration_ms: 180 };
           sendTeleopRef.current({ type: "kill" });
           return;
         }
         if (!isTeleopKey(event.code)) return;
         event.preventDefault();
         keysRef.current.add(event.code);
-        sendTeleopRef.current();
+        const payload = computeTeleopIntent(keysRef.current);
+        teleopIntentRef.current = payload;
+        sendTeleopRef.current(payload);
       };
       const keyup = (event) => {
         if (isEditableTarget(event.target)) return;
         if (!isTeleopKey(event.code)) return;
         event.preventDefault();
         keysRef.current.delete(event.code);
-        sendTeleopRef.current();
+        const payload = computeTeleopIntent(keysRef.current);
+        teleopIntentRef.current = payload;
+        sendTeleopRef.current(payload);
       };
       window.addEventListener("keydown", keydown);
       window.addEventListener("keyup", keyup);
@@ -1645,6 +1754,94 @@
         window.removeEventListener("keyup", keyup);
       };
     }, [teleopActive]);
+
+    useEffect(() => {
+      const connected = (event) => {
+        const pad = event.gamepad;
+        setGamepadStatus(`connected: ${pad.id || `index ${pad.index}`}`);
+        setGamepadInfo({ id: pad.id || "unknown", index: pad.index, buttons: pad.buttons.length, axes: pad.axes.length });
+      };
+      const disconnected = () => {
+        setGamepadStatus("disconnected");
+        setGamepadInfo(null);
+        setGamepadActive(false);
+      };
+      window.addEventListener("gamepadconnected", connected);
+      window.addEventListener("gamepaddisconnected", disconnected);
+      return () => {
+        window.removeEventListener("gamepadconnected", connected);
+        window.removeEventListener("gamepaddisconnected", disconnected);
+      };
+    }, []);
+
+    useEffect(() => {
+      if (!gamepadActive) {
+        if (gamepadFrameRef.current) {
+          window.cancelAnimationFrame(gamepadFrameRef.current);
+          gamepadFrameRef.current = null;
+        }
+        setGamepadOutput({ throttle: 0, turn: 0, brake: 0, boost: 0 });
+        if (!teleopActive) {
+          teleopIntentRef.current = { type: "intent", throttle: 0, turn: 0, duration_ms: 180 };
+        }
+        return undefined;
+      }
+      if (!navigator.getGamepads) {
+        setGamepadStatus("Gamepad API unavailable");
+        setGamepadActive(false);
+        return undefined;
+      }
+      if (!bridgeConnected) {
+        setGamepadStatus("connect serial bridge first");
+        setGamepadActive(false);
+        return undefined;
+      }
+
+      const poll = () => {
+        const pad = firstConnectedGamepad();
+        if (!pad) {
+          setGamepadStatus("waiting for controller input");
+          setGamepadInfo(null);
+          const stop = { type: "intent", throttle: 0, turn: 0, duration_ms: 180 };
+          teleopIntentRef.current = stop;
+          if (nowMs() - gamepadLastSendRef.current > 120) {
+            sendTeleopRef.current(stop);
+            gamepadLastSendRef.current = nowMs();
+          }
+          gamepadFrameRef.current = window.requestAnimationFrame(poll);
+          return;
+        }
+
+        const { intent, debug } = computeGamepadIntent(pad);
+        setGamepadInfo({ id: pad.id || "unknown", index: pad.index, buttons: pad.buttons.length, axes: pad.axes.length });
+        setGamepadOutput({
+          throttle: intent.throttle || 0,
+          turn: intent.turn || 0,
+          brake: debug.brake,
+          boost: debug.boost,
+        });
+        setGamepadStatus(debug.kill ? "kill button pressed" : `active: ${pad.id || `index ${pad.index}`}`);
+
+        if (nowMs() - gamepadLastSendRef.current > 80) {
+          if (intent.type === "kill") {
+            teleopIntentRef.current = { type: "intent", throttle: 0, turn: 0, duration_ms: 180 };
+          } else {
+            teleopIntentRef.current = intent;
+          }
+          sendTeleopRef.current(intent);
+          gamepadLastSendRef.current = nowMs();
+        }
+        gamepadFrameRef.current = window.requestAnimationFrame(poll);
+      };
+
+      poll();
+      return () => {
+        if (gamepadFrameRef.current) {
+          window.cancelAnimationFrame(gamepadFrameRef.current);
+          gamepadFrameRef.current = null;
+        }
+      };
+    }, [bridgeConnected, gamepadActive, teleopActive, sendTeleopFrame]);
 
     if (error) {
       return h("div", { className: "section" },
@@ -1713,8 +1910,26 @@
       ),
       h("div", { className: "section" },
         h("div", { className: "section-title" }, "Controls"),
+        h("button", {
+          className: `safety-switch ${avoidanceEnabled ? "active" : "manual"}`,
+          disabled: commandBusy || !bridgeConnected,
+          onClick: toggleAvoidance,
+          role: "switch",
+          "aria-checked": avoidanceEnabled,
+        },
+          h("span", { className: "safety-switch-track", "aria-hidden": "true" },
+            h("span", { className: "safety-switch-knob" }),
+          ),
+          h("span", { className: "safety-switch-copy" },
+            h("span", { className: "safety-switch-title" }, avoidanceEnabled ? "Obstacle Avoidance On" : "Manual Override"),
+            h("span", { className: "safety-switch-help" }, avoidanceEnabled
+              ? "ToF obstacle gate can stop keyboard or gamepad motion."
+              : "Obstacle gate is bypassed; keyboard and gamepad have direct manual control."),
+            h("span", { className: "safety-switch-status" }, avoidanceBusy ? "Switching..." : (bridgeConnected ? "Click to toggle" : "Connect serial bridge first")),
+          ),
+        ),
         h("div", { className: "toolbar" },
-          ["arm", "motors off", "avoidance on", "avoidance off", "telemetry on", "telemetry off", "tof", "status"].map((command) => h("button", {
+          ["arm", "motors off", "telemetry on", "telemetry off", "tof", "imu", "status"].map((command) => h("button", {
             key: command,
             className: command === "motors off" ? "btn-sm danger" : "btn-sm",
             disabled: commandBusy || !bridgeConnected,
@@ -1727,11 +1942,34 @@
         h("button", {
           className: `teleop-capture ${teleopActive ? "active" : ""}`,
           disabled: !bridgeConnected,
-          onClick: () => setTeleopActive((value) => !value),
+          onClick: () => {
+            setGamepadActive(false);
+            setTeleopActive((value) => !value);
+          },
         },
           h("span", { className: "teleop-title" }, teleopActive ? "Teleop Active" : "Click to Capture Keyboard"),
           h("span", { className: "teleop-help" }, "WASD / arrows move · Shift fast 180 · Ctrl slow 60 · Space kill stop · Esc release"),
           h("span", { className: "teleop-status" }, teleopStatus),
+        ),
+      ),
+      h("div", { className: "section" },
+        h("div", { className: "section-title" }, "Gamepad Teleop"),
+        h("button", {
+          className: `teleop-capture ${gamepadActive ? "active" : ""}`,
+          disabled: !bridgeConnected || !navigator.getGamepads,
+          onClick: () => {
+            setTeleopActive(false);
+            setGamepadActive((value) => !value);
+          },
+        },
+          h("span", { className: "teleop-title" }, gamepadActive ? "Gamepad Active" : "Click to Enable Gamepad"),
+          h("span", { className: "teleop-help" }, "Left stick drives · RT accelerates to 180 · LT brakes to 0 · B / X kill stop"),
+          h("span", { className: "teleop-status" }, gamepadStatus),
+        ),
+        h("div", { className: "gamepad-readout" },
+          h("div", null, `Controller: ${gamepadInfo ? `${gamepadInfo.id} · index ${gamepadInfo.index}` : "none"}`),
+          h("div", null, `Output: throttle ${gamepadOutput.throttle} · turn ${gamepadOutput.turn}`),
+          h("div", null, `LT brake ${(gamepadOutput.brake * 100).toFixed(0)}% · RT boost ${(gamepadOutput.boost * 100).toFixed(0)}%`),
         ),
       ),
       h("div", { className: "section" },
@@ -1753,6 +1991,18 @@
           h("tr", null, h("td", null, "Reason"), h("td", null, obstacle.reason || "—")),
           h("tr", null, h("td", null, "Front L / R"), h("td", null, `${obstacle.front_left_mm ?? "—"} / ${obstacle.front_right_mm ?? "—"} mm`)),
           h("tr", null, h("td", null, "Suggested turn"), h("td", null, obstacle.suggested_turn ?? "—")),
+        )),
+      ),
+      h("div", { className: "section" },
+        h("div", { className: "section-title" }, "IMU / BNO085"),
+        h("table", null, h("tbody", null,
+          h("tr", null, h("td", null, "Online"), h("td", { className: statusTone(imu.present && imu.initialized) }, `${yn(imu.present)} · ${imu.state || "unknown"}`)),
+          h("tr", null, h("td", null, "Fresh"), h("td", null, `${yn(imu.fresh)} · ${ageText(imu.age_ms)}`)),
+          h("tr", null, h("td", null, "Yaw / Pitch / Roll"), h("td", null, `${numText(imu.yaw_deg, 1, " deg")} / ${numText(imu.pitch_deg, 1, " deg")} / ${numText(imu.roll_deg, 1, " deg")}`)),
+          h("tr", null, h("td", null, "Gyro rad/s"), h("td", null, vectorText(imu.gyro_rad_s, 3))),
+          h("tr", null, h("td", null, "Accel m/s^2"), h("td", null, vectorText(imu.accel_m_s2, 2))),
+          h("tr", null, h("td", null, "Events / resets"), h("td", null, `${imu.event_count ?? 0} / ${imu.reset_count ?? 0}`)),
+          h("tr", null, h("td", null, "Last error"), h("td", null, imu.last_error || "—")),
         )),
       ),
       h("div", { className: "section" },
@@ -1785,22 +2035,37 @@
     );
   }
 
+  const tofPhysicalNames = {
+    0: "front A",
+    1: "left",
+    2: "front B",
+    3: "right",
+  };
+
   function TofSensorCard({ sensor }) {
     const valid = Boolean(sensor.present && sensor.initialized && sensor.range_valid && !sensor.timeout);
+    const physicalName = tofPhysicalNames[sensor.channel] || sensor.name || "tof";
+    const hasDistance = sensor.distance_mm !== null && sensor.distance_mm !== undefined;
     return h("div", { className: `tof-card ${valid ? "ok" : sensor.present ? "warn" : "offline"}` },
       h("div", { className: "tof-card-head" },
-        h("span", null, `${sensor.channel}: ${sensor.name || "tof"}`),
+        h("span", null, `${sensor.channel}: ${physicalName}`),
         h("span", null, valid ? "valid" : sensor.present ? "check" : "offline"),
       ),
-      h("div", { className: "tof-distance" }, sensor.distance_mm === null || sensor.distance_mm === undefined ? "—" : `${sensor.distance_mm} mm`),
-      h("div", { className: "kv-grid" },
-        h("span", null, "Present"), h("span", null, yn(sensor.present)),
-        h("span", null, "Initialized"), h("span", null, yn(sensor.initialized)),
-        h("span", null, "Fresh"), h("span", null, yn(sensor.fresh)),
-        h("span", null, "Range valid"), h("span", null, yn(sensor.range_valid)),
-        h("span", null, "Timeout"), h("span", null, yn(sensor.timeout)),
-        h("span", null, "Age"), h("span", null, ageText(sensor.age_ms)),
-        h("span", null, "Status"), h("span", null, sensor.status || "—"),
+      h("div", { className: "tof-card-body" },
+        h("div", { className: "kv-grid tof-meta" },
+          h("span", null, "Firmware"), h("span", null, sensor.name || "—"),
+          h("span", null, "Present"), h("span", null, yn(sensor.present)),
+          h("span", null, "Initialized"), h("span", null, yn(sensor.initialized)),
+          h("span", null, "Fresh"), h("span", null, yn(sensor.fresh)),
+          h("span", null, "Range valid"), h("span", null, yn(sensor.range_valid)),
+          h("span", null, "Timeout"), h("span", null, yn(sensor.timeout)),
+          h("span", null, "Age"), h("span", null, ageText(sensor.age_ms)),
+          h("span", null, "Status"), h("span", null, sensor.status || "—"),
+        ),
+        h("div", { className: "tof-reading" },
+          h("div", { className: `tof-distance ${hasDistance ? "" : "empty"}` }, hasDistance ? String(sensor.distance_mm) : "—"),
+          h("div", { className: "tof-distance-unit" }, hasDistance ? "mm" : (sensor.status || "no distance")),
+        ),
       ),
     );
   }

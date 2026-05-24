@@ -25,6 +25,7 @@ def test_body_protocol_clamps_drive_intent():
 
 def test_body_protocol_allows_only_discrete_debug_commands():
     assert build_discrete_command("  Avoidance   OFF ") == "avoidance off"
+    assert build_discrete_command(" imu ") == "imu"
     assert build_stop_command() == "motors off"
 
     with pytest.raises(BodyProtocolError):

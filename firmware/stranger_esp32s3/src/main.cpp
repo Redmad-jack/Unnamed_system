@@ -1,6 +1,7 @@
 #include <Arduino.h>
 
 #include "chassis.h"
+#include "imu_monitor.h"
 #include "motor_driver.h"
 #include "obstacle_gate.h"
 #include "roam_controller.h"
@@ -13,10 +14,12 @@ namespace {
 stranger::MotorDriver motorDriver;
 stranger::ChassisController chassis(motorDriver);
 stranger::TofScanner tofScanner;
+stranger::ImuMonitor imuMonitor;
 stranger::ObstacleGate obstacleGate(tofScanner);
 stranger::RoamController roamController(motorDriver, chassis, obstacleGate);
 stranger::SerialProtocol serialProtocol(motorDriver, chassis, tofScanner,
-                                        obstacleGate, roamController);
+                                        obstacleGate, roamController,
+                                        imuMonitor);
 
 uint32_t lastHeartbeatMs = 0;
 uint32_t lastTelemetryMs = 0;
@@ -31,6 +34,7 @@ void setup() {
 
   motorDriver.begin();
   tofScanner.begin();
+  imuMonitor.begin();
   obstacleGate.update();
   chassis.setObstacleGate(&obstacleGate);
 
@@ -44,6 +48,7 @@ void setup() {
 void loop() {
   motorDriver.update();
   tofScanner.update();
+  imuMonitor.update();
   obstacleGate.update();
   roamController.update();
   serialProtocol.update();
