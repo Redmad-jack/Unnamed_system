@@ -744,7 +744,7 @@
       const context = canvas.getContext("2d");
       if (!context) return;
       context.drawImage(video, 0, 0, targetWidth, targetHeight);
-      const blob = await new Promise((resolve) => canvas.toBlob(resolve, "image/jpeg", 0.76));
+      const blob = await new Promise((resolve) => canvas.toBlob(resolve, "image/jpeg", 0.95));
       if (!blob) return;
       browserBusyRef.current = true;
       try {
@@ -2216,6 +2216,8 @@
     const config = identityData && identityData.config ? identityData.config : {};
     const events = identityData && Array.isArray(identityData.recent_events) ? identityData.recent_events : [];
     const autoBind = Boolean(config.auto_bind_high_confidence);
+    const handoffAfterLeave = config.handoff_after_primary_leave_enabled !== false;
+    const primaryRelease = status && status.last_primary_release ? status.last_primary_release : null;
     const faceModel = faceIdentityData && faceIdentityData.model ? faceIdentityData.model : {};
     const faceStore = faceIdentityData && faceIdentityData.store ? faceIdentityData.store : {};
     const faceCapture = faceIdentityData && faceIdentityData.last_capture ? faceIdentityData.last_capture : null;
@@ -2289,6 +2291,23 @@
         setConfigSaving(false);
       }
     }, [autoBind, onSaved]);
+
+    const toggleHandoffAfterLeave = useCallback(async () => {
+      setConfigSaving(true);
+      setConfigError("");
+      try {
+        await fetchJSON("/api/v1/identity/config", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ handoff_after_primary_leave_enabled: !handoffAfterLeave }),
+        });
+        await onSaved();
+      } catch (error) {
+        setConfigError(error.message);
+      } finally {
+        setConfigSaving(false);
+      }
+    }, [handoffAfterLeave, onSaved]);
 
     const captureFace = useCallback(async () => {
       setFaceSaving(true);
@@ -2376,6 +2395,8 @@
         status ? h("tr", null, h("td", null, "Visitor memory"), h("td", null, status.visitor_memory_allowed ? "allowed" : "blocked until confirmed")) : null,
         status ? h("tr", null, h("td", null, "Runtime"), h("td", null, status.runtime_state || "—")) : null,
         status ? h("tr", null, h("td", null, "Session decision"), h("td", null, status.last_decision || "—")) : null,
+        status ? h("tr", null, h("td", null, "主访客画面状态"), h("td", null, `${status.primary_presence_status || "—"} · track ${status.primary_track_id || "none"}`)) : null,
+        status ? h("tr", null, h("td", null, "最近释放原因"), h("td", null, primaryRelease ? `${primaryRelease.visitor_id || "visitor"} · ${primaryRelease.reason || "left"}` : "none")) : null,
         status ? h("tr", null, h("td", null, "Encounter / intent"), h("td", null, `${status.encounter_status || "—"} · ${status.intent_status || "—"}`)) : null,
         status ? h("tr", null, h("td", null, "Identity"), h("td", null, `${status.identity_status || "—"} · face ${status.face_confidence_level || "none"} · voice ${status.voice_confidence_level || "none"} · combined ${status.combined_confidence_level || "none"}`)) : null,
         status ? h("tr", null, h("td", null, "Waiting confirm"), h("td", null, status.waiting_for_identity_confirmation ? "yes" : "no")) : null,
@@ -2383,6 +2404,7 @@
         status ? h("tr", null, h("td", null, "Natural confirm"), h("td", null, status.last_natural_confirmation ? `${status.last_natural_confirmation.status || "—"} · ${status.last_natural_confirmation.candidate_visitor_id || "none"}` : "none")) : null,
         status ? h("tr", null, h("td", null, "Interruptions"), h("td", null, status.interruption_count || 0)) : null,
         h("tr", null, h("td", null, "Auto-bind"), h("td", null, autoBind ? "high confidence on" : "high confidence off")),
+        h("tr", null, h("td", null, "交接"), h("td", null, handoffAfterLeave ? "主访客离开后允许下一位接管" : "主访客离开后不自动接管")),
       )),
       h("div", { className: "toolbar", style: { marginTop: "8px" } },
         h("input", {
@@ -2403,6 +2425,12 @@
           onClick: toggleAutoBind,
           title: "Only auto-binds high-confidence candidates when no primary visitor exists and dialogue is not active.",
         }, configSaving ? "Saving…" : `Auto-bind ${autoBind ? "On" : "Off"}`),
+        h("button", {
+          className: handoffAfterLeave ? "btn-sm active" : "btn-sm",
+          disabled: configSaving || !identityData || identityData.enabled === false,
+          onClick: toggleHandoffAfterLeave,
+          title: "只有当前主访客离开被跟踪的对话窗口后，下一位访客才允许接管。",
+        }, configSaving ? "Saving…" : `主访客离开后允许下一位接管：${handoffAfterLeave ? "开启" : "关闭"}`),
         h("button", {
           className: "btn-sm",
           disabled: identitySaving || !status || !status.candidate_visitor_id,
@@ -2459,7 +2487,7 @@
         h("div", { className: "item" },
           h("div", { className: "item-meta" }, "V1 constraints"),
           h("div", { className: "item-text" },
-            `single visitor ${constraints.single_primary_visitor_per_session ? "on" : "off"} · auto-bind high confidence ${autoBind ? "on" : "off"} · group session ${constraints.group_session_enabled ? "on" : "off"} · wide-angle identity ${constraints.wide_angle_identity_input_enabled ? "on" : "off"}`,
+            `single visitor ${constraints.single_primary_visitor_per_session ? "on" : "off"} · auto-bind high confidence ${autoBind ? "on" : "off"} · handoff after primary leave ${handoffAfterLeave ? "on" : "off"} · group session ${constraints.group_session_enabled ? "on" : "off"} · wide-angle identity ${constraints.wide_angle_identity_input_enabled ? "on" : "off"}`,
           ),
         ),
         events.length ? h("details", { className: "item" },

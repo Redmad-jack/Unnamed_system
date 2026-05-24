@@ -35,7 +35,7 @@ class FaceIdentityConfig:
     min_detection_score: float = 0.65
     min_face_width_ratio: float = 0.10
     min_face_height_ratio: float = 0.12
-    min_sharpness: float = 35.0
+    min_sharpness: float = 12.0
     max_abs_pose_degrees: float = 35.0
     signature_dir: Path = Path("data/signatures/face")
 
@@ -528,10 +528,22 @@ class FaceIdentityManager:
             pending_capture = self._pending_capture
         if pending_capture is None:
             raise FaceIdentityError("No accepted pending face capture is available for enrollment.")
-        reference = self.store.save(visitor_id, pending_capture)
+        return self.enroll_capture(visitor_id, pending_capture)
+
+    def enroll_capture(
+        self,
+        visitor_id: str,
+        capture: FaceCapture | None,
+    ) -> IdentitySignatureReference:
+        if capture is None:
+            raise FaceIdentityError("No accepted face capture is available for enrollment.")
+        reference = self.store.save(visitor_id, capture)
         with self._lock:
             self._last_enrolled = reference
-            if self._pending_capture is pending_capture:
+            if (
+                self._pending_capture is not None
+                and self._pending_capture.capture_id == capture.capture_id
+            ):
                 self._pending_capture = None
         return reference
 

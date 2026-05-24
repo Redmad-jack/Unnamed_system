@@ -83,6 +83,8 @@ class VisionRuntimeConfigRequest(BaseModel):
 
 class IdentityConfigRequest(BaseModel):
     auto_bind_high_confidence: Optional[bool] = None
+    handoff_after_primary_leave_enabled: Optional[bool] = None
+    primary_leave_grace_seconds: Optional[float] = None
 
 
 class IdentityMatchSignalRequest(BaseModel):

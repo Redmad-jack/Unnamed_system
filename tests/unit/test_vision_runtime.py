@@ -7,7 +7,9 @@ from conscious_entity.perception.event_types import EventType
 from conscious_entity.vision import (
     VisionConfig,
     VisionConfigurationError,
+    VisionDetection,
     VisionManager,
+    VisionPersonTracker,
     VisionPresenceTracker,
 )
 
@@ -66,6 +68,51 @@ def test_presence_tracker_emits_long_silence_once_per_window():
     assert tracker.update(True, now=6.0) == []
     assert tracker.update(True, now=9.9) == []
     assert tracker.update(True, now=10.3) == [EventType.LONG_SILENCE_DETECTED]
+
+
+def test_person_tracker_keeps_track_id_for_continuous_person():
+    tracker = VisionPersonTracker(max_missing_seconds=5.0)
+
+    detections, tracks = tracker.update([
+        VisionDetection("person", 0.9, (100, 100, 220, 340)),
+    ], now=0.0)
+    first_id = detections[0].track_id
+
+    detections, tracks = tracker.update([
+        VisionDetection("person", 0.88, (112, 104, 232, 344)),
+    ], now=0.2)
+
+    assert detections[0].track_id == first_id
+    assert len(tracks) == 1
+    assert tracks[0].active is True
+
+
+def test_person_tracker_keeps_missing_track_during_short_occlusion():
+    tracker = VisionPersonTracker(max_missing_seconds=5.0)
+    tracker.update([VisionDetection("person", 0.9, (100, 100, 220, 340))], now=0.0)
+
+    detections, tracks = tracker.update([], now=1.0)
+
+    assert detections == []
+    assert len(tracks) == 1
+    assert tracks[0].active is False
+    assert tracks[0].status == "missing"
+
+
+def test_person_tracker_creates_new_track_when_another_person_replaces_a():
+    tracker = VisionPersonTracker(max_missing_seconds=5.0)
+    first_detection, _tracks = tracker.update([
+        VisionDetection("person", 0.9, (80, 90, 200, 330)),
+    ], now=0.0)
+    first_id = first_detection[0].track_id
+
+    detections, tracks = tracker.update([
+        VisionDetection("person", 0.92, (520, 100, 650, 350)),
+    ], now=0.5)
+
+    assert detections[0].track_id != first_id
+    assert sorted(track.track_id for track in tracks) == [1, 2]
+    assert [track.status for track in tracks] == ["missing", "active"]
 
 
 def test_vision_manager_status_disabled_without_model_path():
@@ -223,7 +270,9 @@ def test_vision_manager_processes_browser_frame(monkeypatch, tmp_path):
     assert status["recognition"]["pipeline_status"] == "running"
     assert status["recognition"]["camera_status"] == "browser"
     assert status["recognition"]["source"] == "browser"
+    assert status["latest"]["tracks"] == []
     metadata, jpeg = manager.stream_snapshot()
     assert metadata["source"] == "browser"
+    assert metadata["tracks"] == []
     assert jpeg == b"annotated-jpeg"
     assert manager.latest_frame_jpeg() == b"annotated-jpeg"

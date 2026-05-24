@@ -42,9 +42,9 @@ Identity & Session Gating 记录 encounter_candidate，但不创建 session / �
 **成功状态：** 系统就绪，等待访客输入
 **错误状态：** 数据库连接失败 → fallback 到默认初始状态，记录错误日志
 
-**当前视觉入口：** 可选 vision runtime 使用 Mac 摄像头或开发者面板 Browser Camera + 本地 YOLO 模型检测 `person` class。开发者面板可扫描本机 OpenCV 可打开的 camera index，并运行期切换通道；如果 macOS 拒绝 Python/OpenCV 摄像头权限，可改用已授权浏览器采集画面并上传帧给后端识别。稳定检测到人会触发 `USER_ENTERED`，人离开超过阈值会触发 `USER_LEFT`，持续存在但长时间没有文字交互会触发 `LONG_SILENCE_DETECTED`。这些事件同时进入 `loop.handle_system_event(...)` 和 Identity & Session Gating：前者更新状态，后者只记录 encounter / intent 状态。presence 不等于对话意图，不会自动创建新 session 或切换 visitor。
+**当前视觉入口：** 可选 vision runtime 使用 Mac 摄像头或开发者面板 Browser Camera + 本地 YOLO 模型检测 `person` class，并在不新增 DeepSORT / ByteTrack 依赖的前提下用 bbox IoU + 中心点距离维护短期 `track_id`。开发者面板可扫描本机 OpenCV 可打开的 camera index，并运行期切换通道；如果 macOS 拒绝 Python/OpenCV 摄像头权限，可改用已授权浏览器采集画面并上传帧给后端识别。稳定检测到人会触发 `USER_ENTERED`，人离开超过阈值会触发 `USER_LEFT`，持续存在但长时间没有文字交互会触发 `LONG_SILENCE_DETECTED`。这些事件同时进入 `loop.handle_system_event(...)` 和 Identity & Session Gating：前者更新状态，后者只记录 encounter / intent 状态。presence 不等于对话意图，不会自动创建新 session 或切换 visitor。
 
-**当前 face signature 入口：** 开发者可在 presence / intent 明确后，从 vision runtime 最近一帧触发 `/api/v1/identity/face/capture`。后端使用本地 InsightFace / ArcFace (`buffalo_l`) 做 face detection、quality gate、embedding 和本地历史匹配；通过质量门控后只在内存中保留 pending capture。系统也会在 dialogue intent 已确认、当前没有 confirmed primary visitor、没有 pending candidate 且 cooldown 允许时，后台触发一次 face capture + historical match；该后台流程不阻塞本轮回答。只有对已存在 visitor 调用 `/api/v1/identity/face/enroll` 时，才把 embedding 写入私有本地 signature store，并在 `visitor_profiles.metadata.identity.signatures.face[]` 追加安全 reference 与质量摘要。
+**当前 face signature 入口：** 开发者可在 presence / intent 明确后，从 vision runtime 最近一帧触发 `/api/v1/identity/face/capture`。后端使用本地 InsightFace / ArcFace (`buffalo_l`) 做 face detection、quality gate、embedding 和本地历史匹配；通过质量门控后只在内存中保留 pending capture，后续只保存本地私有 signature reference、质量摘要和 redacted capture metadata。系统也会在 dialogue intent 已确认、当前没有 confirmed primary visitor、没有 pending candidate、当前 session 仍是 `visitor_id=NULL` 且不处于 primary missing grace 时，复用同一条 pre-turn / manual / background capture helper。known high / medium match 只进入 candidate confirmation，不绑定 visitor，也不读取该 visitor memory；unknown accepted single face 在没有 medium/high known match、没有 near-medium ambiguous known cluster 时，自动创建新的 `visitor-*` profile、enroll 当前 pending face signature、绑定当前 unidentified session，然后再执行本轮 turn。无 frame、多人脸、低质量或 rejected capture 不建档、不 candidate。
 
 **macOS 摄像头权限注意：** 摄像头授权绑定启动 API 的宿主进程。Codex 启动的 Python 可能无法获得 Camera 权限；若出现 `Could not open camera index N`，可从已授权的 Terminal / VS Code 启动同一 API 进程，或在开发者面板使用 Browser Camera fallback。
 
@@ -137,7 +137,7 @@ Step 16  发送 turn_complete 到 EventBus，供调试或后续 instrumentation 
 
 **当前语音入口：** 可选 audio runtime 使用火山 STT/TTS。浏览器或未来身体节点只把 16k / 16bit / mono PCM chunk 发到 `/api/v1/audio/stt/stream`；只有 `transcript.final` 可以通过 `/api/v1/audio/dialog` 进入现有 `run_turn()`。TTS 只朗读最终已过滤的 `ExpressionOutput` 派生文本，并通过 `tts_stream_id` 播放，不允许 visitor/body 直接指定任意 TTS 文本。
 
-**当前身份/会话入口：** V1 已支持结构化识别结果接入和本地 face signature capture / matching：`/api/v1/identity/match` 可提交 face / voice / combined match result；`/api/v1/identity/face/capture` 会把本地 face match 转成 `IdentityMatchResult` 并进入同一个 gating。high confidence 默认只设置 candidate 并等待非强制确认；下一轮 prompt 会收到 candidate cue，可以自然询问“是不是 X / 是否见过”。明确肯定后绑定 visitor 并启用 visitor-scoped memory retrieval；明确否定后清空 candidate；含糊回答继续普通对话，不阻断 turn loop。开发者可临时开启 auto-bind，但只在没有 primary visitor 且非 active dialogue 时生效。已绑定 visitor 时本轮标记为 `continue_current`；未绑定 visitor 时标记为 `continue_unidentified`；显式插入信号只记录 interruption，默认不替换当前 primary visitor。
+**当前身份/会话入口：** V1 已支持结构化识别结果接入和本地 face signature capture / matching：`/api/v1/identity/match` 可提交 face / voice / combined match result；`/api/v1/identity/face/capture` 会把本地 face match 转成 `IdentityMatchResult` 并进入同一个 gating。known high / medium confidence 在没有 primary visitor 时只设置 candidate 并等待非强制确认；下一轮 prompt 会收到 candidate cue，可以自然询问“是不是 X / 是否见过”。明确肯定后绑定 visitor 并启用 visitor-scoped memory retrieval；明确否定后清空 candidate；含糊回答继续普通对话，不阻断 turn loop。陌生 accepted single face 在 unidentified ready session 中会自动创建新的匿名 `visitor-*` profile 并绑定当前 session，本轮即可写入新 visitor scope，但没有旧 memory 可召回。开发者可临时开启 auto-bind，但 face capture 正常路径仍不靠 auto-bind。已绑定 visitor 时本轮标记为 `continue_current`；未绑定 visitor 时标记为 `continue_unidentified`；显式插入信号只记录 interruption，默认不替换当前 primary visitor。确认 primary 后，如果画面里只有一个稳定 person track，系统会把主访客锁到该 `track_id`；只要该 track 仍在，B 的 high confidence 也只能记录为插入 / refuse switch。主访客 track 丢失后进入 35 秒 `missing_grace`，期间有人说话会走临时 unscoped session，不读写 A/B visitor memory，也不开放 B candidate 或新建 profile。超过 35 秒仍未回来时才释放当前 visitor，并切到 unidentified session，让下一位重新进入 candidate / confirmation 或 unknown auto-provision。
 
 **错误状态：**
 - LLM 调用失败 → 使用规则生成 fallback 回应（简短、中性）
@@ -188,7 +188,7 @@ python scripts/inspect_state.py
 
 **Harness 工作区：** 开发者 Web 看板 `Runtime` 区域显示最近一轮 Harness layer 状态、decision 和摘要。Prompt Harness 只显示 partial 名称与摘要，不显示完整 hidden prompt。
 
-**Identity & Session Gating 工作区：** 开发者 Web 看板 `Runtime` 区域显示当前 runtime state、session decision、primary visitor、candidate、encounter/intent、confidence level、latest match summary、confirmation state、是否等待确认和 interruption count。Face Signature 区域显示 provider/model、pending capture、last capture、last match 和 signature count，并提供 Capture Face / Enroll Current。V1 不展示原始人脸、原始音频、embedding 向量或完整身份库。
+**Identity & Session Gating 工作区：** 开发者 Web 看板 `Runtime` 区域显示当前 runtime state、session decision、primary visitor、candidate、主访客画面状态、最近释放原因、encounter/intent、confidence level、latest match summary、confirmation state、是否等待确认和 interruption count，并提供 `主访客离开后允许下一位接管` 运行期开关。Face Signature 区域显示 provider/model、pending capture、last capture、last match 和 signature count，并提供 Capture Face / Enroll Current。V1 不展示原始人脸、原始音频、embedding 向量或完整身份库。
 
 **访客 surface：** `/visitor` 只读取最新 `ExpressionOutput` 与少量 state 映射为文字、扰动、沉默和延迟感；如已启用声音，也只播放后端已创建的 `tts_stream_id`，不显示 dashboard 控件、内部规则、memory、prompt 或调试指标。
 

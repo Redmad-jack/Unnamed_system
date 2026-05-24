@@ -65,6 +65,7 @@ class VisionDetection:
     label: str
     confidence: float
     bbox: tuple[int, int, int, int]
+    track_id: int | None = None
 
     def to_public_dict(self) -> dict[str, Any]:
         x1, y1, x2, y2 = self.bbox
@@ -72,6 +73,7 @@ class VisionDetection:
             "label": self.label,
             "confidence": round(self.confidence, 4),
             "bbox": {"x1": x1, "y1": y1, "x2": x2, "y2": y2},
+            "track_id": self.track_id,
         }
 
 
@@ -86,6 +88,36 @@ class VisionRuntimeEvent:
             "event_type": self.event_type.value,
             "timestamp": self.timestamp.isoformat(),
             "reason": self.reason,
+        }
+
+
+@dataclass
+class VisionTrack:
+    track_id: int
+    bbox: tuple[int, int, int, int]
+    confidence: float
+    first_seen_at: float
+    last_seen_at: float
+    age_frames: int = 1
+    missed_frames: int = 0
+    active: bool = True
+
+    @property
+    def status(self) -> str:
+        return "active" if self.active else "missing"
+
+    def to_public_dict(self) -> dict[str, Any]:
+        x1, y1, x2, y2 = self.bbox
+        return {
+            "track_id": self.track_id,
+            "bbox": {"x1": x1, "y1": y1, "x2": x2, "y2": y2},
+            "confidence": round(self.confidence, 4),
+            "first_seen_at": datetime.fromtimestamp(self.first_seen_at, timezone.utc).isoformat(),
+            "last_seen_at": datetime.fromtimestamp(self.last_seen_at, timezone.utc).isoformat(),
+            "age_frames": self.age_frames,
+            "missed_frames": self.missed_frames,
+            "active": self.active,
+            "status": self.status,
         }
 
 
@@ -117,6 +149,7 @@ class VisionSnapshot:
     timestamp: datetime | None = None
     source: str = "opencv"
     detections: list[VisionDetection] = field(default_factory=list)
+    tracks: list[VisionTrack] = field(default_factory=list)
     events: list[VisionRuntimeEvent] = field(default_factory=list)
     jpeg: bytes | None = None
     raw_jpeg: bytes | None = None
@@ -136,6 +169,7 @@ class VisionSnapshot:
                 "fps": config.fps,
             },
             "detections": [item.to_public_dict() for item in self.detections],
+            "tracks": [item.to_public_dict() for item in self.tracks],
             "events": [item.to_public_dict() for item in self.events],
         }
 
@@ -204,6 +238,89 @@ class VisionPresenceTracker:
         return events
 
 
+class VisionPersonTracker:
+    def __init__(
+        self,
+        *,
+        max_missing_seconds: float = 8.0,
+        min_match_score: float = 0.18,
+    ) -> None:
+        self._max_missing_seconds = max(0.5, float(max_missing_seconds))
+        self._min_match_score = max(0.0, float(min_match_score))
+        self._next_track_id = 1
+        self._tracks: dict[int, VisionTrack] = {}
+
+    def reset(self) -> None:
+        self._next_track_id = 1
+        self._tracks.clear()
+
+    def update(self, detections: list[VisionDetection], *, now: float | None = None) -> tuple[list[VisionDetection], list[VisionTrack]]:
+        current = time.time() if now is None else float(now)
+        unmatched_tracks = set(self._tracks.keys())
+        assignments: dict[int, int] = {}
+
+        for detection_index, detection in enumerate(detections):
+            best_track_id: int | None = None
+            best_score = 0.0
+            for track_id in list(unmatched_tracks):
+                track = self._tracks[track_id]
+                score = _track_match_score(track.bbox, detection.bbox)
+                if score > best_score:
+                    best_score = score
+                    best_track_id = track_id
+            if best_track_id is not None and best_score >= self._min_match_score:
+                assignments[detection_index] = best_track_id
+                unmatched_tracks.remove(best_track_id)
+
+        tracked_detections: list[VisionDetection] = []
+        for detection_index, detection in enumerate(detections):
+            track_id = assignments.get(detection_index)
+            if track_id is None:
+                track_id = self._next_track_id
+                self._next_track_id += 1
+                self._tracks[track_id] = VisionTrack(
+                    track_id=track_id,
+                    bbox=detection.bbox,
+                    confidence=detection.confidence,
+                    first_seen_at=current,
+                    last_seen_at=current,
+                )
+            else:
+                track = self._tracks[track_id]
+                track.bbox = detection.bbox
+                track.confidence = detection.confidence
+                track.last_seen_at = current
+                track.age_frames += 1
+                track.missed_frames = 0
+                track.active = True
+            tracked_detections.append(
+                VisionDetection(
+                    detection.label,
+                    detection.confidence,
+                    detection.bbox,
+                    track_id=track_id,
+                )
+            )
+
+        for track_id in unmatched_tracks:
+            track = self._tracks[track_id]
+            track.active = False
+            track.missed_frames += 1
+
+        stale_ids = [
+            track_id
+            for track_id, track in self._tracks.items()
+            if current - track.last_seen_at > self._max_missing_seconds
+        ]
+        for track_id in stale_ids:
+            del self._tracks[track_id]
+
+        return tracked_detections, self.tracks()
+
+    def tracks(self) -> list[VisionTrack]:
+        return sorted(self._tracks.values(), key=lambda item: item.track_id)
+
+
 class VisionManager:
     def __init__(self, config: VisionConfig | None = None) -> None:
         self.config = config or VisionConfig.from_env()
@@ -211,6 +328,9 @@ class VisionManager:
             enter_frames=self.config.enter_frames,
             leave_seconds=self.config.leave_seconds,
             silence_seconds=self.config.silence_seconds,
+        )
+        self._person_tracker = VisionPersonTracker(
+            max_missing_seconds=max(8.0, self.config.leave_seconds + 5.0),
         )
         self._lock = threading.Lock()
         self._stop_event = threading.Event()
@@ -265,6 +385,7 @@ class VisionManager:
                 "frame_id": self._snapshot.frame_id,
                 "timestamp": self._snapshot.timestamp.isoformat() if self._snapshot.timestamp else None,
                 "detections": [item.to_public_dict() for item in self._snapshot.detections],
+                "tracks": [item.to_public_dict() for item in self._snapshot.tracks],
                 "events": [item.to_public_dict() for item in self._recent_events[-20:]],
                 "recent_events": [item.to_public_dict() for item in self._recent_events[-20:]],
                 "recognition": self._recognition_status_locked(disabled_reason),
@@ -272,6 +393,7 @@ class VisionManager:
                     "frame_id": self._snapshot.frame_id,
                     "timestamp": self._snapshot.timestamp.isoformat() if self._snapshot.timestamp else None,
                     "detections": [item.to_public_dict() for item in self._snapshot.detections],
+                    "tracks": [item.to_public_dict() for item in self._snapshot.tracks],
                 },
             }
 
@@ -321,6 +443,9 @@ class VisionManager:
                 leave_seconds=self.config.leave_seconds,
                 silence_seconds=self.config.silence_seconds,
             )
+            self._person_tracker = VisionPersonTracker(
+                max_missing_seconds=max(8.0, self.config.leave_seconds + 5.0),
+            )
             self._snapshot = VisionSnapshot()
             self._pending_events.clear()
             self._error = None
@@ -344,6 +469,7 @@ class VisionManager:
         started = time.time()
         model = self._load_model()
         detections = self._detect_people(model, frame)
+        detections, tracks = self._person_tracker.update(detections, now=started)
         raw_jpeg = _encode_jpeg(cv2, frame, fallback=image_bytes)
         self._draw_detections(cv2, frame, detections)
         encoded_ok, encoded = cv2.imencode(
@@ -357,7 +483,7 @@ class VisionManager:
             VisionRuntimeEvent(event, datetime.now(timezone.utc), f"{source}_person_presence")
             for event in events
         ]
-        self._publish_snapshot(detections, runtime_events, jpeg, raw_jpeg=raw_jpeg, source=source)
+        self._publish_snapshot(detections, tracks, runtime_events, jpeg, raw_jpeg=raw_jpeg, source=source)
         with self._lock:
             self._external_frame_last_at = started
         return self.status()
@@ -429,6 +555,18 @@ class VisionManager:
         with self._lock:
             return self._snapshot.raw_jpeg or self._snapshot.jpeg
 
+    def person_tracking_status(self) -> dict[str, Any]:
+        with self._lock:
+            return {
+                "frame_id": self._snapshot.frame_id,
+                "timestamp": self._snapshot.timestamp.isoformat() if self._snapshot.timestamp else None,
+                "source": self._snapshot.source,
+                "person_count": len(self._snapshot.detections),
+                "person_present": self._tracker.person_present,
+                "detections": [item.to_public_dict() for item in self._snapshot.detections],
+                "tracks": [item.to_public_dict() for item in self._snapshot.tracks],
+            }
+
     def pop_pending_events(self) -> list[EventType]:
         with self._lock:
             events = list(self._pending_events)
@@ -472,6 +610,7 @@ class VisionManager:
                     continue
 
                 detections = self._detect_people(model, frame)
+                detections, tracks = self._person_tracker.update(detections, now=started)
                 raw_jpeg = _encode_jpeg(cv2, frame)
                 self._draw_detections(cv2, frame, detections)
                 encoded_ok, encoded = cv2.imencode(
@@ -485,7 +624,7 @@ class VisionManager:
                     VisionRuntimeEvent(event, datetime.now(timezone.utc), "yolo_person_presence")
                     for event in events
                 ]
-                self._publish_snapshot(detections, runtime_events, jpeg, raw_jpeg=raw_jpeg, source="opencv")
+                self._publish_snapshot(detections, tracks, runtime_events, jpeg, raw_jpeg=raw_jpeg, source="opencv")
                 elapsed = time.time() - started
                 time.sleep(max(0.0, frame_interval - elapsed))
         except Exception as exc:
@@ -520,10 +659,15 @@ class VisionManager:
     def _draw_detections(self, cv2: Any, frame: Any, detections: list[VisionDetection]) -> None:
         for item in detections:
             x1, y1, x2, y2 = item.bbox
+            label = (
+                f"person {item.confidence:.2f}"
+                if item.track_id is None
+                else f"person {item.confidence:.2f} #{item.track_id}"
+            )
             cv2.rectangle(frame, (x1, y1), (x2, y2), (92, 124, 250), 2)
             cv2.putText(
                 frame,
-                f"person {item.confidence:.2f}",
+                label,
                 (x1, max(12, y1 - 6)),
                 cv2.FONT_HERSHEY_SIMPLEX,
                 0.45,
@@ -535,6 +679,7 @@ class VisionManager:
     def _publish_snapshot(
         self,
         detections: list[VisionDetection],
+        tracks: list[VisionTrack],
         events: list[VisionRuntimeEvent],
         jpeg: bytes | None,
         *,
@@ -552,6 +697,7 @@ class VisionManager:
                 timestamp=datetime.now(timezone.utc),
                 source=source,
                 detections=detections,
+                tracks=tracks,
                 events=events,
                 jpeg=jpeg,
                 raw_jpeg=raw_jpeg,
@@ -701,6 +847,56 @@ def _box_coords(value: Any) -> tuple[int, int, int, int] | None:
     if not isinstance(coords, (list, tuple)) or len(coords) < 4:
         return None
     return tuple(max(0, int(round(float(item)))) for item in coords[:4])  # type: ignore[return-value]
+
+
+def _track_match_score(
+    left: tuple[int, int, int, int],
+    right: tuple[int, int, int, int],
+) -> float:
+    iou = _bbox_iou(left, right)
+    left_center = _bbox_center(left)
+    right_center = _bbox_center(right)
+    distance = ((left_center[0] - right_center[0]) ** 2 + (left_center[1] - right_center[1]) ** 2) ** 0.5
+    size_scale = max(
+        _bbox_width(left),
+        _bbox_height(left),
+        _bbox_width(right),
+        _bbox_height(right),
+        1,
+    )
+    center_score = max(0.0, 1.0 - distance / (size_scale * 1.5))
+    if iou <= 0.0 and center_score <= 0.0:
+        return 0.0
+    return iou * 2.0 + center_score
+
+
+def _bbox_iou(
+    left: tuple[int, int, int, int],
+    right: tuple[int, int, int, int],
+) -> float:
+    x1 = max(left[0], right[0])
+    y1 = max(left[1], right[1])
+    x2 = min(left[2], right[2])
+    y2 = min(left[3], right[3])
+    intersection = max(0, x2 - x1) * max(0, y2 - y1)
+    if intersection <= 0:
+        return 0.0
+    left_area = _bbox_width(left) * _bbox_height(left)
+    right_area = _bbox_width(right) * _bbox_height(right)
+    union = left_area + right_area - intersection
+    return intersection / union if union > 0 else 0.0
+
+
+def _bbox_center(bbox: tuple[int, int, int, int]) -> tuple[float, float]:
+    return ((bbox[0] + bbox[2]) / 2.0, (bbox[1] + bbox[3]) / 2.0)
+
+
+def _bbox_width(bbox: tuple[int, int, int, int]) -> int:
+    return max(0, bbox[2] - bbox[0])
+
+
+def _bbox_height(bbox: tuple[int, int, int, int]) -> int:
+    return max(0, bbox[3] - bbox[1])
 
 
 def _import_required(module_name: str, package_name: str) -> Any:
