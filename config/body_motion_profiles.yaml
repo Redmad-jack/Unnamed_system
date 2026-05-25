@@ -1,0 +1,114 @@
+version: 1
+
+defaults:
+  auto_enabled: false
+  max_step_duration_ms: 220
+  max_drive_duty: 55
+  settle_ms: 140
+  default_cooldown_ms: 6000
+  require_bridge: true
+  require_motor_armed: true
+  require_avoidance_enabled: true
+  require_line_calibrated: true
+
+profiles:
+  HOLD:
+    track_policy: strict_track
+    cooldown_ms: 0
+    steps: []
+    post_check: none
+
+  NO_MOTION:
+    track_policy: display_only
+    cooldown_ms: 0
+    steps: []
+    post_check: none
+
+  APPROACH_MICRO:
+    track_policy: strict_track
+    cooldown_ms: 10000
+    steps:
+      - throttle: 32
+        turn: 0
+        duration_ms: 180
+    post_check: require_line
+
+  RETREAT_SHORT:
+    track_policy: strict_track
+    cooldown_ms: 8000
+    steps:
+      - throttle: -34
+        turn: 0
+        duration_ms: 180
+    post_check: require_line_or_reacquire
+
+  WITHDRAW:
+    track_policy: strict_track
+    cooldown_ms: 14000
+    steps:
+      - throttle: -34
+        turn: 0
+        duration_ms: 220
+      - throttle: 0
+        turn: 0
+        duration_ms: 80
+    post_check: require_line_or_reacquire
+
+  TURN_AWAY:
+    track_policy: allow_transient_line_loss
+    cooldown_ms: 10000
+    yaw_target_deg: 30
+    steps:
+      - throttle: 0
+        turn: -32
+        duration_ms: 180
+    post_check: require_line_or_reacquire
+
+  TWIST_SMALL:
+    track_policy: allow_transient_line_loss
+    cooldown_ms: 12000
+    yaw_target_deg: 30
+    steps:
+      - throttle: 0
+        turn: -28
+        duration_ms: 150
+      - throttle: 0
+        turn: 28
+        duration_ms: 300
+      - throttle: 0
+        turn: -28
+        duration_ms: 150
+    post_check: require_line_or_reacquire
+
+  TWIST_MEDIUM:
+    track_policy: allow_transient_line_loss
+    cooldown_ms: 16000
+    yaw_target_deg: 45
+    steps:
+      - throttle: 0
+        turn: -32
+        duration_ms: 190
+      - throttle: 0
+        turn: 32
+        duration_ms: 380
+      - throttle: 0
+        turn: -32
+        duration_ms: 190
+    post_check: require_line_or_reacquire
+
+  SPIN_ONE_EXPERIMENTAL:
+    track_policy: display_only
+    cooldown_ms: 720000
+    yaw_target_deg: 360
+    steps:
+      - throttle: 0
+        turn: 35
+        duration_ms: 1000
+    post_check: require_line_or_reacquire
+
+  REACQUIRE:
+    track_policy: allow_transient_line_loss
+    cooldown_ms: 3000
+    command: reacquire start
+    steps: []
+    post_check: none

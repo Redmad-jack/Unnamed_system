@@ -64,6 +64,9 @@ PlatformIO `.cpp` files do not get the same automatic `Arduino.h` insertion that
 | M3 DIR | GPIO12 |
 | M4 PWM | GPIO7 |
 | M4 DIR | GPIO13 |
+| TCRT line-left A0 | GPIO1 |
+| TCRT line-center A0 | GPIO2 |
+| TCRT line-right A0 | GPIO14 |
 | BNO085 SPI SCK | GPIO15 |
 | BNO085 SPI MISO | GPIO16 |
 | BNO085 SPI MOSI | GPIO17 |
@@ -77,9 +80,9 @@ The motor outputs initialize to `PWM=0`. The firmware will not move motors on bo
 The board's GPIO48 WS2812 RGB LED is explicitly cleared during boot. Its color is
 not used as a power, fault, or motion status indicator.
 
-Motor commands are guarded by `arm`. After `arm`, the firmware allows short timed motor pulses for testing. The arm window expires after 60 seconds and all motor pulses auto-stop.
+Motor commands are guarded by `arm` and default to disarmed on boot. After `arm`, the firmware allows short timed motor pulses for testing. The arm window expires after 60 seconds and all motor pulses auto-stop. The Dashboard BodyBridge also sends `motors off` when it connects, so taking over the serial port starts from a disarmed state.
 
-The first local safety loop is ToF based. It does not estimate pose, distance traveled, or heading. Without encoders, motion remains open-loop and low-speed only; the closed loop is limited to near-field obstacle reaction. BNO085 IMU data is currently observation-only telemetry and does not stop or steer the chassis.
+The first local motion loop combines TCRT line tracking and ToF obstacle gating. It does not estimate pose, distance traveled, or global position. Without encoders, motion remains low-speed only. BNO085 IMU data can assist line reacquire sweep direction, but TCRT readings are the only confirmation that the chassis is back on the track.
 
 ## Firmware structure
 
@@ -89,9 +92,10 @@ The firmware is split by responsibility:
 |---|---|
 | `main.cpp` | Boot sequence, main loop, heartbeat scheduling |
 | `motor_driver.*` | PWM/DIR output, arm/disarm, auto-stop, single-motor tests |
-| `chassis.*` | 4WD differential mixing for throttle + turn, with obstacle gate filtering |
+| `chassis.*` | 4WD differential mixing for throttle + turn, with line gate and obstacle gate filtering |
 | `tof_scan.*` | TCA9548A / VL53L1X channel scan and distance telemetry |
 | `imu_monitor.*` | BNO085 SPI initialization, yaw/pitch/roll, gyro, accel telemetry |
+| `line_sensors.*` | TCRT5000 calibration, black-line confidence, line position, line gate, reacquire state, telemetry |
 | `obstacle_gate.*` | ToF safety state, slow-zone clipping, hard-stop blocking |
 | `roam_controller.*` | ESP32-local low-speed reactive roaming |
 | `serial_protocol.*` | Text and JSON serial command parsing |
@@ -108,6 +112,13 @@ status
 scan
 tof
 imu
+line
+line on
+line off
+line calibrate floor
+line calibrate tape
+reacquire start
+reacquire stop
 telemetry on
 telemetry off
 avoidance on
@@ -119,6 +130,7 @@ disarm
 motors off
 motor <1-4> <duty -250..250> [duration_ms <= 30000]
 drive <throttle -250..250> <turn -250..250> [duration_ms <= 30000]
+expressive <throttle 0 only> <turn -250..250> [duration_ms <= 30000]
 spin <duty -250..250> [duration_ms <= 30000]
 test <1-4> [duty 1..250] [duration_ms <= 30000]
 test all [duty 1..250] [duration_ms <= 30000]
@@ -130,6 +142,9 @@ Examples:
 scan
 tof
 imu
+line
+line calibrate floor
+line calibrate tape
 telemetry off
 arm
 motor 1 70 500
@@ -137,6 +152,7 @@ motor 1 -70 500
 motor 1 250 30000
 drive 70 0 500
 drive 60 -20 500
+expressive 0 -30 180
 spin 60 500
 test 1
 test all 60 400
@@ -154,7 +170,46 @@ disarm
 
 `imu` prints one BNO085 telemetry snapshot. In the current firmware it is a safety-observation sensor only: no tilt threshold, impact threshold, heading hold, or automatic motor stop is applied.
 
-`telemetry off` stops automatic `tof`, `obstacle`, `imu`, and `heartbeat` output so manual motor tests are readable. Manual commands such as `status`, `tof`, `imu`, and `scan` still print on demand. Use `telemetry on` to resume automatic telemetry for the Mac-side bridge.
+`line` prints one TCRT5000 telemetry snapshot for `line_left` on GPIO1, `line_center` on GPIO2, and `line_right` on GPIO14. It includes raw ADC values, calibrated black-line confidence, detected bits, line position, line error, correction, and reacquire state.
+
+Line tracking must be calibrated on the actual exhibition floor:
+
+```text
+line calibrate floor
+line calibrate tape
+```
+
+Run `line calibrate floor` with all three sensors over normal floor. Run `line calibrate tape` with all three sensors over the black tape. After both commands, `line.calibrated` should become `true`. If the floor/tape ADC difference is too small, the firmware stays in `line_uncalibrated` / `sensor_fault`.
+
+Line position uses mature three-sensor line follower weighting:
+
+```text
+left = 0, center = 1000, right = 2000
+line_error = position - 1000
+```
+
+Negative error means the black line is left of chassis center and the chassis should correct left. Positive error means the black line is right of chassis center and the chassis should correct right. If the real chassis turns the opposite way, fix the turn polarity parameter or wiring convention, not the line-position algorithm.
+
+Detected bit meanings:
+
+| Bits | Meaning | First action |
+|---|---|---|
+| `010` | Center on black line | Low-speed follow |
+| `100` | Line left | Correct left |
+| `001` | Line right | Correct right |
+| `110` | Line between left and center | Small left correction |
+| `011` | Line between center and right | Small right correction |
+| `000` | Line lost | Stop forward motion, enter reacquire if allowed |
+| `101` | Split/noise | Slow down; repeated noise stops |
+| `111` | Wide black area / marker | Slow down; not treated as normal follow |
+
+`line off` bypasses the line gate for debugging only. It also stops roam. Restarting the firmware defaults line tracking back to on.
+
+`reacquire start` manually starts conservative line search. Reacquire uses the last valid line error to choose the first sweep direction and can use current IMU yaw only to limit sweep size. It is successful only when TCRT sees the black tape again.
+
+`expressive 0 <turn> <ms>` is the limited speech-mode body-expression path used by the Mac-side Runtime Motion executor. It is only for in-place turn / twist steps. It can allow transient line loss through `driveLineSearch`, but ToF obstacle gating, motor arm, duration clamp, and post-action Mac-side line verify / reacquire remain required. Do not use it for forward or reverse travel.
+
+Automatic telemetry is on by default after boot for the Mac-side bridge. Use `telemetry off` before manual motor tests if the monitor output is too noisy. Manual commands such as `status`, `tof`, `imu`, `line`, and `scan` still print on demand while periodic telemetry is off.
 
 Use a low duty first. If a motor does not move at duty 60-70, increase gradually. For isolated bench diagnosis, the firmware allows duty up to 250 out of the ESP32's 8-bit PWM range.
 
@@ -191,7 +246,18 @@ Thresholds are currently:
 | slow zone | `250-600 mm` |
 | clear | `> 600 mm` |
 
-`motor`, `test`, and `test all` remain bring-up tools. They still require `arm`, but they do not pass through the ToF obstacle gate so that individual motor channels can be verified during wiring.
+Line gate:
+
+```text
+sensor_fault   -> block chassis drive/spin/roam and keep PWM at zero
+line_lost      -> block normal chassis drive/spin and keep PWM at zero
+track_follow   -> cap forward throttle and apply PD steering correction
+bias_left      -> cap forward throttle and correct left
+bias_right     -> cap forward throttle and correct right
+reacquire      -> low-speed search only; ToF hard-stop can still interrupt it
+```
+
+`motor`, `test`, and `test all` remain bring-up tools. They still require `arm`, but they do not pass through the TCRT line gate or ToF obstacle gate so that individual motor channels can be verified during wiring.
 
 JSON commands are also accepted for the later Mac mini bridge:
 
@@ -200,6 +266,10 @@ JSON commands are also accepted for the later Mac mini bridge:
 {"cmd":"status"}
 {"cmd":"tof"}
 {"cmd":"imu"}
+{"cmd":"line"}
+{"cmd":"line","enabled":true}
+{"cmd":"line","calibrate":"floor"}
+{"cmd":"reacquire","enabled":true}
 {"cmd":"telemetry","enabled":false}
 {"cmd":"avoidance","enabled":true}
 {"cmd":"roam","enabled":true}
@@ -228,7 +298,7 @@ BNO085 SPI wiring details:
 | `P0/PS0` | `3V3` | SPI mode select |
 | `P1/PS1` | `3V3` | SPI mode select |
 
-`roam start` requires `arm` and `avoidance on`. Roam is local to the ESP32 and only uses conservative primitives: slow forward, slow-zone steering bias, hard-stop escape reverse, and turn-away.
+`roam start` requires `arm`, `avoidance on`, `line on`, and valid line calibration. Roam is local to the ESP32 and only uses conservative primitives: low-speed line following, ToF stop, and IMU-assisted line reacquire. ToF hard-stop always interrupts reacquire.
 
 ## Local CLI notes
 

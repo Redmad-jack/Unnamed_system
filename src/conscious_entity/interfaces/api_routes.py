@@ -14,7 +14,9 @@ from fastapi.responses import FileResponse, Response, StreamingResponse
 from conscious_entity.body import BodySerialBridge, BodyTelemetryStore
 from conscious_entity.body.protocol import (
     BodyProtocolError,
+    MotorTestCommand,
     build_drive_command,
+    build_motor_test_command,
     drive_intent_from_payload,
 )
 from conscious_entity.core.config_loader import load_all_configs
@@ -28,6 +30,9 @@ from conscious_entity.identity import (
 from conscious_entity.interfaces.api_models import (
     BodyBridgeConnectRequest,
     BodyCommandRequest,
+    BodyMotionConfigRequest,
+    BodyMotionTestRequest,
+    BodyMotorTestRequest,
     DialogRequest,
     EmbeddingConfigRequest,
     EmbeddingTestRequest,
@@ -153,6 +158,13 @@ def _body_bridge(request_or_websocket: Request | WebSocket) -> BodySerialBridge:
     return bridge
 
 
+def _body_motion(request: Request):
+    controller = getattr(request.app.state, "body_motion", None)
+    if controller is None:
+        raise HTTPException(status_code=503, detail="Body motion runtime not initialised")
+    return controller
+
+
 def _face_identity_manager(request: Request):
     manager = getattr(request.app.state, "face_identity_manager", None)
     if manager is None:
@@ -273,6 +285,11 @@ async def dialog(body: DialogRequest, request: Request):
         "visual_mode": output.visual_mode,
         "vocal_marker": output.vocal_marker,
         "body_action": output.body_action,
+        "motion": (
+            _body_motion(request).status().get("last_decision")
+            if getattr(request.app.state, "body_motion", None) is not None
+            else None
+        ),
         "response_plan": (
             output.response_plan.to_dict()
             if output.response_plan is not None
@@ -319,7 +336,16 @@ async def harness_trace_recent(limit: int = 20):
 
 @router.get("/api/v1/body/status")
 async def body_status(request: Request):
-    return _body_telemetry(request).snapshot()
+    snapshot = _body_telemetry(request).snapshot()
+    controller = getattr(request.app.state, "body_motion", None)
+    snapshot["runtime_motion"] = controller.status() if controller is not None else {
+        "enabled": False,
+        "auto_enabled": False,
+        "in_flight": False,
+        "last_decision": None,
+        "last_result": None,
+    }
+    return snapshot
 
 
 @router.post("/api/v1/body/telemetry")
@@ -374,6 +400,50 @@ async def body_command(body: BodyCommandRequest, request: Request):
         raise HTTPException(status_code=400, detail=str(exc))
     except RuntimeError as exc:
         raise HTTPException(status_code=409, detail=str(exc))
+
+
+@router.post("/api/v1/body/motor-test")
+async def body_motor_test(body: BodyMotorTestRequest, request: Request):
+    bridge = _body_bridge(request)
+    try:
+        command = build_motor_test_command(
+            MotorTestCommand(
+                motor=body.motor,
+                duty=body.duty,
+                direction=body.direction,
+                duration_ms=body.duration_ms,
+            )
+        )
+        return await bridge.send_raw_command(command)
+    except BodyProtocolError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+
+
+@router.get("/api/v1/body/motion/status")
+async def body_motion_status(request: Request):
+    return _body_motion(request).status()
+
+
+@router.post("/api/v1/body/motion/config")
+async def body_motion_config(body: BodyMotionConfigRequest, request: Request):
+    return _body_motion(request).configure(auto_enabled=body.auto_enabled)
+
+
+@router.post("/api/v1/body/motion/test")
+async def body_motion_test(body: BodyMotionTestRequest, request: Request):
+    try:
+        result = await _body_motion(request).execute_test(
+            body.intent,
+            allow_display_only=body.allow_display_only,
+        )
+        return {
+            "motion": _body_motion(request).status(),
+            "result": result.to_dict(),
+        }
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
 
 
 @router.websocket("/api/v1/body/teleop")

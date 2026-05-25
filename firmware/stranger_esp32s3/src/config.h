@@ -18,9 +18,14 @@ constexpr uint8_t PIN_IMU_CS = 18;
 constexpr uint8_t PIN_IMU_INT = 21;
 constexpr uint8_t PIN_IMU_RST = 47;
 
+constexpr uint8_t PIN_LINE_LEFT = 1;
+constexpr uint8_t PIN_LINE_CENTER = 2;
+constexpr uint8_t PIN_LINE_RIGHT = 14;
+
 constexpr uint8_t TCA9548A_ADDR = 0x70;
 constexpr uint8_t VL53L1X_ADDR = 0x29;
 constexpr uint8_t TOF_SENSOR_COUNT = 4;
+constexpr uint8_t LINE_SENSOR_COUNT = 3;
 
 constexpr uint32_t PWM_FREQ_HZ = 10000;
 constexpr uint8_t PWM_RESOLUTION_BITS = 8;
@@ -46,6 +51,28 @@ constexpr uint32_t IMU_REPORT_INTERVAL_US = 20000;
 constexpr uint16_t IMU_STALE_MS = 500;
 constexpr uint16_t IMU_POLL_INTERVAL_MS = 10;
 constexpr uint16_t IMU_INIT_RETRY_MS = 1000;
+constexpr uint16_t LINE_POLL_INTERVAL_MS = 50;
+constexpr uint16_t LINE_STALE_MS = 500;
+constexpr uint16_t LINE_CALIBRATION_MIN_DELTA = 120;
+constexpr float LINE_CONFIDENCE_THRESHOLD = 0.55F;
+constexpr float LINE_MIN_TOTAL_CONFIDENCE = 0.35F;
+constexpr int LINE_CENTER_POSITION = 1000;
+constexpr int LINE_POSITION_LEFT = 0;
+constexpr int LINE_POSITION_CENTER = 1000;
+constexpr int LINE_POSITION_RIGHT = 2000;
+constexpr int LINE_CENTER_ERROR_BAND = 180;
+constexpr int LINE_FOLLOW_MAX_DUTY = 65;
+constexpr int LINE_REACQUIRE_MAX_DUTY = 35;
+constexpr int LINE_NOISE_MAX_DUTY = 30;
+constexpr uint8_t LINE_NOISE_STOP_COUNT = 3;
+constexpr float LINE_KP = 0.045F;
+constexpr float LINE_KD = 0.018F;
+constexpr int LINE_MAX_CORRECTION_DUTY = 65;
+constexpr uint16_t LINE_REACQUIRE_COMMAND_MS = 220;
+constexpr uint16_t LINE_REACQUIRE_SWEEP_MS = 550;
+constexpr uint16_t LINE_REACQUIRE_TIMEOUT_MS = 7000;
+constexpr uint8_t LINE_REACQUIRE_MAX_SWEEPS = 8;
+constexpr float LINE_REACQUIRE_YAW_STEP_DEG = 18.0F;
 
 constexpr int OBSTACLE_SLOW_MAX_DUTY = 45;
 constexpr int OBSTACLE_TURN_BIAS_DUTY = 20;
@@ -82,6 +109,17 @@ static constexpr const char *TOF_SENSOR_NAMES[TOF_SENSOR_COUNT] = {
     "front_right",
     "left",
     "right",
+};
+
+struct LineSensorPins {
+  const char *name;
+  uint8_t pin;
+};
+
+static constexpr LineSensorPins LINE_SENSOR_CONFIGS[LINE_SENSOR_COUNT] = {
+    {"line_left", PIN_LINE_LEFT},
+    {"line_center", PIN_LINE_CENTER},
+    {"line_right", PIN_LINE_RIGHT},
 };
 
 }  // namespace stranger

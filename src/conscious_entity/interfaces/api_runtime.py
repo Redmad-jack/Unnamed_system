@@ -14,7 +14,8 @@ from typing import Any, Optional
 
 from fastapi import HTTPException, Request
 
-from conscious_entity.body import BodySerialBridge, BodyTelemetryStore
+from conscious_entity.body import BodyMotionController, BodySerialBridge, BodyTelemetryStore
+from conscious_entity.body.motion import MacroMode
 from conscious_entity.core.config_loader import load_all_configs
 from conscious_entity.core.loop import InteractionLoop
 from conscious_entity.db.connection import get_connection
@@ -48,6 +49,10 @@ def _project_root() -> Path:
 def _config_dir() -> Path:
     env = os.getenv("ENTITY_CONFIG_DIR")
     return Path(env) if env else _project_root() / "config"
+
+
+def _body_motion_profiles_path() -> Path:
+    return _config_dir() / "body_motion_profiles.yaml"
 
 
 def _prompts_dir() -> Path:
@@ -150,6 +155,11 @@ async def lifespan(app: Any):
     app.state.audio_manager = AudioManager(AudioConfig.from_env())
     app.state.body_telemetry = BodyTelemetryStore()
     app.state.body_bridge = BodySerialBridge(app.state.body_telemetry)
+    app.state.body_motion = BodyMotionController.from_config(
+        _body_motion_profiles_path(),
+        telemetry=app.state.body_telemetry,
+        bridge=app.state.body_bridge,
+    )
 
     try:
         yield
@@ -219,6 +229,7 @@ async def _run_dialog_turn(
     if manager is not None:
         manager.mark_activity()
     _maybe_schedule_background_face_capture(request.app)
+    _maybe_schedule_body_motion(request.app, output, source=source)
 
     return output
 
@@ -298,6 +309,7 @@ async def _run_dialog_turn_progressive(
             if manager is not None:
                 manager.mark_activity()
             _maybe_schedule_background_face_capture(request.app)
+            motion_decision = _maybe_schedule_body_motion(request.app, output, source=source)
             plan = output.response_plan.to_dict() if output.response_plan is not None else None
             yield {
                 "phase": "final",
@@ -314,6 +326,7 @@ async def _run_dialog_turn_progressive(
                 "truncated": output.truncated,
                 "stop_reason": output.stop_reason,
                 "latency_record_id": output.latency_record_id,
+                "motion_decision": motion_decision,
                 "done": True,
             }
         finally:
@@ -433,6 +446,36 @@ def _parse_identity_confirmation(text: str) -> str | None:
     if compact in accept_markers or any(marker in compact for marker in accept_markers):
         return "accepted"
     return None
+
+
+def _maybe_schedule_body_motion(app: Any, output: Any, *, source: str) -> dict[str, Any] | None:
+    controller = getattr(app.state, "body_motion", None)
+    loop = getattr(app.state, "loop", None)
+    if controller is None or loop is None:
+        return None
+    try:
+        decision = controller.schedule_after_turn(
+            state=loop.current_state,
+            output=output,
+            macro_mode=MacroMode.SPEECH_INTERACTION,
+        )
+        payload = decision.to_dict()
+        payload["source"] = source
+        return payload
+    except Exception as exc:
+        logger.error("Body motion scheduling failed; continuing turn: %s", exc)
+        return {
+            "macro_mode": MacroMode.SPEECH_INTERACTION.value,
+            "body_action": getattr(output, "body_action", None),
+            "intent": "NO_MOTION",
+            "profile": "NO_MOTION",
+            "track_policy": "display_only",
+            "auto_enabled": False,
+            "should_execute": False,
+            "blocker": "motion_scheduler_error",
+            "summary": str(exc),
+            "source": source,
+        }
 
 
 def _enrich_identity_context_locked(

@@ -36,6 +36,22 @@ class BodyCommandRequest(BaseModel):
     command: str
 
 
+class BodyMotorTestRequest(BaseModel):
+    motor: int = Field(ge=1, le=4)
+    duty: int = Field(default=80, ge=0, le=250)
+    direction: str = "forward"
+    duration_ms: int = Field(default=800, ge=1, le=30000)
+
+
+class BodyMotionConfigRequest(BaseModel):
+    auto_enabled: Optional[bool] = None
+
+
+class BodyMotionTestRequest(BaseModel):
+    intent: str
+    allow_display_only: bool = True
+
+
 class FirstUnitGateRequest(BaseModel):
     enabled: bool
 

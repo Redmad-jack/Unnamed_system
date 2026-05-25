@@ -3,8 +3,13 @@
 namespace stranger {
 
 RoamController::RoamController(MotorDriver &motors,
-                               ChassisController &chassis, ObstacleGate &gate)
-    : motors_(motors), chassis_(chassis), gate_(gate) {}
+                               ChassisController &chassis, ObstacleGate &gate,
+                               LineSensors &lineSensors, ImuMonitor &imu)
+    : motors_(motors),
+      chassis_(chassis),
+      gate_(gate),
+      lineSensors_(lineSensors),
+      imu_(imu) {}
 
 void RoamController::update() {
   if (!enabled_) {
@@ -32,7 +37,11 @@ void RoamController::update() {
   }
 
   if (state == ObstacleKind::ObstacleStop) {
-    commandForObstacleStop(now);
+    commandForObstacleStop();
+    return;
+  }
+
+  if (commandForLineState()) {
     return;
   }
 
@@ -55,15 +64,23 @@ bool RoamController::setEnabled(bool enabled) {
     return false;
   }
 
+  if (!lineSensors_.enabled()) {
+    lastError_ = "line_disabled";
+    return false;
+  }
+
   if (gate_.state().kind == ObstacleKind::SensorFault) {
     lastError_ = "sensor_fault";
     return false;
   }
 
+  if (lineSensors_.state().kind == LineKind::SensorFault) {
+    lastError_ = lineSensors_.state().reason;
+    return false;
+  }
+
   enabled_ = true;
-  escapeBacking_ = true;
   lastCommandAtMs_ = 0;
-  escapePhaseStartedAtMs_ = millis();
   mode_ = "starting";
   lastError_ = "none";
   return true;
@@ -71,8 +88,8 @@ bool RoamController::setEnabled(bool enabled) {
 
 void RoamController::stop() {
   enabled_ = false;
-  escapeBacking_ = true;
   mode_ = "stopped";
+  lineSensors_.stopReacquire();
   chassis_.drive(0, 0, ROAM_COMMAND_MS);
 }
 
@@ -82,34 +99,66 @@ const char *RoamController::mode() const { return mode_; }
 
 const char *RoamController::lastError() const { return lastError_; }
 
-void RoamController::commandForObstacleStop(uint32_t now) {
-  if (now - escapePhaseStartedAtMs_ >= ROAM_ESCAPE_PHASE_MS) {
-    escapeBacking_ = !escapeBacking_;
-    escapePhaseStartedAtMs_ = now;
-  }
-
-  if (escapeBacking_) {
-    if (!chassis_.driveEscape(ROAM_BACK_DUTY, 0, ROAM_COMMAND_MS)) {
-      lastError_ = chassis_.lastError();
-    } else {
-      lastError_ = "none";
-    }
-    mode_ = "escape_reverse";
-    return;
-  }
-
-  if (!chassis_.driveEscape(0, escapeTurn(), ROAM_COMMAND_MS)) {
+void RoamController::commandForObstacleStop() {
+  lineSensors_.stopReacquire();
+  if (!chassis_.drive(0, 0, ROAM_COMMAND_MS)) {
     lastError_ = chassis_.lastError();
   } else {
     lastError_ = "none";
   }
-  mode_ = "escape_turn";
+  mode_ = "obstacle_stop";
+}
+
+bool RoamController::commandForLineState() {
+  const LineKind state = lineSensors_.state().kind;
+  if (state == LineKind::SensorFault) {
+    if (!chassis_.drive(0, 0, ROAM_COMMAND_MS)) {
+      lastError_ = chassis_.lastError();
+    } else {
+      lastError_ = lineSensors_.state().reason;
+    }
+    mode_ = "line_sensor_fault_stop";
+    return true;
+  }
+
+  if (state == LineKind::LineLost || state == LineKind::Reacquire) {
+    if (!lineSensors_.reacquiring()) {
+      lineSensors_.requestReacquire(imu_.yawDeg(), imu_.yawAvailable());
+    }
+    if (lineSensors_.reacquireFailed()) {
+      if (!chassis_.drive(0, 0, ROAM_COMMAND_MS)) {
+        lastError_ = chassis_.lastError();
+      } else {
+        lastError_ = "line_reacquire_timeout";
+      }
+      mode_ = "line_lost_stop";
+      return true;
+    }
+
+    const int turn =
+        lineSensors_.reacquireTurnDuty(imu_.yawDeg(), imu_.yawAvailable());
+    if (turn == 0) {
+      if (!chassis_.drive(0, 0, ROAM_COMMAND_MS)) {
+        lastError_ = chassis_.lastError();
+      } else {
+        lastError_ = "line_reacquire_timeout";
+      }
+      mode_ = "line_lost_stop";
+      return true;
+    }
+
+    if (!chassis_.driveLineSearch(0, turn, LINE_REACQUIRE_COMMAND_MS)) {
+      lastError_ = chassis_.lastError();
+    } else {
+      lastError_ = "none";
+    }
+    mode_ = "reacquire";
+    return true;
+  }
+  return false;
 }
 
 void RoamController::commandForClearOrSlow() {
-  escapeBacking_ = true;
-  escapePhaseStartedAtMs_ = millis();
-
   const ObstacleState &state = gate_.state();
   const int throttle =
       state.kind == ObstacleKind::SlowZone ? ROAM_SLOW_DUTY : ROAM_FORWARD_DUTY;
@@ -121,17 +170,6 @@ void RoamController::commandForClearOrSlow() {
     lastError_ = "none";
   }
   mode_ = state.kind == ObstacleKind::SlowZone ? "slow_forward" : "forward";
-}
-
-int RoamController::escapeTurn() const {
-  const int suggested = gate_.state().suggestedTurn;
-  if (suggested > 0) {
-    return ROAM_TURN_DUTY;
-  }
-  if (suggested < 0) {
-    return -ROAM_TURN_DUTY;
-  }
-  return ROAM_TURN_DUTY;
 }
 
 }  // namespace stranger

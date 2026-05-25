@@ -11,7 +11,7 @@
 - 当前核心能力：Stranger 文本协议、最高优先级艺术运行 context、热加载 prompt partial、本轮语言强制优先与错语言兜底、非否认式能力边界正向模板与输入通道防自我否认约束、含“恋旧” memory_gravity 的新心理状态机、带上一轮轻量 bridge 的 pre-memory 轻量 `first_unit` + 已说出口 first 去重续写的 memory-aware `second_unit` 按句文本/audio progressive 输出、main LLM 后端 streaming buffer、two-stage / sentence-queued TTS、短期/情节/反思记忆、匿名 visitor profile 与跨 session visitor 记忆召回、Visitor Identity & Session Gating V1（含结构化 match result / candidate confirmation 调试 API、自然确认解析、visitor memory permission 和开发者面板 auto-bind high confidence 开关）、本地 face signature capture / quality gate / 私有向量库 / historical matching / 后台 face candidate capture / signature deactivate、可解释/可选 embedding 召回、Memory Preview、managed memory proposal → commit、influence log / curation、Runtime Harness Trace、JSONL 端到端 latency 日志、可选 YOLO person presence detection（含 camera index 扫描/切换与 Browser Camera fallback）、可选火山 ASR 2.0 / TTS 2.0 双向流式 Audio Adapter、开发者面板 Audio playback queue / watchdog / barge-in / next-stream prefetch 诊断
 - 当前验证基线：`.venv/bin/python -m pytest -p no:debugging`，最近一次完整结果为 `639 passed`
 - 当前交接重点：下一步不再优先扩展 UI；voice signature 与 face/voice combined confidence 暂列 P1 optional，P0 收束为 face-only visitor identity 的现场阈值校准、数据库污染测试和 visitor memory continuity 验证；行为测试与调优继续按 `docs/testlist.md` 执行
-- 当前硬件参考方案：`docs/references/hardware.md` 与 `docs/references/system_logic.md` 已更新为单 Stranger 移动身体方向：Mac mini 随身上位机 + 1 片 ESP32-S3 + TCA9548A + 当前固件 4 路 VL53L1X ToF + BNO085 SPI IMU + 四路有刷电机驱动 + 4 个 36JP555；`firmware/stranger_esp32s3` 已有 PlatformIO 下位机固件，包含串口协议、ToF telemetry / obstacle gate、BNO085 observation telemetry、四路电机测试、4WD 差速底盘开环控制和 ESP32 本地低速 roam；Dashboard Hardware tab 已能通过 BodyBridge 做键盘 / Xbox 手柄 teleop，控制前必须显式开启对应 Teleop 开关；下一阶段硬件/运动待办已记录为 5 颗 ToF 布局、TCRT5000 黑线 hard stop、IMU 控制接入和场馆 roam 策略
+- 当前硬件参考方案：`docs/references/hardware.md` 与 `docs/references/system_logic.md` 已更新为单 Stranger 移动身体方向：Mac mini 随身上位机 + 1 片 ESP32-S3 + TCA9548A + 当前固件 4 路 VL53L1X ToF + 三个 TCRT5000 `A0` + BNO085 SPI IMU + 四路有刷电机驱动 + 4 个 36JP555；`firmware/stranger_esp32s3` 已有 PlatformIO 下位机固件，包含串口协议、ToF telemetry / obstacle gate、BNO085 observation telemetry、TCRT 黑/白校准、line confidence / position / error、line gate、reacquire state、四路电机测试、4WD 差速底盘开环控制和 ESP32 本地低速 line-guided roam；Dashboard Hardware tab 已能通过 BodyBridge 做键盘 / Xbox 手柄 teleop，控制前必须显式开启对应 Teleop 开关；下一阶段硬件/运动待办重点是现场校准 TCRT 阈值、ToF 稳定性、IMU 控制接入和场馆 track-guided roam 策略
 - 当前注意事项：`AGENTS.md` 与 `CLAUDE.md` 有用户侧未提交差异；除非明确要求，不应在常规任务中触碰
 
 ---
@@ -36,25 +36,27 @@
 
 ### P2：后续身体与展览阶段
 
-- [ ] 确认 5 颗 ToF 的最终物理布局并同步文档与固件
-  - 当前倾向：前中 1 颗、左前斜 1 颗、右前斜 1 颗、后方 1-2 颗；左右正侧 ToF 优先级低于前方 / 前角 / 后退保护
-  - 固件当前仍是 4 路 `front_left/front_right/left/right` 模型；需要升级 `TOF_SENSOR_COUNT`、channel name、telemetry、Dashboard Hardware 面板和 `ObstacleGate`
-  - ToF gate 需要从“只看前两个 ToF”升级为按运动方向分层：前进看前中/左前/右前，后退看后方，转向看前角扫掠区
-- [ ] 接入 TCRT5000 黑线安全层
-  - 按 `hardware.md` 规划使用四路 D0：front-left / front-right / rear-left / rear-right，VCC 接 3V3 总线，GND 共地，A0 暂不接
-  - 固件需新增 GPIO input 初始化、active polarity 配置、debounce、telemetry、Dashboard 显示和最高优先级 hard stop
-  - 语义：任一 TCRT5000 命中黑线时，ESP32 本地立即停机；优先级高于 ToF、roam 和 Mac motion intent
+- [ ] 接入单黑线轨道 + 三 TCRT5000 `A0` 循迹
+  - 硬件方案已确定：`line_left A0 -> GPIO1/ADC1`、`line_center A0 -> GPIO2/ADC1`、`line_right A0 -> GPIO14/ADC2`；三个模块 VCC 接 3V3 sensor bus、GND 共地、D0 暂不接
+  - 固件已新增黑/白标定、归一化 black-line confidence、line position、line error、line lost、noise / wide 状态、reacquire 和正式 line gate
+  - Dashboard Hardware 面板已显示三路 TCRT 原始值 / confidence / track state / correction / reacquire state
+  - 后续仍需要在实际胶带和地面上完成 `line calibrate floor` / `line calibrate tape`，并调 `LINE_KP`、`LINE_KD`、置信度阈值和最大速度
+  - 机械安装要求：三个 TCRT 在车头下方横向排列，离地建议从 5-10 mm 开始测试；4-5 cm 不适合可靠循迹；必要时加黑色消光遮光罩
+- [ ] 保留 ToF 作为近场障碍安全层
+  - 当前固件仍是 4 路 `front_left/front_right/left/right` ToF 模型；在 track-guided roam 中，ToF 先负责临时障碍物、观众腿、展台边缘等近场阻挡
+  - 5 颗 ToF 布局暂不作为当前循迹第一版阻塞项；若后续加第 5 颗，再升级 `TOF_SENSOR_COUNT`、channel name、telemetry、Dashboard Hardware 面板和 `ObstacleGate`
+  - ToF gate 和 TCRT line gate 都必须在 ESP32 本地执行，不能由上位机或 LLM 绕过
 - [ ] 形成正式 3.3V / GND 分电方案
-  - 当前 3.3V 负载包括 TCA9548A、电机驱动信号侧、BNO085、TCRT5000 VCC 总线，以及后续更多 ToF
+  - 当前 3.3V 负载包括 TCA9548A、电机驱动信号侧、BNO085、三路 TCRT5000 VCC 总线，以及后续更多 ToF
   - 短期可用 ESP32 3V3 分电总线测试；展览版本建议使用独立 3.3V 稳压模块 + 共地总线
   - 若出现 ESP32 重启、ToF 掉线、TCRT 阈值漂移或 IMU stale，应优先检查 3.3V 压降、地线质量和线束噪声
 - [ ] 将 BNO085 从 observation-only 升级为第一层运动约束
   - 第一阶段只做 yaw 转角确认、heading hold、角速度限制、倾斜 / 搬起 / 撞击 hard stop
   - 不用 IMU 估算里程、全局位置、地图、路径复现或替代编码器
   - 当前 BNO085 telemetry 已接入，但不自动停机、不拦截 keyboard / gamepad / roam
-- [ ] 设计场馆 roam 第一版
-  - 当前不做 SLAM / occupancy grid / 路径复现；使用低速反应式游走 + 物理场馆约束
-  - 场馆固定危险区用黑色胶带和 TCRT5000 作为硬边界；ToF 负责临时障碍物和近场空间；IMU 负责短时朝向和转向约束
+- [ ] 设计场馆 track-guided roam 第一版
+  - 当前不做 SLAM / occupancy grid / 路径复现；使用低速单轨循迹 + 轨道附近微行为 + 物理场馆约束
+  - 场馆移动路线用单黑胶带轨道表达；TCRT5000 负责轨道保持和回轨确认；ToF 负责临时障碍物和近场空间；IMU 负责短时朝向和转向约束
   - 需要定义展场模式下的最大速度、最大连续运动时间、卡住后的退让动作、人工急停流程和恢复流程
 - [ ] 建立 Stranger runtime 到运动意图的映射层
   - 目前 Dashboard teleop 是开发者测试通道，不代表 Stranger 自主行为
@@ -70,11 +72,95 @@
 
 ## Changelog
 
+### 2026-05-25：Runtime Motion 轨道约束身体表达闭环 V1
+
+- [x] 新增 `config/body_motion_profiles.yaml`，把说话交互模式下的 `HOLD`、`APPROACH_MICRO`、`RETREAT_SHORT`、`TURN_AWAY`、`TWIST_SMALL`、`TWIST_MEDIUM`、`SPIN_ONE_EXPERIMENTAL`、`WITHDRAW`、`REACQUIRE` 配置为可审计 motion profile
+- [x] 新增上位机 `BodyMotionController`：将 `EntityState + body_action + SPEECH_INTERACTION` 映射为 motion intent；自动 motion 默认关闭，关闭时只记录 dry-run decision
+- [x] 新增 `/api/v1/body/motion/status`、`/api/v1/body/motion/config`、`/api/v1/body/motion/test`；`/api/v1/body/status` 现在包含 `runtime_motion` summary
+- [x] Dashboard Hardware tab 新增 Runtime Motion 区，显示 auto motion、resolved intent、blocker、last result、line verify、yaw delta，并提供白名单 `Test Motion`
+- [x] 上位机协议新增受限 expressive drive：仅允许 `throttle=0` 的原地 expressive turn/twist，禁止通过 teleop payload 开启 expressive 模式
+- [x] ESP32-S3 serial protocol 新增 `expressive 0 <turn> <ms>` / JSON `{"cmd":"expressive"}`，通过 `driveLineSearch` 允许原地艺术动作短暂 line loss，同时继续保留 ToF gate、motor arm 和 duration clamp
+- [x] `motion_result` telemetry 已进入上位机 BodyTelemetryStore；动作完成后可记录 completed / blocked 与 line / obstacle 状态
+- [x] 验证：
+  - `python3 -m pytest -p no:debugging tests/unit/test_body_motion.py tests/unit/test_api_body_motion.py tests/unit/test_body_protocol.py tests/unit/test_body_telemetry.py tests/unit/test_body_serial_bridge.py`
+  - `node --check src/conscious_entity/interfaces/static/dashboard.js`
+  - `/Users/jackzhang/.platformio/penv/bin/pio run -d firmware/stranger_esp32s3`
+
+### 2026-05-25：TCA9548A 8 通道 ToF 诊断扫描
+
+- [x] 将 ESP32-S3 固件的 `scan` 诊断输出从当前配置的 0-3 ToF 通道扩展为 TCA9548A 全部 0-7 通道；实际 ToF 轮询、Dashboard 展示和运动安全逻辑仍保持当前 0-3 配置不变
+- [x] 烧录后通过原始串口重测：上游 `TCA9548A 0x70` 稳定存在，两次 I2C scan 都只看到 `0x70`
+- [x] 8 路下游扫描结果：channel 2 可看到 `VL53L1X 0x29` 且 scan 时显示 initialized；channel 0 / 1 / 3 / 4 / 5 / 6 / 7 均未扫到 `0x29`
+- [x] `tof` 测距仍未正常：channel 2 `range_valid=false`、`timeout=true`、`distance_mm=null`，串口仍出现 `Wire.cpp requestFrom(): i2cRead returned Error -1 / 263`
+- [x] 验证：
+  - `/Users/jackzhang/.platformio/penv/bin/pio run -d firmware/stranger_esp32s3`
+  - `/Users/jackzhang/.platformio/penv/bin/pio run -d firmware/stranger_esp32s3 -t upload --upload-port /dev/cu.usbmodem5C4D0378301`
+  - 原始串口 `telemetry off` / `motors off` / `status` / `scan` / `scan` / `tof` / `status`
+
+### 2026-05-24：Hardware ARM / gate 状态显示修复
+
+- [x] 修复 BodyTelemetryStore 只记录 `ack`、不更新控制状态的问题：ESP32 返回 `ack arm/disarm/motors_off/avoidance/line/line_calibrate/reacquire/roam` 后，Dashboard 状态缓存会立即同步 `motor_armed`、`avoidance_enabled`、`line_enabled`、`line_calibrated`、`roam_enabled` 等字段；BodySerialBridge 本地发送这些离散命令后也会先做 optimistic ack，避免等待串口异步回包造成 UI 旧状态
+- [x] 修复 `Manual Override` 语义不完整的问题：该开关现在同时切换 `avoidance on/off` 与 `line on/off`；手动键盘 / 手柄 teleop 不再被未校准 TCRT line gate 静默拦截
+- [x] Dashboard Hardware Controls 新增 motion blocker 提示：当 motor disarmed、TCRT line gate 未校准 / 丢线 / sensor_fault，或 ToF obstacle gate 处于 `sensor_fault/obstacle_stop` 时，直接显示为什么 keyboard / gamepad teleop 会被 ESP32 拦截
+- [x] 明确当前 UI 语义：顶栏 `ARM` 是展览输入流权限，不等于 ESP32 motor arm；硬件面板 Controls 中的 `arm` 才是下位机电机使能
+- [x] 验证：
+  - `node --check src/conscious_entity/interfaces/static/dashboard.js`
+  - `python3 -m pytest -p no:debugging tests/unit/test_body_telemetry.py tests/unit/test_body_serial_bridge.py tests/unit/test_body_protocol.py`（`18 passed`）
+  - `git diff --check`
+
+### 2026-05-24：ARM 默认关闭 / 接管串口自动 disarm
+
+- [x] 已对当前本地 Dashboard `127.0.0.1:8000` 发送 `motors off`，ESP32 收到后会停止 PWM 并退出 motor armed 状态
+- [x] `BodySerialBridge.connect()` 连接成功后默认 best-effort 发送 `motors off`，避免 Dashboard 接管一个仍处于 armed 状态的 ESP32；固件本身仍保持上电默认 disarmed
+- [x] Dashboard 顶栏展览权限按钮默认从 `ARM: IDLE` 改为 `ARM: OFF`；如果已经 ready，再点一次会释放 camera / mic stream 并回到 off
+- [x] Hardware 控制按钮新增 `disarm`，与 `motors off` 一样作为红色危险动作显示；`/api/v1/body/command` allowlist 同步允许 `disarm`
+- [x] 验证：
+  - `node --check src/conscious_entity/interfaces/static/dashboard.js`
+  - `python3 -m pytest -p no:debugging tests/unit/test_body_protocol.py tests/unit/test_body_serial_bridge.py`
+  - `git diff --check`
+
+### 2026-05-24：TCRT single-line tracking gate / reacquire
+
+- [x] ESP32-S3 固件将 `line_sensors` 从 raw ADC 诊断升级为正式三路 TCRT 单线循迹：支持 `line calibrate floor` / `line calibrate tape`、black-line confidence、`detected_bits`、`position`、`error`、PD `correction`、`line_lost`、`noise`、`wide` 和 `reacquire`
+- [x] `ChassisController` 现在对 `drive` / `spin` / `roam` 先应用 TCRT line gate，再应用 ToF obstacle gate；`motor` / `test` / `test all` 仍保留为硬件排线入口，只需要 `arm`，不走 TCRT / ToF gate
+- [x] `RoamController` 改为 line-guided 低速 roam：正常状态沿线前进，丢线后按最后有效 error 方向低速扫线，可用 BNO085 yaw 限制扫描幅度，ToF hard-stop 始终中断找线
+- [x] 串口协议新增 `line on/off`、`line calibrate floor/tape`、`reacquire start/stop` 和对应 JSON 命令；`status` 增加 `line_enabled`、`line_calibrated`、`line_state`、`line_reacquire_state`
+- [x] 上位机 BodyTelemetryStore 解析新版 `line` telemetry，Dashboard Hardware tab 显示 TCRT raw / confidence / detected / floor-tape calibration / line state / correction / reacquire
+- [x] 文档同步 `docs/references/system_logic.md`、`docs/references/hardware.md` 与 `firmware/stranger_esp32s3/README.md`
+- [x] 验证：
+  - `/Users/jackzhang/.platformio/penv/bin/pio run -d firmware/stranger_esp32s3`
+  - `node --check src/conscious_entity/interfaces/static/dashboard.js`
+  - `python3 -m pytest -p no:debugging tests/unit/test_body_protocol.py tests/unit/test_body_telemetry.py`（`15 passed`）
+
+### 2026-05-24：Dashboard 单电机诊断
+
+- [x] Dashboard Hardware tab 新增 `Single Motor Test` 区块，可选择 `M1 front_left` / `M2 front_right` / `M3 rear_left` / `M4 rear_right`，设置 forward / reverse、`duty` 和 `duration_ms` 后发送受限单电机测试命令
+- [x] 新增 `/api/v1/body/motor-test` 受限端点：后端只接受 `motor` 1-4、`direction` forward/reverse/stop、`duty` 0-250、`duration_ms` 1-30000，并构造 `motor <n> <duty> <ms>`；不开放任意串口命令
+- [x] 单电机测试发送前会释放 Keyboard / Gamepad teleop，并短暂等待 WebSocket cleanup 的 `motors off` 完成，降低测试命令被 teleop stop 竞态覆盖的概率
+- [x] 验证：
+  - `node --check src/conscious_entity/interfaces/static/dashboard.js`
+  - `python3 -m pytest -p no:debugging tests/unit/test_body_protocol.py tests/unit/test_body_telemetry.py tests/unit/test_body_serial_bridge.py`（`17 passed`）
+  - `git diff --check`
+  - 本地 `PYTHONPATH=src python3 -m uvicorn conscious_entity.interfaces.api:app --host 127.0.0.1 --port 8010` + Browser 验证 Hardware tab 能渲染 `Single Motor Test`，M3 / reverse / duty `120` / `900ms` 控件状态可更新；无 console error / warning；未连接串口时 `/api/v1/body/motor-test` 正确返回 `409 body serial bridge is not connected`
+
+### 2026-05-24：ESP32-S3 live hardware check + TCRT raw ADC diagnostic
+
+- [x] 通过 `/dev/cu.usbmodem5C4D0378301` 重新确认 ESP32-S3 USB serial 连接正常；固件烧录成功，串口 115200 通讯正常
+- [x] 重新确认 BNO085 SPI 已开始通讯：`imu` telemetry 为 `present=true`、`initialized=true`、`fresh=true`、`state="ok"`，`event_count` 持续增长
+- [x] 重新确认 TCA9548A I2C 地址为 `0x70`；下游 scan 中 channel 0 / 1 / 3 可探测到 `VL53L1X` 地址 `0x29`，channel 2 未探测到；当前 `tof` 测距 telemetry 仍未初始化成功，obstacle state 仍为 `sensor_fault`
+- [x] 固件新增 TCRT5000 raw ADC 诊断：`line_left` GPIO1、`line_center` GPIO2、`line_right` GPIO14，可通过 `line` / `{"cmd":"line"}` 输出 raw 值；本次读数约为 left `1480`、center `0`、right `3730`
+- [x] 当前 `line` 仍只是 bring-up diagnostic，不参与循迹、roam、ToF obstacle gate 或电机输出；center A0 长期为 `0` 需要现场用黑/白表面刺激复核接线或传感器输出
+- [x] 为减少 Dashboard / 串口手动调试时的刷屏和命令 interleaving，ESP32 上电默认关闭周期 telemetry；`status`、`tof`、`imu`、`line`、`scan` 仍可手动读取，需要连续遥测时再显式发送 `telemetry on`
+- [x] 验证：
+  - `~/.platformio/penv/bin/pio run -d firmware/stranger_esp32s3`
+  - `~/.platformio/penv/bin/pio run -d firmware/stranger_esp32s3 -t upload --upload-port /dev/cu.usbmodem5C4D0378301`
+  - `python3 -m pytest -p no:debugging tests/unit/test_body_protocol.py tests/unit/test_body_telemetry.py`（`13 passed`）
+
 ### 2026-05-24：硬件 / 运动系统待办整理
 
 - [x] 确认当前活跃待办文件是 `docs/progress.md`；`docs/IMPLEMENTATION_PLAN.md` 是历史实现计划归档，不再作为活跃 todo
-- [x] 将下一阶段硬件 / 运动系统拆成 P2 待办：5 颗 ToF 布局与固件迁移、TCRT5000 hard stop、3.3V / GND 分电、BNO085 运动约束、场馆 roam、runtime motion intent 映射和完整运动安全策略
-- [x] 明确当前固件仍是 4 路 ToF 模型，下一步需要升级到实际 5 颗 ToF 物理布局
+- [x] 将下一阶段硬件 / 运动系统拆成 P2 待办：单黑线轨道 + 三个 TCRT5000 `A0` 模拟循迹、ToF 近场避障、3.3V / GND 分电、BNO085 运动约束、场馆 track-guided roam、runtime motion intent 映射和完整运动安全策略
+- [x] 明确当前固件仍是 4 路 ToF 模型；5 颗 ToF 不是当前循迹第一版阻塞项，若后续加第 5 颗再升级 ToF channel map / telemetry / Dashboard
 
 ### 2026-05-24：BNO085 IMU Bring-up / Safety Observation
 

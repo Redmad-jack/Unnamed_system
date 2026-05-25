@@ -3,6 +3,8 @@
 #include <Arduino.h>
 
 #include "chassis.h"
+#include "imu_monitor.h"
+#include "line_sensors.h"
 #include "motor_driver.h"
 #include "obstacle_gate.h"
 
@@ -11,7 +13,8 @@ namespace stranger {
 class RoamController {
  public:
   RoamController(MotorDriver &motors, ChassisController &chassis,
-                 ObstacleGate &gate);
+                 ObstacleGate &gate, LineSensors &lineSensors,
+                 ImuMonitor &imu);
 
   void update();
   bool setEnabled(bool enabled);
@@ -21,17 +24,17 @@ class RoamController {
   const char *lastError() const;
 
  private:
-  void commandForObstacleStop(uint32_t now);
+  void commandForObstacleStop();
+  bool commandForLineState();
   void commandForClearOrSlow();
-  int escapeTurn() const;
 
   MotorDriver &motors_;
   ChassisController &chassis_;
   ObstacleGate &gate_;
+  LineSensors &lineSensors_;
+  ImuMonitor &imu_;
   bool enabled_ = false;
-  bool escapeBacking_ = true;
   uint32_t lastCommandAtMs_ = 0;
-  uint32_t escapePhaseStartedAtMs_ = 0;
   const char *mode_ = "stopped";
   const char *lastError_ = "none";
 };

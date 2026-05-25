@@ -12,6 +12,7 @@
 - **Mac mini** 随身体移动，作为上位机与主要计算单元
 - **ESP32-S3** 作为唯一的下位身体控制器
 - **TCA9548A** 扩展 I2C，总线下接 4 个 **VL53L1X ToF**
+- **TCRT5000** x3 通过 `A0` 模拟量读取单黑线轨道
 - **四路有刷直流电机驱动板** 驱动 4 个 **36JP555 直流有刷减速电机**
 - **小音响** 直接连接 Mac mini 播放声音
 - **小屏幕** 作为 Stranger 的身体状态表面，不作为观众侧 dashboard
@@ -19,14 +20,15 @@
 当前优先完成：
 
 1. ESP32-S3 + TCA9548A + 4 个 VL53L1X 的距离读取
-2. 基于 ToF 的本地下位机避障 gate
-3. 四路电机的低速开环移动
-4. Mac mini 与 ESP32-S3 的 USB Serial 通信
-5. BNO085 IMU SPI bring-up 与可观测 telemetry
+2. 三个 TCRT5000 的单轨道 `A0` 模拟循迹读取
+3. 基于 TCRT 轨道状态 + ToF 的本地下位机运动 gate
+4. 四路电机的低速开环移动
+5. Mac mini 与 ESP32-S3 的 USB Serial 通信
+6. BNO085 IMU SPI bring-up 与可观测 telemetry
 
 当前暂缓：
 
-- IMU 控制闭环接入：当前只观测 BNO085 数据，不设置阈值、不自动停机、不参与 roam gate
+- IMU 完整运动闭环接入：当前 BNO085 可辅助 TCRT 丢线后的 yaw 扫描幅度，但不估算里程、不判断回轨成功、不设置倾斜 / 撞击阈值、不单独自动停机
 - 编码器
 - 稳定巡路 / 精确里程计
 - SLAM / 地图导航
@@ -57,18 +59,23 @@ graph TB
 
         subgraph ESP ["ESP32-S3 下位身体控制器"]
             SERIAL["USB Serial protocol"]
+            LINE_GATE["TCRT line-following gate"]
             TOF_GATE["ToF obstacle gate"]
             I2C["I2C master"]
+            ADC["ADC read"]
             SPI["SPI master"]
             PWM["PWM + DIR motor output"]
         end
 
-        subgraph SENSORS ["近场传感"]
+        subgraph SENSORS ["传感层"]
             MUX["TCA9548A I2C multiplexer"]
             TFL["VL53L1X front_left"]
             TFR["VL53L1X front_right"]
             TL["VL53L1X left"]
             TR["VL53L1X right"]
+            TCRT_L["TCRT line_left"]
+            TCRT_C["TCRT line_center"]
+            TCRT_R["TCRT line_right"]
             IMU["BNO085 IMU"]
         end
 
@@ -89,6 +96,9 @@ graph TB
     V -- "物理靠近 / 障碍物" --> TFR
     V -- "侧向距离变化" --> TL
     V -- "侧向距离变化" --> TR
+    V -- "地面黑线轨道" --> TCRT_L
+    V -- "地面黑线轨道" --> TCRT_C
+    V -- "地面黑线轨道" --> TCRT_R
     V -- "搬动 / 倾斜 / 碰撞" --> IMU
 
     LOOP --> STATE
@@ -101,14 +111,18 @@ graph TB
     AUDIO --> SPK
     SCREEN_DRV --> SCR
     BODY_BRIDGE -- "motion intent / body mode" --> SERIAL
-    SERIAL --> TOF_GATE
+    SERIAL --> LINE_GATE
     I2C --> MUX
+    ADC --> TCRT_L & TCRT_C & TCRT_R
     SPI --> IMU
     MUX --> TFL & TFR & TL & TR
+    TCRT_L & TCRT_C & TCRT_R --> LINE_GATE
     TFL & TFR & TL & TR --> TOF_GATE
+    LINE_GATE --> TOF_GATE
     TOF_GATE --> PWM
     PWM --> DRIVER
     DRIVER --> M1 & M2 & M3 & M4
+    LINE_GATE -- "line / track telemetry" --> BODY_BRIDGE
     TOF_GATE -- "distance / safety telemetry" --> BODY_BRIDGE
     IMU -- "orientation / gyro / accel telemetry" --> BODY_BRIDGE
 ```
@@ -118,10 +132,10 @@ graph TB
 | 层次 | 硬件 / 模块 | 职责 |
 |---|---|---|
 | 意图与表达层 | Mac mini / Stranger runtime | 状态、记忆、策略、表达、声音、小屏幕状态、运动意图 |
-| 本地身体控制层 | ESP32-S3 | ToF 轮询、BNO085 telemetry、本地避障 gate、最终电机 PWM + DIR 输出 |
-| 物理层 | VL53L1X、TCA9548A、BNO085、电机驱动、36JP555 | 距离感知、姿态观测与开环低速移动 |
+| 本地身体控制层 | ESP32-S3 | ToF 轮询、TCRT 轨道读取、BNO085 telemetry、本地循迹 / 避障 gate、最终电机 PWM + DIR 输出 |
+| 物理层 | TCRT5000、VL53L1X、TCA9548A、BNO085、电机驱动、36JP555 | 轨道感知、距离感知、姿态观测与低速移动 |
 
-核心边界：Mac mini 可以提出移动意图，但 ESP32-S3 必须在输出电机前应用本地 ToF 避障限制。
+核心边界：Mac mini 可以提出移动意图，但 ESP32-S3 必须在输出电机前应用本地 TCRT 轨道约束和 ToF 避障限制。
 
 ---
 
@@ -152,9 +166,15 @@ ESP32-S3 是唯一的下位身体控制器。
 ESP32-S3
 ├── USB Serial
 │   ├── 接收 Mac mini 的 motion intent / wheel command
-│   └── 上报 ToF 距离、避障状态和电机输出摘要
+│   └── 上报 TCRT 轨道、ToF 距离、避障状态和电机输出摘要
 ├── I2C
 │   └── 控制 TCA9548A，轮询 4 个 VL53L1X
+├── ADC
+│   └── 读取 3 个 TCRT5000 A0 模拟量，估算单黑线位置
+├── Line-following gate
+│   ├── track_follow
+│   ├── line_lost
+│   └── reacquire
 ├── ToF obstacle gate
 │   ├── hard stop
 │   ├── slow zone
@@ -178,9 +198,10 @@ ESP32-S3 不运行：
 | 设备 | 型号 | 数量 | 职责 | 接口 |
 |---|---|---:|---|---|
 | 上位机 | Mac mini | 1 | 主运行时、声音、小屏幕、通信桥 | USB Serial / Audio / Display |
-| 下位机 | ESP32-S3 | 1 | 本地避障与电机控制 | USB / I2C / GPIO PWM |
+| 下位机 | ESP32-S3 | 1 | 本地循迹、避障与电机控制 | USB / I2C / ADC / GPIO PWM |
 | I2C 扩展 | TCA9548A | 1 | 隔离同地址 ToF 通道 | I2C |
 | 距离传感器 | VL53L1X | 4 | 前方与侧向近场距离 | I2C via TCA9548A |
+| 循迹传感器 | TCRT5000 | 3 | 单黑线轨道反射强度 | ADC via `A0` |
 | 电机驱动 | Fierce 四路有刷驱动 Ver2.3 | 1 | 四路全桥驱动 | PWM + DIR |
 | 驱动电机 | 36JP555 | 4 | 低速开环移动 | Driver output |
 | 声音输出 | 小音响 | 1 | Stranger 语音输出 | Mac mini audio |
@@ -215,6 +236,9 @@ ESP32-S3 不运行：
 | M3 DIR | GPIO12 | 电机驱动 `D3` |
 | M4 PWM | GPIO7 | 电机驱动 `P4` |
 | M4 DIR | GPIO13 | 电机驱动 `D4` |
+| TCRT line_left A0 | GPIO1 / ADC1 | 左循迹 TCRT5000 `A0` |
+| TCRT line_center A0 | GPIO2 / ADC1 | 中循迹 TCRT5000 `A0` |
+| TCRT line_right A0 | GPIO14 / ADC2 | 右循迹 TCRT5000 `A0` |
 | BNO085 SPI SCK | GPIO15 | BNO085 `SCL` |
 | BNO085 SPI MISO | GPIO16 | BNO085 `SDA` |
 | BNO085 SPI MOSI | GPIO17 | BNO085 `DI` |
@@ -268,6 +292,48 @@ TCA9548A channel connector 与 VL53L1X module connector 的线序不同，必须
 | `VCC` | `VIN` |
 | `SCLn` | `SCL` |
 | `SDAn` | `SDA` |
+
+#### TCRT5000 单轨循迹
+
+当前确定使用 **单黑胶带轨道 + 三个 TCRT5000** 的方案，替代此前讨论过的双轨 / 四角 D0 hard-stop 方案。
+
+接线规范：
+
+| 位置 | TCRT5000 引脚 | ESP32-S3 / 电源 | 用途 |
+|---|---|---|---|
+| `line_left` | `VCC` | `3V3` sensor bus | 左循迹传感器供电 |
+| `line_left` | `GND` | `GND` bus | 共地 |
+| `line_left` | `A0` | GPIO1 / ADC1 | 左侧模拟反射值 |
+| `line_left` | `D0` | 不接 | 第一版不使用数字阈值输出 |
+| `line_center` | `VCC` | `3V3` sensor bus | 中循迹传感器供电 |
+| `line_center` | `GND` | `GND` bus | 共地 |
+| `line_center` | `A0` | GPIO2 / ADC1 | 中间模拟反射值 |
+| `line_center` | `D0` | 不接 | 第一版不使用数字阈值输出 |
+| `line_right` | `VCC` | `3V3` sensor bus | 右循迹传感器供电 |
+| `line_right` | `GND` | `GND` bus | 共地 |
+| `line_right` | `A0` | GPIO14 / ADC2 | 右侧模拟反射值 |
+| `line_right` | `D0` | 不接 | 第一版不使用数字阈值输出 |
+
+安装规范：
+
+```text
+车头前进方向 ↑
+
+line_left      line_center      line_right
+                    |
+                单黑胶带轨道
+```
+
+- 三个 TCRT5000 安装在车头下方同一横向线上。
+- 中间传感器在正常循迹时对准黑胶带；左右传感器用于判断线偏向哪一侧。
+- TCRT5000 应贴近地面，建议从 5-10 mm 量级开始测试；4-5 cm 不适合作为可靠循迹高度。
+- 展场灯光、投影或反光地面干扰明显时，应加黑色消光遮光罩，但不能刮地或遮挡发射 / 接收管。
+
+控制语义：
+
+- TCRT5000 是展场运动的主轨道参考。
+- ToF 不替代循迹，只负责人、家具、展台边缘等临时 / 近场障碍。
+- IMU 可辅助 yaw 回正和脱轨后的粗略扫线，但只有 TCRT 重新读到轨道才算回轨成功。
 
 #### 电机驱动控制侧
 
@@ -412,7 +478,41 @@ graph LR
 
 ## 五、核心数据流
 
-### 5.1 ToF 避障闭环
+### 5.1 TCRT 单轨循迹闭环
+
+```mermaid
+flowchart TD
+    A["ESP32 读取 TCRT5000 line_left / line_center / line_right A0"] --> B["归一化黑线反射强度"]
+    B --> C["估算 line position / track state"]
+    C --> D{"是否仍在轨道附近"}
+    D -- "是" --> E["输出低速循迹修正"]
+    D -- "否" --> F["停止前进或进入低速 reacquire"]
+    E --> G["通过 Serial 上报 line telemetry"]
+    F --> G
+```
+
+第一版循迹使用成熟 line follower 方案：先用 `line calibrate floor` / `line calibrate tape` 建立每个 TCRT 的白地 / 黑线范围，再把三路 `A0` 转换成黑线置信度。位置权重固定为 `left=0`、`center=1000`、`right=2000`，`line_error = position - 1000`。`line_error < 0` 表示黑线在车身左侧，应向左修正；`line_error > 0` 表示黑线在车身右侧，应向右修正。若实测底盘转向方向与该坐标相反，只允许改方向反转参数，不改循迹算法。
+
+第一版循迹状态：
+
+| 状态 | 条件 | 下位行为 |
+|---|---|---|
+| `track_follow` | `010` 或中间读数占优，line error 在中心死区内 | 低速前进 + PD 差速修正 |
+| `bias_left` | `100` / `110` 或 position 小于中心 | 限速并向左修正，让中心传感器重新压线 |
+| `bias_right` | `001` / `011` 或 position 大于中心 | 限速并向右修正，让中心传感器重新压线 |
+| `line_lost` | `000`，三路都没有稳定看到黑线 | 停止前进，记录最后有效 error |
+| `reacquire` | 丢线后允许找回 | 低速按最后 error 方向扫线；IMU 只辅助 yaw 搜索幅度，TCRT 确认后才算回轨 |
+| `noise` | `101`，左右看到线但中心没看到 | 减速并沿上一帧方向判断；连续出现则停机 |
+| `wide` | `111`，黑区过宽或特殊标记 | 减速 / 停机，不当作正常循迹 |
+
+运动 gate 顺序：
+
+1. `motor/test/test all` 是排线工具，只需要 `arm`，不走 TCRT / ToF gate。
+2. `drive/spin/roam` 先经过 TCRT line gate，再经过 ToF obstacle gate。
+3. ToF `obstacle_stop` / `sensor_fault` 优先级高于 TCRT 找线；近场硬停时禁止继续找线动作。
+4. `line off` 只用于人工调试，重启后默认恢复 line gate 开启。
+
+### 5.2 ToF 避障闭环
 
 ```mermaid
 flowchart TD
@@ -438,29 +538,32 @@ flowchart TD
 
 这些阈值是现场调参起点，不是艺术行为规则。
 
-### 5.2 运动命令流
+### 5.3 运动命令流
 
 ```mermaid
 flowchart TD
-    A["Dashboard 手动 teleop 或后续 Stranger motion intent"] --> B["BodyBridge 转为 USB Serial 文本命令"]
-    B --> C["ESP32 接收 command"]
-    C --> D["读取最新 ToF obstacle state"]
-    D --> E["裁剪或覆盖 wheel command"]
-    E --> F["输出 4 路 PWM + DIR"]
-    F --> G["四路电机驱动板"]
-    G --> H["36JP555 x4 开环低速移动"]
+    A["ExpressionOutput.body_action + current EntityState"] --> B["Runtime Motion selector"]
+    B --> C["Motion profile from config/body_motion_profiles.yaml"]
+    C --> D["BodyMotionExecutor short step sequence"]
+    D --> E["BodyBridge USB Serial"]
+    E --> F["ESP32 drive / expressive command"]
+    F --> G["TCRT line gate + ToF obstacle gate"]
+    G --> H["PWM + DIR output"]
+    H --> I["Post-action line verify / reacquire"]
 ```
 
 关键原则：
 
-- 当前第一版由 Dashboard 手动 teleop 给出“想怎么动”
-- 后续才允许 Stranger runtime 产生高层 motion intent
+- Dashboard 手动 teleop 仍是开发者测试通道；Runtime Motion 是 Stranger 说话交互后的自动身体表达通道
+- Runtime Motion 默认关闭；关闭时只记录 motion decision，不驱动电机
+- Runtime Motion 只接收高层 intent，不接收 LLM raw motor command
 - ESP32-S3 决定“当前能不能这样动”
-- ToF gate 必须在电机输出前执行
+- TCRT line gate 和 ToF gate 必须在电机输出前执行
+- `allow_transient_line_loss` 只适用于原地转开 / 扭动等艺术动作，允许动作过程中短暂扫不到线，但动作后必须 verify line 或进入 reacquire
 - 当前不把 PWM 时间当成真实里程
 - 串口同一时刻只允许一个 owner；使用 Dashboard BodyBridge 时不要同时打开 PlatformIO Monitor
 
-### 5.3 语音输出流
+### 5.4 语音输出流
 
 ```mermaid
 flowchart TD
@@ -475,7 +578,7 @@ flowchart TD
 - 声音仍必须来自合法的 Stranger expression path
 - raw text TTS 只能作为 debug preview，不能作为 Stranger 正式发声后门
 
-### 5.4 小屏幕身体表面流
+### 5.5 小屏幕身体表面流
 
 ```mermaid
 flowchart TD
@@ -587,7 +690,7 @@ Mac mini -- USB Serial --> ESP32-S3
 }
 ```
 
-协议在代码实现前可以继续精简。第一目标是稳定调试 ToF 和电机，不是一次设计完整远程控制协议。
+协议在代码实现前可以继续精简。第一目标是稳定调试 TCRT 循迹、ToF 和电机，不是一次设计完整远程控制协议。
 
 ---
 
@@ -598,15 +701,16 @@ Mac mini -- USB Serial --> ESP32-S3
 当前硬件阶段只能描述为：
 
 - 低速开环移动
-- 反应式游走
+- 单黑线轨道附近的低速循迹 / 微行为
 - ToF 近场避障
+- IMU 姿态观测
 - 允许轻微漂移
 
 不能描述为：
 
 - 精确定位
 - 精确路径复现
-- 稳定巡路
+- 无轨道的稳定巡路
 - 完整自主导航
 - 有地图的空间理解
 
@@ -614,7 +718,7 @@ Mac mini -- USB Serial --> ESP32-S3
 
 ### 7.2 硬件安全与艺术行为的边界
 
-ToF hard stop、slow zone、PWM clipping 属于下位机安全逻辑，可以直接在 ESP32-S3 本地执行。
+TCRT line tracking、line lost stop / reacquire、ToF hard stop、slow zone、PWM clipping 属于下位机安全逻辑，可以直接在 ESP32-S3 本地执行。
 
 身份张力、沉默、拒绝服务、记忆牵引、观察反转等仍属于上位机 Stranger 行为系统，不应写死进 ESP32 固件。
 
@@ -631,10 +735,12 @@ gantt
     section Phase 1
     "ESP32-S3 + TCA9548A 接线验证" :p1, 0, 1
     "4 个 VL53L1X 轮询与 Serial telemetry" :p1b, 0, 1
+    "3 个 TCRT5000 A0 读取与校准" :p1c, 0, 1
 
     section Phase 2
-    "ToF hard stop / slow zone gate" :p2, 1, 2
-    "距离阈值现场调试" :p2b, 1, 2
+    "TCRT 单轨循迹 gate" :p2, 1, 2
+    "ToF hard stop / slow zone gate" :p2b, 1, 2
+    "黑线 / 距离阈值现场调试" :p2c, 1, 2
 
     section Phase 3
     "四路电机驱动单通道验证" :p3, 2, 3
@@ -651,7 +757,7 @@ gantt
 
 后续可选阶段：
 
-- 若转向角度需要更稳定，再把 BNO085 telemetry 接入 heading / turn control
+- 若转向角度和脱轨恢复需要更稳定，再把 BNO085 telemetry 接入 heading / turn control
 - 若需要稳定巡路、直线修正或里程估计，再加入编码器
 
 ---
@@ -660,11 +766,12 @@ gantt
 
 ```text
 Mac mini = Stranger 的主运行身体部件：记忆、语言、声音、屏幕状态、高层意图
-ESP32-S3 = 下位身体控制器：ToF 读取、本地避障 gate、电机输出
+ESP32-S3 = 下位身体控制器：TCRT 循迹、ToF 读取、本地运动 gate、电机输出
+TCRT5000 x3 = 单黑线轨道感知
 VL53L1X array = 近场障碍感知
 四路有刷电机驱动 + 36JP555 = 低速开环移动
 小音响 = Stranger 声音出口
 小屏幕 = Stranger 身体状态表面
 ```
 
-当前系统目标不是构建服务机器人导航系统，而是在可控、低速、允许轻微漂移的展览环境中，让 Stranger 获得一个能够移动、避让、发声和呈现状态的身体。
+当前系统目标不是构建服务机器人导航系统，而是在可控、低速、单轨道约束的展览环境中，让 Stranger 获得一个能够沿轨道移动、避让、发声和呈现状态的身体。

@@ -131,6 +131,11 @@
 - 原因：这类措辞本意是输出格式约束，但会和语音能力问题、TTS 现场能力、managed memory 污染叠加，让 Stranger 误以为自己没有声音或不能说话。
 - 如何应用：修改表达格式规则时，同时用 `rg` 检查 runtime prompt、context builder、managed memory 和最近 session history 中是否存在 `no voice`、`text-based`、`voice/audio`、`没有声音`、`用文字回应`、`读字` 等污染短语；必要时 reset 当前 session，避免短期历史继续污染。
 
+**L32：硬件控制 ack 必须更新开发者状态缓存**
+- 规则：ESP32 这类下位机命令如果只返回 `ack`，上位机 telemetry store 必须把会改变状态的 ack 转成可见状态更新；不能只等后续 `status` 包。
+- 原因：现场调试常会关闭周期 telemetry 来避免刷屏，此时 `arm`、`disarm`、`avoidance off`、`line off` 等命令虽然已执行，Dashboard 仍可能显示旧状态，误导为后端或硬件失效。
+- 如何应用：新增硬件命令时同步检查 ack payload、`BodyTelemetryStore` 状态映射、Dashboard blocker 提示和单元测试。
+
 **L17：跨 session 记忆必须有 visitor scope**
 - 规则：不能依赖 `session_type` 或全局池去模拟“同一个访客”的连续性；跨 session 的个人事实、关系线索和回返感必须经过显式 `visitor_id` 绑定
 - 原因：否则一个访客说过的事实会在另一个访客处泄漏，或者像“K 是谁”这类旧会话事实在新 session 中无法稳定召回

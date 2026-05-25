@@ -19,6 +19,8 @@ class ImuMonitor {
   const char *stateName() const;
   uint32_t eventCount() const;
   uint32_t resetCount() const;
+  bool yawAvailable() const;
+  float yawDeg() const;
 
  private:
   bool initialize();

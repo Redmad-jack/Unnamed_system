@@ -124,12 +124,17 @@ class BodySerialBridge:
         self._last_error = None
         self._last_event = "connected"
         self._read_task = asyncio.create_task(self._read_loop())
+        try:
+            await self.send_stop()
+            self._last_event = "connected; motors off"
+        except Exception as exc:
+            self._last_error = f"connect motors off failed: {exc}"
         return self.status()
 
     async def disconnect(self, *, send_stop: bool = True) -> dict[str, Any]:
         if self.connected and send_stop:
             try:
-                await self.send_raw_command(build_stop_command())
+                await self.send_stop()
             except Exception as exc:
                 self._last_error = str(exc)
         if self._read_task is not None:
@@ -150,13 +155,18 @@ class BodySerialBridge:
         return self.status()
 
     async def send_discrete_command(self, command: str) -> dict[str, Any]:
-        return await self.send_raw_command(build_discrete_command(command))
+        normalized = build_discrete_command(command)
+        await self.send_raw_command(normalized)
+        self._ingest_local_ack(normalized)
+        return self.status()
 
     async def send_drive_intent(self, intent: DriveIntent) -> dict[str, Any]:
         return await self.send_raw_command(build_drive_command(intent))
 
     async def send_stop(self) -> dict[str, Any]:
-        return await self.send_raw_command(build_stop_command())
+        await self.send_raw_command(build_stop_command())
+        self._ingest_local_ack(build_stop_command())
+        return self.status()
 
     async def send_raw_command(self, command: str) -> dict[str, Any]:
         if not self.connected or self._serial is None:
@@ -174,6 +184,34 @@ class BodySerialBridge:
             self._last_command = command
             self._last_event = f"tx {command}"
         return self.status()
+
+    def _ingest_local_ack(self, command: str) -> None:
+        normalized = " ".join(str(command or "").strip().lower().split())
+        payload: dict[str, Any] | None = None
+        if normalized == "arm":
+            payload = {"type": "ack", "action": "arm"}
+        elif normalized in {"disarm", "motors off"}:
+            payload = {"type": "ack", "action": "motors_off" if normalized == "motors off" else "disarm"}
+        elif normalized in {"avoidance on", "avoidance off"}:
+            payload = {
+                "type": "ack",
+                "action": "avoidance",
+                "enabled": normalized.endswith(" on"),
+            }
+        elif normalized in {"line on", "line off"}:
+            payload = {
+                "type": "ack",
+                "action": "line",
+                "enabled": normalized.endswith(" on"),
+            }
+        elif normalized in {"reacquire start", "reacquire stop"}:
+            payload = {
+                "type": "ack",
+                "action": "reacquire",
+                "enabled": normalized.endswith(" start"),
+            }
+        if payload is not None:
+            self.telemetry.ingest(payload)
 
     def ingest_line(self, raw_line: bytes | str) -> dict[str, Any]:
         if isinstance(raw_line, bytes):

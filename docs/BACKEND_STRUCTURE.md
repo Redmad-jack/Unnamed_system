@@ -330,7 +330,7 @@ CREATE TABLE schema_version (
 | `src/conscious_entity/interfaces/api_audio.py` | 可选 audio adapter 路由：STT stream、audio dialog、TTS stream |
 | `src/conscious_entity/harness/` | Runtime Harness trace 类型、recorder 和进程内 ring buffer |
 | `src/conscious_entity/identity/` | Visitor Identity & Session Gating V1 + 本地 face signature：记录 encounter、intent、primary visitor、插入事件、安全开发者状态、InsightFace/ArcFace capture、私有 signature store 和本地历史匹配 |
-| `src/conscious_entity/body/` | 可选 body hardware bridge：ESP32-S3 telemetry cache、BNO085 IMU snapshot、USB Serial connect/read/write、Dashboard teleop command protocol |
+| `src/conscious_entity/body/` | 可选 body hardware bridge：ESP32-S3 telemetry cache、BNO085 IMU snapshot、USB Serial connect/read/write、Dashboard teleop command protocol、Runtime Motion intent / profile / executor |
 | `src/conscious_entity/vision/runtime.py` | 可选 vision runtime：OpenCV/浏览器帧输入、YOLO person detection、presence event debounce |
 | `src/conscious_entity/audio/` | 可选 audio runtime：火山 STT/TTS 配置、stream id、协议封装 |
 
@@ -365,13 +365,17 @@ CREATE TABLE schema_version (
 | `POST` | `/api/v1/identity/face/capture` | 从 vision runtime 最近一帧做本地 face capture、quality gate、embedding 和历史匹配，并可进入 identity gating | 本地开发面板，当前无认证 |
 | `POST` | `/api/v1/identity/face/enroll` | 将最近一次 accepted pending face capture 绑定到已有 visitor，并只把 signature reference 写入 visitor metadata | 本地开发面板，当前无认证 |
 | `POST` | `/api/v1/identity/face/signature/deactivate` | 将错误 face signature 标记为 inactive；不删除本地 `.npz`，inactive signature 不参与 matching | 本地开发面板，当前无认证 |
-| `GET` | `/api/v1/body/status` | 查看 ESP32-S3 telemetry cache：ToF、BNO085 IMU、obstacle gate、motion、motor state、last ack/error | 本地开发面板，当前无认证 |
+| `GET` | `/api/v1/body/status` | 查看 ESP32-S3 telemetry cache：ToF、BNO085 IMU、obstacle gate、motion、runtime motion、motor state、last ack/error | 本地开发面板，当前无认证 |
 | `POST` | `/api/v1/body/telemetry` | 接收 ESP32 JSON telemetry 并写入进程内缓存；主要供 serial bridge 或临时调试注入使用 | 本地开发面板，当前无认证 |
 | `GET` | `/api/v1/body/ports` | 列出 pyserial 可见串口，并返回当前 BodyBridge 状态 | 本地开发面板，当前无认证 |
 | `GET` | `/api/v1/body/bridge/status` | 查看 USB Serial BodyBridge 连接、rx/tx、最近 raw line/error/event | 本地开发面板，当前无认证 |
-| `POST` | `/api/v1/body/bridge/connect` | 连接 ESP32-S3 USB serial；默认 `115200` baud；会成为串口唯一所有者 | 本地开发面板，当前无认证 |
+| `POST` | `/api/v1/body/bridge/connect` | 连接 ESP32-S3 USB serial；默认 `115200` baud；会成为串口唯一所有者；连接成功后会 best-effort 发送 `motors off`，确保默认 disarmed | 本地开发面板，当前无认证 |
 | `POST` | `/api/v1/body/bridge/disconnect` | 断开 BodyBridge；断开前尝试发送 `motors off` | 本地开发面板，当前无认证 |
-| `POST` | `/api/v1/body/command` | 发送 allowlist 内离散调试命令：`arm`、`motors off`、`avoidance on/off`、`telemetry on/off`、`tof`、`imu`、`status` | 本地开发面板，当前无认证 |
+| `POST` | `/api/v1/body/command` | 发送 allowlist 内离散调试命令：`arm`、`disarm`、`motors off`、`avoidance on/off`、`telemetry on/off`、`tof`、`imu`、`line`、`line on/off`、`line calibrate floor/tape`、`reacquire start/stop`、`status` | 本地开发面板，当前无认证 |
+| `POST` | `/api/v1/body/motor-test` | Dashboard 单电机诊断端点；只接受 `motor` 1-4、`direction` forward/reverse/stop、`duty` 0-250、`duration_ms` 1-30000，并由后端构造受限 `motor` 命令 | 本地开发面板，当前无认证 |
+| `GET` | `/api/v1/body/motion/status` | 查看 Runtime Motion 自动执行开关、最近 motion decision、最近执行结果和可用 motion profile | 本地开发面板，当前无认证 |
+| `POST` | `/api/v1/body/motion/config` | 设置运行期 Runtime Motion 调试开关；`auto_enabled` 默认 false，重启后回到配置默认 | 本地开发面板，当前无认证 |
+| `POST` | `/api/v1/body/motion/test` | 只执行白名单 motion intent 的开发者测试；不接受 raw PWM 或任意串口命令 | 本地开发面板，当前无认证 |
 | `WS` | `/api/v1/body/teleop` | Dashboard 键盘 teleop 通道；接收短 heartbeat drive intent，超时或断开时停机 | 本地开发面板，当前无认证 |
 | `GET` | `/api/v1/vision/status` | 查看可选视觉 runtime 状态、依赖、模型路径和最新 detections | 本地开发面板，当前无认证 |
 | `GET` | `/api/v1/vision/cameras` | 扫描本机 OpenCV 可打开的 camera index，用于现场选择可用通道 | 本地开发面板，当前无认证 |
@@ -416,9 +420,12 @@ CREATE TABLE schema_version (
 
 **BodyBridge / Hardware Teleop 边界：**
 - BodyBridge 是开发者手动硬件调试通道，不进入 LLM、Expression、memory、state 或 policy。
-- 串口由后端 `BodySerialBridge` 单一持有；使用 Dashboard teleop 时不要同时打开 PlatformIO Monitor。
+- Runtime Motion 是状态 / `body_action` 到低速身体表达的独立执行层；LLM 不能直接输出 PWM、串口命令或 motion profile 参数。
+- Runtime Motion 默认关闭，只在说话交互回合结束后按 `config/body_motion_profiles.yaml` 解析 motion intent；关闭时只记录 dry-run decision。
+- `allow_transient_line_loss` 只允许扭动 / 转开等原地表达动作短暂离线；ToF gate、motor arm、timeout、post-action line verify / reacquire 仍必须保留。
+- 串口由后端 `BodySerialBridge` 单一持有；使用 Dashboard teleop 时不要同时打开 PlatformIO Monitor；连接成功后默认发送 `motors off`，避免接管一个仍处于 armed 状态的 ESP32。
 - Dashboard 键盘 teleop 只发送短时 `drive` heartbeat；WebSocket 断开、250ms 无输入或 disconnect 时尝试 `motors off`。
-- `POST /api/v1/body/command` 只允许安全/调试 allowlist，不允许直接从 API 发送任意 `motor` 长时测试命令。
+- `POST /api/v1/body/command` 只允许安全/调试 allowlist，不允许直接从 API 发送任意 `motor` 长时测试命令；单电机诊断只能走 `/api/v1/body/motor-test` 的受限参数模型。
 - ESP32-S3 本地 ToF obstacle gate 仍是运动安全主闭环；Dashboard 的 `avoidance off` 只用于受控调试。
 - BNO085 IMU telemetry 只进入 `body.imu` snapshot 和 Hardware 面板显示；当前不写 memory、不进入 policy、不自动停机、不改变 teleop / roam。
 - 安装硬件功能需 optional dependency：`pip install -e ".[api,hardware]"`；未安装 `pyserial` 时其他 API 与 Dashboard 仍可运行。

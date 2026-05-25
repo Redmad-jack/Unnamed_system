@@ -16,6 +16,7 @@ Current active hardware target:
 - One Mac mini carried by the body as the upper computer
 - One ESP32-S3 as the lower body controller
 - Four VL53L1X ToF sensors for local obstacle sensing
+- Three TCRT5000 reflectance sensors for single black tape line following
 - One TCA9548A I2C multiplexer for the ToF bus
 - One four-channel brushed DC motor driver board
 - Four 36JP555 brushed DC geared motors
@@ -31,7 +32,7 @@ Out of current scope:
 - IMU control-loop integration; BNO085 SPI is currently bring-up telemetry only and does not participate in safety gating yet
 - Full SLAM, precise odometry, or map-based navigation
 
-The first hardware milestone is **local ToF obstacle avoidance**, then motor behavior and body presentation can be integrated into the Stranger runtime.
+The current motion direction is **single-track line following with TCRT5000**, with ToF kept as the near-field obstacle safety layer. Motor behavior and body presentation can then be integrated into the Stranger runtime.
 
 ---
 
@@ -48,12 +49,16 @@ Stranger mobile body
 │
 ├── ESP32-S3
 │   ├── Reads four VL53L1X ToF sensors through TCA9548A
-│   ├── Applies local obstacle-avoidance gate
+│   ├── Reads three TCRT5000 analog reflectance sensors
+│   ├── Applies local line-following and obstacle-avoidance gates
 │   ├── Outputs PWM + DIR signals to motor driver
 │   └── Reports sensor and safety state back to Mac mini
 │
 ├── TCA9548A I2C multiplexer
 │   └── VL53L1X ToF sensors x4
+│
+├── TCRT5000 line sensors
+│   └── left / center / right analog line reflectance
 │
 ├── Four-channel brushed DC motor driver
 │   └── 36JP555 geared brushed DC motors x4
@@ -70,8 +75,9 @@ Stranger mobile body
 | Layer | Hardware | Responsibility |
 |---|---|---|
 | Upper computer | Mac mini | Stranger runtime, LLM, memory, policy, TTS/audio output, high-level movement intent |
-| Lower controller | ESP32-S3 | ToF polling, local obstacle gate, motor PWM/DIR output, sensor telemetry |
+| Lower controller | ESP32-S3 | ToF polling, TCRT line sensing, local line / obstacle gates, motor PWM/DIR output, sensor telemetry |
 | Sensor layer | TCA9548A + VL53L1X x4 | Near-field distance sensing for obstacle avoidance |
+| Track layer | TCRT5000 x3 | Single black tape track sensing for controlled roaming |
 | Actuation layer | Four-channel driver + 36JP555 x4 | Brushed DC motor movement |
 | Presentation layer | Speaker + small screen | Voice and body-state expression |
 
@@ -114,10 +120,11 @@ The ESP32-S3 must not run LLM logic, memory, policy selection, or artistic behav
 
 - Communicate with Mac mini over USB serial in the first implementation phase
 - Poll four VL53L1X ToF sensors through TCA9548A
+- Read three TCRT5000 analog line sensors
 - Maintain a local obstacle state
-- Apply local obstacle avoidance before motor output
+- Apply local line following and obstacle avoidance before motor output
 - Generate PWM + DIR outputs for four DC motors
-- Report ToF distances, motor output summary, and local safety state to Mac mini
+- Report ToF distances, line sensor values, motor output summary, and local safety state to Mac mini
 
 ### Non-responsibilities
 
@@ -157,10 +164,9 @@ This wiring plan is the current recommended plan for the first ESP32-S3 body con
 | M3 DIR | GPIO12 | Motor driver `D3` | Direction can be inverted in firmware if needed |
 | M4 PWM | GPIO7 | Motor driver `P4` | LEDC PWM |
 | M4 DIR | GPIO13 | Motor driver `D4` | Direction can be inverted in firmware if needed |
-| TCRT5000 front-left D0 | GPIO38 | Front-left ground-line sensor `D0` | Digital input; first build uses D0 only |
-| TCRT5000 front-right D0 | GPIO39 | Front-right ground-line sensor `D0` | Digital input; first build uses D0 only |
-| TCRT5000 rear-left D0 | GPIO40 | Rear-left ground-line sensor `D0` | Digital input; first build uses D0 only |
-| TCRT5000 rear-right D0 | GPIO41 | Rear-right ground-line sensor `D0` | Digital input; first build uses D0 only |
+| TCRT5000 line-left A0 | GPIO1 / ADC1 | Left line-tracking sensor `A0` | Analog input for single-track line following |
+| TCRT5000 line-center A0 | GPIO2 / ADC1 | Center line-tracking sensor `A0` | Analog input for single-track line following |
+| TCRT5000 line-right A0 | GPIO14 / ADC2 | Right line-tracking sensor `A0` | Analog input; verify actual board pin before soldering |
 | BNO085 SPI SCK | GPIO15 | BNO085 `SCL` | SPI mode, not I2C |
 | BNO085 SPI MISO | GPIO16 | BNO085 `SDA` | BNO085 -> ESP32-S3 |
 | BNO085 SPI MOSI | GPIO17 | BNO085 `DI` | ESP32-S3 -> BNO085 |
@@ -255,48 +261,63 @@ Optional VL53L1X pins:
 
 Because TCA9548A isolates the sensors by channel, `XSHUT` address reassignment is not needed for the first four-sensor build.
 
-### ESP32-S3 to TCRT5000 ground-line sensor wiring
+### ESP32-S3 to TCRT5000 single-track line-following wiring
 
-The TCRT5000 modules are a separate ground-line hard-stop layer. They are **not I2C devices** and should not be connected through the TCA9548A.
+The TCRT5000 modules are now planned as the primary **single black tape track** sensing layer. They are **not I2C devices** and should not be connected through the TCA9548A.
 
 First build policy:
 
-- Use each TCRT5000 module's `D0` digital output only.
-- Leave `A0` unconnected for the first build.
+- Use **three** TCRT5000 modules at the front underside of the chassis: `line_left`, `line_center`, and `line_right`.
+- Use each module's `A0` analog output for reflectance measurement.
+- Leave each module's `D0` digital output unconnected in the first line-following build.
 - Power every TCRT5000 module from the ESP32-S3 `3V3` sensor power bus, not from `5V`.
 - Connect every TCRT5000 `GND` to the shared ESP32-S3 logic `GND` bus.
-- Do not bare-parallel the `D0` signal lines. Keep one GPIO per sensor for bring-up and diagnosis.
+- Use one ADC input per sensor. Do not parallel analog outputs.
 
 Common power wiring:
 
 | TCRT5000 pin | ESP32-S3 / rail | Notes |
 |---|---|---|
-| `VCC` | ESP32-S3 `3V3` sensor power bus | Shared by all four TCRT5000 modules |
+| `VCC` | ESP32-S3 `3V3` sensor power bus | Shared by all three TCRT5000 modules |
 | `GND` | ESP32-S3 `GND` bus | Shared logic ground |
-| `A0` | Not connected | Reserved only if analog reflectance becomes necessary later |
+| `D0` | Not connected | Digital threshold output is not used for the first tracking build |
 
-Digital signal wiring:
+Analog signal wiring:
 
 | Physical placement | TCRT5000 pin | ESP32-S3 GPIO | Purpose |
 |---|---|---:|---|
-| Front-left underside | `D0` | GPIO38 | Front-left black tape / boundary trigger |
-| Front-right underside | `D0` | GPIO39 | Front-right black tape / boundary trigger |
-| Rear-left underside | `D0` | GPIO40 | Rear-left black tape / boundary trigger |
-| Rear-right underside | `D0` | GPIO41 | Rear-right black tape / boundary trigger |
+| Front underside left | `A0` | GPIO1 / ADC1 | Left reflectance sample |
+| Front underside center | `A0` | GPIO2 / ADC1 | Center reflectance sample |
+| Front underside right | `A0` | GPIO14 / ADC2 | Right reflectance sample |
+
+Physical installation:
+
+```text
+Forward direction
+      ^
+
+line_left     line_center     line_right
+                   |
+              black tape line
+```
+
+Installation notes:
+
+- The three sensors should be mounted in a straight row under the front of the chassis.
+- `line_center` should be above the black tape when the chassis is centered on the track.
+- `line_left` and `line_right` should sit to either side of the tape so that the analog values reveal whether the line has moved left or right under the sensor row.
+- Keep the TCRT5000 close to the floor. A practical starting target is roughly 5-10 mm above the surface; 40-50 mm is not suitable for reliable TCRT5000 line following.
+- Add a matte black short shroud / hood around each sensor if exhibition lighting, reflective floor material, or projection light affects readings. The shroud must not scrape the floor or block the emitter / receiver pair.
+- Calibrate on the actual floor and black tape used in the exhibition space.
+- If 3V3 or GND fan-out becomes physically crowded, use a small soldered power bus / harness with insulation and strain relief. Do not twist bare wires together as a final installation.
 
 Runtime semantics:
 
-- Any active TCRT5000 trigger means ground-line hard stop.
-- TCRT hard stop has higher priority than ToF avoidance, roam mode, or Mac mini motion command.
-- Firmware should support per-channel active polarity / inversion, because TCRT5000 breakout boards may output either active-low or active-high depending on comparator wiring and threshold setting.
-- Firmware should debounce the D0 inputs before treating them as stable, but the first response should still be conservative.
-
-Physical installation notes:
-
-- Place the four sensors under the body near the front-left, front-right, rear-left, and rear-right edges.
-- Keep each sensor close enough to the floor for the specific module and floor material.
-- Tune the module potentiometer on the actual floor and black tape used in the exhibition space.
-- If 3V3 or GND fan-out becomes physically crowded, use a small soldered power bus / harness with insulation and strain relief. Do not twist bare wires together as a final installation.
+- The line track is the primary movement reference for exhibition roaming.
+- ToF remains the near-field obstacle safety layer for people, furniture, and temporary objects.
+- IMU can help with yaw correction and reacquisition after small off-track micro-behaviors, but TCRT5000 readings are the only confirmation that the chassis is back on the track.
+- If all three TCRT5000 sensors read floor / no-line for longer than the configured timeout, ESP32 should stop or enter a conservative reacquire state.
+- A line-following state machine should be implemented before autonomous exhibition roaming is enabled.
 
 ### ESP32-S3 to BNO085 IMU wiring
 
@@ -424,7 +445,7 @@ Important boundaries:
 | ESP32-S3 | USB from Mac mini for first build | USB ground from Mac mini | Also provides serial command and telemetry |
 | TCA9548A upstream side | ESP32-S3 `3V3` to TCA9548A `VCC` | ESP32-S3 `GND` to TCA9548A `GND` | Keep upstream I2C at 3.3V |
 | VL53L1X ToF sensors x4 | TCA9548A selected channel `VCC` to sensor `VIN` | TCA9548A selected channel `GND` to sensor `GND` | Channel `SCLn` / `SDAn` connect to sensor `SCL` / `SDA` |
-| TCRT5000 ground-line sensors x4 | ESP32-S3 `3V3` sensor power bus to each `VCC` | ESP32-S3 `GND` bus to each `GND` | D0 lines go separately to GPIO38-GPIO41; A0 unused |
+| TCRT5000 line sensors x3 | ESP32-S3 `3V3` sensor power bus to each `VCC` | ESP32-S3 `GND` bus to each `GND` | `A0` lines go separately to GPIO1, GPIO2, and GPIO14; `D0` unused |
 | BNO085 IMU | ESP32-S3 `3V3` to BNO085 `VIN` | ESP32-S3 `GND` to BNO085 `GND` | SPI telemetry bring-up; observation only |
 | Motor driver signal side | ESP32-S3 `3V3` to driver signal `+V` | ESP32-S3 `GND` to driver signal `-V` | Isolated signal input side; PWM/DIR reference this ground |
 | Motor driver motor bus | Separate motor supply positive to motor bus `VCC` / `+` | Separate motor supply negative to motor bus `GND` / `-` | Must match 36JP555 and driver current demand |
@@ -447,13 +468,13 @@ Power distribution notes:
 3. Confirm TCA9548A appears at I2C address `0x70`.
 4. Confirm each VL53L1X responds only on its selected TCA9548A channel.
 5. Confirm Serial telemetry prints four distance values.
-6. Confirm each TCRT5000 `D0` input changes state when it sees the actual black tape.
+6. Confirm each TCRT5000 `A0` analog value changes clearly between the actual floor and black tape.
 7. Connect motor driver signal-side `+V` / `-V`, still with motor bus power disconnected.
 8. Confirm PWM and DIR pins idle to safe values (`PWM = 0`).
 9. Connect one motor channel only with low current / low PWM for first motor test.
 10. Verify forward / reverse / brake for one motor.
 11. Repeat for M2-M4.
-12. Only after each motor channel is verified, test four-wheel low-speed motion with ToF obstacle gate enabled.
+12. Only after each motor channel is verified, test four-wheel low-speed motion with line tracking and ToF obstacle gate enabled.
 
 ---
 
@@ -613,14 +634,23 @@ Even though the driver supports frequent direction changes, the full mobile body
 
 ### Current phase
 
-The current movement model is **open-loop, low-speed, reactive roaming**:
+The current movement model is **open-loop, low-speed, reactive roaming plus speech-mode expressive motion**:
 
 - Mac mini sends high-level motion intent or wheel-speed command
 - ESP32-S3 reads ToF sensors
 - ESP32-S3 gates or clips motion based on obstacle distances
 - ESP32-S3 outputs final PWM + DIR to the motor driver
+- Runtime Motion can map `body_action` to bounded speech-mode motion profiles when the developer explicitly enables auto motion
 
 The system may use PWM duration as a rough motion estimate, but it must not treat PWM as a factual measurement of distance traveled.
+
+Speech-mode expressive motion is intentionally conservative:
+
+- Default behavior is HOLD.
+- Approach / retreat are short strict-track movements.
+- Turn-away / twist can use `allow_transient_line_loss`, but only for short in-place steps and only with ToF gate and motor timeout still active.
+- After expressive motion, the Mac-side executor checks line state and requests reacquire when needed.
+- Experimental spin remains a developer test path until physical validation is complete.
 
 ### Accepted current limitations
 
@@ -628,7 +658,7 @@ The system may use PWM duration as a rough motion estimate, but it must not trea
 - No precise odometry
 - No repeatable route execution
 - No guaranteed straight-line travel
-- No confirmed turn angle
+- No fully closed-loop turn angle; BNO085 yaw can assist short-turn validation and line reacquire, but it is not a full odometry solution
 - Minor drift is acceptable in the current clean exhibition environment
 
 ### Deferred additions
@@ -636,9 +666,9 @@ The system may use PWM duration as a rough motion estimate, but it must not trea
 If stable route repetition or stronger turn confirmation becomes necessary later, add:
 
 1. Wheel or motor encoders for actual wheel rotation feedback
-2. Later use of the already connected BNO085 for short-turn yaw confirmation
+2. Wheel encoders if distance or repeatable route accuracy becomes a requirement
 
-The BNO085 is currently a telemetry-only bring-up sensor. Turn confirmation, heading hold, tilt thresholds, impact thresholds, and automatic safety actions remain deferred until normal driving data is observed.
+The BNO085 is now allowed to assist short yaw checks for expressive motion and line reacquire. Acceleration is still treated as diagnostic / anomaly data, not as a primary distance estimate.
 
 ---
 
@@ -762,15 +792,16 @@ The motor bus must use an appropriate independent supply or battery sized for fo
 
 ### Minimum current-stage safety behavior
 
-For the current stage, implement ToF obstacle avoidance first:
+For the current stage, implement TCRT5000 line tracking and ToF obstacle avoidance together:
 
+- If all three TCRT5000 sensors lose the black track for longer than the configured timeout, motor PWM must go to zero or enter a conservative reacquire routine.
 - If any front ToF sensor enters hard-stop range, motor PWM must go to zero.
 - If an obstacle is inside the slow zone, forward speed must be capped.
-- ESP32-S3 should apply this gate locally before motor output.
+- ESP32-S3 should apply line and obstacle gates locally before motor output.
 
 ### Later safety behavior
 
-After ToF obstacle avoidance is stable, add:
+After basic line tracking and ToF obstacle avoidance are stable, add:
 
 - serial command timeout -> stop
 - startup neutral state -> PWM zero
@@ -779,7 +810,7 @@ After ToF obstacle avoidance is stable, add:
 - manual emergency stop
 - low-voltage / power fault handling if measurable
 
-The current plan intentionally sequences these after the first ToF avoidance milestone, not before it.
+The current plan intentionally keeps these after the first line-tracking / ToF safety milestone, not before it.
 
 ---
 
@@ -791,7 +822,7 @@ The current plan intentionally sequences these after the first ToF avoidance mil
 | Lower controller | ESP32-S3 development board | 1 | Body controller |
 | I2C multiplexer | TCA9548A expansion board | 1 | Expands one I2C bus to ToF channels |
 | ToF sensor | VL53L1X breakout | 4 | Local obstacle sensing |
-| Ground-line sensor | TCRT5000 module | 4 | Black tape boundary / hard-stop input |
+| Line sensor | TCRT5000 module | 3 | Single black tape line tracking through `A0` analog outputs |
 | IMU | Adafruit BNO085 breakout | 1 | SPI telemetry bring-up; not yet a motion gate |
 | Motor driver | Fierce four-channel brushed DC motor driver Ver2.3 | 1 | PWM + DIR control |
 | Drive motor | 36JP555 brushed DC geared motor | 4 | No encoder in current phase |
@@ -820,6 +851,11 @@ VL53L1X x4
   -> ESP32-S3 I2C read
   -> local obstacle state
   -> serial telemetry to Mac mini
+
+TCRT5000 x3
+  -> ESP32-S3 ADC read
+  -> local line position / track state
+  -> line-following gate and serial telemetry
 ```
 
 ### Motion flow
@@ -828,7 +864,7 @@ VL53L1X x4
 Stranger runtime / body behavior layer
   -> movement intent
   -> USB serial command
-  -> ESP32-S3 obstacle gate
+  -> ESP32-S3 line-following gate + obstacle gate
   -> PWM + DIR
   -> four-channel motor driver
   -> 36JP555 motors
@@ -855,20 +891,26 @@ Stranger runtime state / expression output
 
 ## 13. Implementation order
 
-### Phase 1: ToF bring-up
+### Phase 1: ToF and TCRT sensor bring-up
 
 - Wire ESP32-S3 to TCA9548A
 - Wire four VL53L1X sensors with corrected line order
+- Wire three TCRT5000 sensors through `A0` analog outputs
 - Poll each TCA9548A channel one at a time
 - Report four distance readings over serial
+- Report three line reflectance readings over serial
 - Confirm distance stability on the actual body
+- Confirm black tape / floor contrast on the actual exhibition surface
 
-### Phase 2: Local ToF obstacle gate
+### Phase 2: Local line-following and ToF obstacle gate
 
 - Define sensor names and placement
+- Implement TCRT floor / tape calibration, normalized black-line confidence, line position, line lost, and conservative reacquire states
+- Use `left=0`, `center=1000`, `right=2000` line position weighting; `position - 1000` is the steering error
+- Treat `010`, `100`, `001`, `110`, `011`, `000`, `101`, and `111` as explicit first-version track states
 - Implement hard-stop and slow-zone thresholds
 - Keep final motor output at zero while obstacle state is unsafe
-- Report `clear`, `slow_zone`, and `obstacle_stop` states
+- Report `track_follow`, `line_lost`, `reacquire`, `clear`, `slow_zone`, and `obstacle_stop` states
 
 ### Phase 3: Motor driver bring-up
 

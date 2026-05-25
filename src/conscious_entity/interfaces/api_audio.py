@@ -94,6 +94,11 @@ async def audio_dialog(body: AudioDialogRequest, request: Request):
         "visual_mode": output.visual_mode,
         "vocal_marker": output.vocal_marker,
         "body_action": output.body_action,
+        "motion": (
+            request.app.state.body_motion.status().get("last_decision")
+            if getattr(request.app.state, "body_motion", None) is not None
+            else None
+        ),
         "response_plan": (
             output.response_plan.to_dict()
             if output.response_plan is not None

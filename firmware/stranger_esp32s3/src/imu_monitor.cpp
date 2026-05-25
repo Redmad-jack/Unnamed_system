@@ -133,6 +133,10 @@ uint32_t ImuMonitor::eventCount() const { return eventCount_; }
 
 uint32_t ImuMonitor::resetCount() const { return resetCount_; }
 
+bool ImuMonitor::yawAvailable() const { return hasRotation_ && fresh(); }
+
+float ImuMonitor::yawDeg() const { return yawDeg_; }
+
 bool ImuMonitor::initialize() {
   lastInitAttemptMs_ = millis();
   present_ = false;

@@ -285,15 +285,18 @@
     const [health, setHealth] = useState(null);
     const [sessionType, setSessionType] = useState("test");
     const [configOpen, setConfigOpen] = useState(false);
-    const [armState, setArmState] = useState({ status: "idle", detail: "not armed" });
+    const [armState, setArmState] = useState({ status: "off", detail: "not armed" });
     const armStreamsRef = useRef([]);
 
     useEffect(() => { writeLayout(layout); }, [layout]);
-    useEffect(() => () => {
+
+    const stopArmStreams = useCallback(() => {
       armStreamsRef.current.forEach((stream) => {
         stream.getTracks().forEach((track) => track.stop());
       });
+      armStreamsRef.current = [];
     }, []);
+    useEffect(() => () => stopArmStreams(), [stopArmStreams]);
 
     const pollHealth = useCallback(async () => {
       try {
@@ -386,11 +389,13 @@
     }, []);
 
     const armExhibition = useCallback(async () => {
+      if (armState.status === "ready") {
+        stopArmStreams();
+        setArmState({ status: "off", detail: "not armed" });
+        return;
+      }
       setArmState({ status: "arming", detail: "requesting camera, mic, playback" });
-      armStreamsRef.current.forEach((stream) => {
-        stream.getTracks().forEach((track) => track.stop());
-      });
-      armStreamsRef.current = [];
+      stopArmStreams();
 
       const results = [];
       const requestMedia = async (kind, constraints) => {
@@ -456,7 +461,7 @@
           at: new Date().toISOString(),
         }),
       }).catch(() => null);
-    }, []);
+    }, [armState.status, stopArmStreams]);
 
     const gridStyle = {
       gridTemplateColumns: `${layout.left}px minmax(360px, 1fr) ${layout.right}px`,
@@ -508,7 +513,7 @@
 
   function Header({ health, sessionType, onSessionTypeChange, armState, onArm, onConfig }) {
     const status = health && health.status ? health.status : "connecting";
-    const armStatus = armState && armState.status ? armState.status : "idle";
+    const armStatus = armState && armState.status ? armState.status : "off";
     const armLabel = armStatus === "arming" ? "ARMING" : `ARM: ${armStatus.toUpperCase()}`;
     return h("header", { className: "app-header" },
       h("h1", { className: "app-title" }, "CONSCIOUS ENTITY — DEV PANEL"),
@@ -1572,6 +1577,16 @@
     const [teleopActive, setTeleopActive] = useState(false);
     const [teleopStatus, setTeleopStatus] = useState("idle");
     const [avoidanceOverride, setAvoidanceOverride] = useState(null);
+    const [lineOverride, setLineOverride] = useState(null);
+    const [motorTest, setMotorTest] = useState({
+      motor: "2",
+      direction: "forward",
+      duty: "80",
+      duration_ms: "800",
+    });
+    const [motorTestStatus, setMotorTestStatus] = useState("idle");
+    const [motionTestIntent, setMotionTestIntent] = useState("TWIST_SMALL");
+    const [motionTestStatus, setMotionTestStatus] = useState("idle");
     const [gamepadActive, setGamepadActive] = useState(false);
     const [gamepadStatus, setGamepadStatus] = useState(
       navigator.getGamepads ? "off" : "Gamepad API unavailable",
@@ -1609,9 +1624,15 @@
 
     const controller = body && body.controller ? body.controller : {};
     const motion = body && body.motion ? body.motion : {};
+    const runtimeMotion = body && body.runtime_motion ? body.runtime_motion : {};
+    const runtimeMotionDecision = runtimeMotion.last_decision || {};
+    const runtimeMotionResult = runtimeMotion.last_result || {};
+    const runtimeMotionProfiles = Array.isArray(runtimeMotion.profiles) ? runtimeMotion.profiles : [];
     const obstacle = body && body.obstacle ? body.obstacle : {};
     const imu = body && body.imu ? body.imu : {};
+    const line = body && body.line ? body.line : {};
     const tof = body && body.tof ? body.tof : {};
+    const lineSensors = Array.isArray(line.sensors) ? line.sensors : [];
     const sensors = Array.isArray(tof.sensors) ? tof.sensors : [];
     const motors = body && Array.isArray(body.motors) ? body.motors : [];
     const motorDuties = motion.motor_duties || {};
@@ -1619,14 +1640,42 @@
     const bridgeEnabled = !bridge || bridge.enabled !== false;
     const rawAvoidanceEnabled = Boolean(controller.avoidance_enabled);
     const avoidanceEnabled = avoidanceOverride === null ? rawAvoidanceEnabled : avoidanceOverride;
-    const avoidanceBusy = commandBusy === "avoidance on" || commandBusy === "avoidance off";
+    const rawLineEnabled = controller.line_enabled === undefined || controller.line_enabled === null
+      ? Boolean(line.enabled)
+      : Boolean(controller.line_enabled);
+    const lineEnabled = lineOverride === null ? rawLineEnabled : lineOverride;
+    const safetyBusy = commandBusy === "manual override" || commandBusy === "safety gates";
     const controlActive = teleopActive || gamepadActive;
+    const safetyGatesEnabled = avoidanceEnabled || lineEnabled;
+    const lineGateEnabled = lineEnabled;
+    const lineGateState = String(controller.line_state || line.state || "unknown");
+    const lineGateCalibrated = controller.line_calibrated === undefined || controller.line_calibrated === null
+      ? Boolean(line.calibrated)
+      : Boolean(controller.line_calibrated);
+    const lineGateBlocksMotion = lineGateEnabled && (
+      !lineGateCalibrated
+      || ["sensor_fault", "line_lost", "noise", "wide"].includes(lineGateState)
+    );
+    const obstacleGateState = String(obstacle.state || "unknown");
+    const obstacleGateBlocksMotion = avoidanceEnabled && ["sensor_fault", "obstacle_stop"].includes(obstacleGateState);
+    const motorDisarmed = controller.motor_armed === false;
+    const motionBlockers = [
+      motorDisarmed ? "Motor is disarmed. Use the Hardware Controls arm button; the header ARM only enables exhibition input streams." : null,
+      lineGateBlocksMotion ? `Line gate is blocking drive/spin/teleop (${lineGateCalibrated ? lineGateState : "uncalibrated"}). Use line off for manual debug, or calibrate floor/tape and put the track under TCRT.` : null,
+      obstacleGateBlocksMotion ? `Obstacle gate is blocking drive/spin/teleop (${obstacleGateState}). Use avoidance off only for manual debug, or fix ToF readings.` : null,
+    ].filter(Boolean);
 
     useEffect(() => {
       if (avoidanceOverride !== null && rawAvoidanceEnabled === avoidanceOverride) {
         setAvoidanceOverride(null);
       }
     }, [avoidanceOverride, rawAvoidanceEnabled]);
+
+    useEffect(() => {
+      if (lineOverride !== null && rawLineEnabled === lineOverride) {
+        setLineOverride(null);
+      }
+    }, [lineOverride, rawLineEnabled]);
 
     const connectBridge = async () => {
       const selectedPort = String(port || "").trim();
@@ -1667,22 +1716,33 @@
       }
     };
 
-    const toggleAvoidance = async () => {
-      const nextEnabled = !avoidanceEnabled;
-      const command = nextEnabled ? "avoidance on" : "avoidance off";
-      setAvoidanceOverride(nextEnabled);
-      setCommandBusy(command);
-      try {
-        const data = await fetchJSON("/api/v1/body/command", {
+    const sendCommandList = async (commands) => {
+      let data = null;
+      for (const command of commands) {
+        data = await fetchJSON("/api/v1/body/command", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ command }),
         });
+      }
+      return data;
+    };
+
+    const toggleManualOverride = async () => {
+      const nextEnabled = !safetyGatesEnabled;
+      const commands = nextEnabled ? ["avoidance on", "line on"] : ["avoidance off", "line off"];
+      setAvoidanceOverride(nextEnabled);
+      setLineOverride(nextEnabled);
+      setCommandBusy(nextEnabled ? "safety gates" : "manual override");
+      try {
+        const data = await sendCommandList(commands);
         setBridge(data);
         setBridgeError("");
+        await new Promise((resolve) => window.setTimeout(resolve, 120));
         await load();
       } catch (err) {
         setAvoidanceOverride(null);
+        setLineOverride(null);
         setBridgeError(err.message);
       } finally {
         setCommandBusy("");
@@ -1699,9 +1759,124 @@
         });
         setBridge(data);
         setBridgeError("");
+        await new Promise((resolve) => window.setTimeout(resolve, 120));
         await load();
       } catch (err) {
         setBridgeError(err.message);
+      } finally {
+        setCommandBusy("");
+      }
+    };
+
+    const updateMotorTest = (patch) => {
+      setMotorTest((current) => ({ ...current, ...patch }));
+    };
+
+    const releaseMotionControls = async () => {
+      const hadLiveControl = teleopActive || gamepadActive || Boolean(teleopSocketRef.current);
+      setTeleopActive(false);
+      setGamepadActive(false);
+      setGamepadOutput({ throttle: 0, turn: 0, brake: 0, boost: 0 });
+      keysRef.current.clear();
+      teleopIntentRef.current = { type: "intent", throttle: 0, turn: 0, duration_ms: 180 };
+      if (teleopTimerRef.current) {
+        window.clearInterval(teleopTimerRef.current);
+        teleopTimerRef.current = null;
+      }
+      if (gamepadFrameRef.current) {
+        window.cancelAnimationFrame(gamepadFrameRef.current);
+        gamepadFrameRef.current = null;
+      }
+      if (teleopSocketRef.current) {
+        const socket = teleopSocketRef.current;
+        try {
+          if (socket.readyState === WebSocket.OPEN) {
+            socket.send(JSON.stringify({ type: "kill" }));
+          }
+        } catch (_) {
+          // Best effort: the backend also sends motors off during websocket cleanup.
+        }
+        try {
+          socket.close();
+        } catch (_) {
+          // Ignore close races; the socket will be dropped locally either way.
+        }
+        teleopSocketRef.current = null;
+      }
+      if (hadLiveControl) {
+        await new Promise((resolve) => window.setTimeout(resolve, 180));
+      }
+    };
+
+    const sendMotorTest = async (directionOverride = null) => {
+      const direction = directionOverride || motorTest.direction;
+      const duty = direction === "stop"
+        ? 0
+        : Math.round(clamp(Number(motorTest.duty) || 0, 0, 250));
+      const payload = {
+        motor: Math.round(clamp(Number(motorTest.motor) || 1, 1, 4)),
+        direction,
+        duty,
+        duration_ms: Math.round(clamp(Number(motorTest.duration_ms) || 800, 1, 30000)),
+      };
+      setCommandBusy("motor-test");
+      try {
+        setMotorTestStatus("releasing teleop");
+        await releaseMotionControls();
+        setMotorTestStatus(`sending M${payload.motor} ${payload.direction}`);
+        const data = await fetchJSON("/api/v1/body/motor-test", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+        setBridge(data);
+        setBridgeError("");
+        setMotorTestStatus(`sent M${payload.motor} ${payload.direction} ${payload.duty} for ${payload.duration_ms}ms`);
+        await load();
+      } catch (err) {
+        setBridgeError(err.message);
+        setMotorTestStatus(`error: ${err.message}`);
+      } finally {
+        setCommandBusy("");
+      }
+    };
+
+    const toggleRuntimeMotion = async () => {
+      const nextEnabled = !Boolean(runtimeMotion.auto_enabled);
+      setCommandBusy("runtime-motion");
+      try {
+        await fetchJSON("/api/v1/body/motion/config", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ auto_enabled: nextEnabled }),
+        });
+        setBridgeError("");
+        await load();
+      } catch (err) {
+        setBridgeError(err.message);
+      } finally {
+        setCommandBusy("");
+      }
+    };
+
+    const sendMotionTest = async () => {
+      setCommandBusy("runtime-motion-test");
+      try {
+        setMotionTestStatus("releasing teleop");
+        await releaseMotionControls();
+        setMotionTestStatus(`testing ${motionTestIntent}`);
+        const data = await fetchJSON("/api/v1/body/motion/test", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ intent: motionTestIntent, allow_display_only: true }),
+        });
+        const result = data && data.result ? data.result : {};
+        setMotionTestStatus(`${result.status || "sent"}${result.blocker ? ` · ${result.blocker}` : ""}`);
+        setBridgeError("");
+        await load();
+      } catch (err) {
+        setBridgeError(err.message);
+        setMotionTestStatus(`error: ${err.message}`);
       } finally {
         setCommandBusy("");
       }
@@ -1933,6 +2108,7 @@
           h("tr", null, h("td", null, "I2C pins"), h("td", null, `SDA ${controller.sda ?? "—"} · SCL ${controller.scl ?? "—"}`)),
           h("tr", null, h("td", null, "Armed"), h("td", null, yn(controller.motor_armed))),
           h("tr", null, h("td", null, "Avoidance"), h("td", null, yn(controller.avoidance_enabled))),
+          h("tr", null, h("td", null, "Line gate"), h("td", null, `${yn(controller.line_enabled)} · ${controller.line_state || "unknown"}`)),
           h("tr", null, h("td", null, "Roam"), h("td", null, `${yn(controller.roam_enabled)} · ${controller.roam_mode || "stopped"}`)),
         )),
       ),
@@ -1981,30 +2157,174 @@
       h("div", { className: "section" },
         h("div", { className: "section-title" }, "Controls"),
         h("button", {
-          className: `safety-switch ${avoidanceEnabled ? "active" : "manual"}`,
+          className: `safety-switch ${safetyGatesEnabled ? "active" : "manual"}`,
           disabled: commandBusy || !bridgeConnected,
-          onClick: toggleAvoidance,
+          onClick: toggleManualOverride,
           role: "switch",
-          "aria-checked": avoidanceEnabled,
+          "aria-checked": safetyGatesEnabled,
         },
           h("span", { className: "safety-switch-track", "aria-hidden": "true" },
             h("span", { className: "safety-switch-knob" }),
           ),
           h("span", { className: "safety-switch-copy" },
-            h("span", { className: "safety-switch-title" }, avoidanceEnabled ? "Obstacle Avoidance On" : "Manual Override"),
-            h("span", { className: "safety-switch-help" }, avoidanceEnabled
-              ? "ToF obstacle gate can stop keyboard or gamepad motion."
-              : "Obstacle gate is bypassed; keyboard and gamepad have direct manual control."),
-            h("span", { className: "safety-switch-status" }, avoidanceBusy ? "Switching..." : (bridgeConnected ? "Click to toggle" : "Connect serial bridge first")),
+            h("span", { className: "safety-switch-title" }, safetyGatesEnabled ? "Safety Gates On" : "Manual Override"),
+            h("span", { className: "safety-switch-help" }, safetyGatesEnabled
+              ? "ToF avoidance and TCRT line gate can stop keyboard or gamepad motion."
+              : "ToF and TCRT line gates are bypassed; keyboard and gamepad have direct manual control."),
+            h("span", { className: "safety-switch-status" }, safetyBusy ? "Switching..." : (bridgeConnected ? "Click to toggle" : "Connect serial bridge first")),
           ),
         ),
+        motionBlockers.length ? h("div", { className: "motion-blockers" },
+          motionBlockers.map((message) => h("div", { key: message, className: "motion-blocker" }, message)),
+        ) : null,
         h("div", { className: "toolbar" },
-          ["arm", "motors off", "telemetry on", "telemetry off", "tof", "imu", "status"].map((command) => h("button", {
+          ["arm", "disarm", "motors off", "telemetry on", "telemetry off", "tof", "imu", "line", "status"].map((command) => h("button", {
             key: command,
-            className: command === "motors off" ? "btn-sm danger" : "btn-sm",
+            className: command === "disarm" || command === "motors off" ? "btn-sm danger" : "btn-sm",
             disabled: commandBusy || !bridgeConnected,
             onClick: () => sendCommand(command),
           }, commandBusy === command ? "Sending…" : command)),
+        ),
+        h("div", { className: "toolbar" },
+          ["line on", "line off", "line calibrate floor", "line calibrate tape", "reacquire start", "reacquire stop"].map((command) => h("button", {
+            key: command,
+            className: command === "line off" || command === "reacquire stop" ? "btn-sm danger" : "btn-sm",
+            disabled: commandBusy || !bridgeConnected,
+            onClick: () => sendCommand(command),
+          }, commandBusy === command ? "Sending…" : command)),
+        ),
+      ),
+      h("div", { className: "section runtime-motion-section" },
+        h("div", { className: "section-title" }, "Runtime Motion"),
+        h("button", {
+          className: `safety-switch ${runtimeMotion.auto_enabled ? "active" : "manual"}`,
+          disabled: commandBusy,
+          onClick: toggleRuntimeMotion,
+          role: "switch",
+          "aria-checked": Boolean(runtimeMotion.auto_enabled),
+        },
+          h("span", { className: "safety-switch-track", "aria-hidden": "true" },
+            h("span", { className: "safety-switch-knob" }),
+          ),
+          h("span", { className: "safety-switch-copy" },
+            h("span", { className: "safety-switch-title" }, runtimeMotion.auto_enabled ? "Auto Motion On" : "Auto Motion Off"),
+            h("span", { className: "safety-switch-help" }, "Runs only after speech turns, through motion profiles and ESP32 safety gates."),
+            h("span", { className: "safety-switch-status" }, commandBusy === "runtime-motion" ? "Switching..." : "Click to toggle"),
+          ),
+        ),
+        h("table", null, h("tbody", null,
+          h("tr", null, h("td", null, "In flight"), h("td", null, yn(runtimeMotion.in_flight))),
+          h("tr", null, h("td", null, "Last intent"), h("td", null, `${runtimeMotionDecision.intent || "—"} · ${runtimeMotionDecision.track_policy || "—"}`)),
+          h("tr", null, h("td", null, "Body action"), h("td", null, runtimeMotionDecision.body_action || "—")),
+          h("tr", null, h("td", null, "Blocker"), h("td", { className: runtimeMotionDecision.blocker ? "err" : "ok" }, runtimeMotionDecision.blocker || "none")),
+          h("tr", null, h("td", null, "Last result"), h("td", null, `${runtimeMotionResult.status || "—"}${runtimeMotionResult.blocker ? ` · ${runtimeMotionResult.blocker}` : ""}`)),
+          h("tr", null, h("td", null, "Line verify"), h("td", null, runtimeMotionResult.line_verify || "—")),
+          h("tr", null, h("td", null, "Yaw delta"), h("td", null, runtimeMotionResult.yaw_delta_deg === null || runtimeMotionResult.yaw_delta_deg === undefined ? "—" : `${runtimeMotionResult.yaw_delta_deg} deg`)),
+        )),
+        h("div", { className: "runtime-motion-test" },
+          h("select", {
+            className: "compact-select",
+            value: motionTestIntent,
+            onChange: (event) => setMotionTestIntent(event.target.value),
+            onFocus: () => {
+              setTeleopActive(false);
+              setGamepadActive(false);
+            },
+          },
+            runtimeMotionProfiles.map((profile) => h("option", { key: profile.intent, value: profile.intent }, `${profile.intent}${profile.display_only ? " · display-only auto" : ""}`)),
+          ),
+          h("button", {
+            className: "btn-sm",
+            disabled: commandBusy || !bridgeConnected,
+            onClick: sendMotionTest,
+          }, commandBusy === "runtime-motion-test" ? "Testing..." : "Test Motion"),
+        ),
+        h("div", { className: "item-meta" }, motionTestStatus),
+      ),
+      h("div", { className: "section" },
+        h("div", { className: "section-title" }, "Single Motor Test"),
+        h("div", { className: "motor-test-grid" },
+          h("label", { className: "motor-test-field" },
+            h("span", null, "Wheel"),
+            h("select", {
+              className: "compact-select",
+              value: motorTest.motor,
+              onChange: (event) => updateMotorTest({ motor: event.target.value }),
+              onFocus: () => {
+                setTeleopActive(false);
+                setGamepadActive(false);
+              },
+            },
+              [
+                ["1", "M1 front_left"],
+                ["2", "M2 front_right"],
+                ["3", "M3 rear_left"],
+                ["4", "M4 rear_right"],
+              ].map(([value, label]) => h("option", { key: value, value }, label)),
+            ),
+          ),
+          h("label", { className: "motor-test-field" },
+            h("span", null, "Direction"),
+            h("select", {
+              className: "compact-select",
+              value: motorTest.direction,
+              onChange: (event) => updateMotorTest({ direction: event.target.value }),
+              onFocus: () => {
+                setTeleopActive(false);
+                setGamepadActive(false);
+              },
+            },
+              h("option", { value: "forward" }, "forward"),
+              h("option", { value: "reverse" }, "reverse"),
+            ),
+          ),
+          h("label", { className: "motor-test-field" },
+            h("span", null, "Duty"),
+            h("input", {
+              className: "compact-input",
+              type: "number",
+              min: "0",
+              max: "250",
+              step: "1",
+              value: motorTest.duty,
+              onChange: (event) => updateMotorTest({ duty: event.target.value }),
+              onFocus: () => {
+                setTeleopActive(false);
+                setGamepadActive(false);
+              },
+            }),
+          ),
+          h("label", { className: "motor-test-field" },
+            h("span", null, "Duration ms"),
+            h("input", {
+              className: "compact-input",
+              type: "number",
+              min: "1",
+              max: "30000",
+              step: "50",
+              value: motorTest.duration_ms,
+              onChange: (event) => updateMotorTest({ duration_ms: event.target.value }),
+              onFocus: () => {
+                setTeleopActive(false);
+                setGamepadActive(false);
+              },
+            }),
+          ),
+        ),
+        h("div", { className: "motor-test-actions" },
+          h("button", {
+            className: "btn-sm",
+            disabled: commandBusy || !bridgeConnected,
+            onClick: () => sendMotorTest(),
+          }, commandBusy === "motor-test" ? "Sending..." : "Run selected"),
+          h("button", {
+            className: "btn-sm danger",
+            disabled: commandBusy || !bridgeConnected,
+            onClick: () => sendMotorTest("stop"),
+          }, "Stop selected"),
+        ),
+        h("div", { className: "motor-test-status" },
+          `Requires arm for nonzero duty · ${motorTestStatus}`,
         ),
       ),
       h("div", { className: "section" },
@@ -2064,6 +2384,22 @@
         )),
       ),
       h("div", { className: "section" },
+        h("div", { className: "section-title" }, "TCRT Line Tracking"),
+        h("table", null, h("tbody", null,
+          h("tr", null, h("td", null, "State"), h("td", { className: statusTone(line.enabled && line.calibrated && line.state !== "sensor_fault") }, `${line.state || "unknown"} · ${line.reason || "—"}`)),
+          h("tr", null, h("td", null, "Enabled / calibrated"), h("td", null, `${yn(line.enabled)} / ${yn(line.calibrated)}`)),
+          h("tr", null, h("td", null, "Detected bits"), h("td", null, line.detected_bits || "000")),
+          h("tr", null, h("td", null, "Position / error"), h("td", null, `${line.position ?? "—"} / ${line.error ?? "—"}`)),
+          h("tr", null, h("td", null, "Correction"), h("td", null, line.correction ?? "—")),
+          h("tr", null, h("td", null, "Reacquire"), h("td", null, `${line.reacquire_state || "idle"} · IMU ${yn(line.imu_assist)}`)),
+          h("tr", null, h("td", null, "Lost for"), h("td", null, ageText(line.lost_for_ms))),
+        )),
+        h("div", { className: "line-grid" }, lineSensors.map((sensor) => h(LineSensorCard, {
+          key: sensor.name,
+          sensor,
+        }))),
+      ),
+      h("div", { className: "section" },
         h("div", { className: "section-title" }, "IMU / BNO085"),
         h("table", null, h("tbody", null,
           h("tr", null, h("td", null, "Online"), h("td", { className: statusTone(imu.present && imu.initialized) }, `${yn(imu.present)} · ${imu.state || "unknown"}`)),
@@ -2101,6 +2437,34 @@
         h("div", { className: "section-title" }, "Last Hardware Event"),
         body.last_ack ? h("div", { className: "item-text" }, `ack: ${body.last_ack.action || body.last_ack.type || "—"}`) : h("div", { className: "dim" }, "No ack yet."),
         body.last_error ? h("div", { className: "err" }, `error: ${body.last_error.error || "unknown"}`) : null,
+      ),
+    );
+  }
+
+  function LineSensorCard({ sensor }) {
+    const raw = sensor.raw !== null && sensor.raw !== undefined ? sensor.raw : "—";
+    const confidence = sensor.confidence !== null && sensor.confidence !== undefined
+      ? `${(Number(sensor.confidence) * 100).toFixed(0)}%`
+      : "—";
+    const cardState = sensor.detected ? "ok" : sensor.fresh ? "warn" : "offline";
+    const displayName = String(sensor.name || "line").replace("line_", "");
+    return h("div", { className: `line-card ${cardState}` },
+      h("div", { className: "line-card-head" },
+        h("span", null, displayName),
+        h("span", null, sensor.detected ? "line" : sensor.fresh ? "floor" : "stale"),
+      ),
+      h("div", { className: "line-card-body" },
+        h("div", { className: "line-reading" },
+          h("div", { className: "line-raw" }, String(raw)),
+          h("div", { className: "line-unit" }, `raw · ${confidence}`),
+        ),
+        h("div", { className: "kv-grid line-meta" },
+          h("span", null, "Pin"), h("span", null, sensor.pin ?? "—"),
+          h("span", null, "Detected"), h("span", null, yn(sensor.detected)),
+          h("span", null, "Fresh"), h("span", null, yn(sensor.fresh)),
+          h("span", null, "Floor / tape"), h("span", null, `${sensor.floor_raw ?? "—"} / ${sensor.tape_raw ?? "—"}`),
+          h("span", null, "Age"), h("span", null, ageText(sensor.age_ms)),
+        ),
       ),
     );
   }

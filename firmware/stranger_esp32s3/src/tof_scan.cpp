@@ -62,16 +62,21 @@ void TofScanner::scan(Stream &out) {
     return;
   }
 
-  for (uint8_t channel = 0; channel < TOF_SENSOR_COUNT; channel++) {
+  for (uint8_t channel = 0; channel < 8; channel++) {
     const bool selected = selectTcaChannel(channel);
     delay(5);
     const bool tofPresent = selected && i2cProbe(VL53L1X_ADDR);
-    samples_[channel].present = tofPresent;
+    const bool configured = channel < TOF_SENSOR_COUNT;
+    const char *name = configured ? samples_[channel].name : "unconfigured";
+    const bool initialized = configured ? samples_[channel].initialized : false;
+    if (configured) {
+      samples_[channel].present = tofPresent;
+    }
     out.printf(
         "{\"type\":\"tof_channel\",\"channel\":%u,\"name\":\"%s\","
         "\"vl53l1x_0x29\":%s,\"initialized\":%s}\n",
-        channel, samples_[channel].name, tofPresent ? "true" : "false",
-        samples_[channel].initialized ? "true" : "false");
+        channel, name, tofPresent ? "true" : "false",
+        initialized ? "true" : "false");
   }
   disableTcaChannels();
 }

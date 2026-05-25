@@ -54,6 +54,7 @@ def test_body_serial_bridge_ingests_json_lines_into_telemetry():
 
 def test_body_serial_bridge_connects_sends_and_disconnects_with_fake_serial():
     fake_holder = {}
+    store = BodyTelemetryStore()
 
     def factory(**kwargs):
         fake = FakeSerial(**kwargs)
@@ -61,7 +62,7 @@ def test_body_serial_bridge_connects_sends_and_disconnects_with_fake_serial():
         return fake
 
     bridge = BodySerialBridge(
-        BodyTelemetryStore(),
+        store,
         serial_factory=factory,
         port_lister=lambda: [SimpleNamespace(device="/dev/cu.fake", description="Fake ESP32", hwid="FAKE")],
         dependency_available=True,
@@ -70,15 +71,28 @@ def test_body_serial_bridge_connects_sends_and_disconnects_with_fake_serial():
     async def run():
         connected = await bridge.connect("/dev/cu.fake", baud=115200)
         await bridge.send_discrete_command("arm")
+        armed = store.snapshot()
+        await bridge.send_discrete_command("line off")
+        line_off = store.snapshot()
+        await bridge.send_discrete_command("avoidance off")
+        avoidance_off = store.snapshot()
         await bridge.send_drive_intent(DriveIntent(throttle=80, turn=0, duration_ms=180))
         disconnected = await bridge.disconnect()
-        return connected, disconnected
+        stopped = store.snapshot()
+        return connected, armed, line_off, avoidance_off, disconnected, stopped
 
-    connected, disconnected = asyncio.run(run())
+    connected, armed, line_off, avoidance_off, disconnected, stopped = asyncio.run(run())
 
     fake = fake_holder["serial"]
     assert connected["connected"] is True
     assert disconnected["connected"] is False
+    assert armed["controller"]["motor_armed"] is True
+    assert line_off["controller"]["line_enabled"] is False
+    assert avoidance_off["controller"]["avoidance_enabled"] is False
+    assert stopped["controller"]["motor_armed"] is False
+    assert fake.writes[0] == b"motors off\n"
     assert b"arm\n" in fake.writes
+    assert b"line off\n" in fake.writes
+    assert b"avoidance off\n" in fake.writes
     assert b"drive 80 0 180\n" in fake.writes
     assert fake.writes[-1] == b"motors off\n"

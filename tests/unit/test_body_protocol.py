@@ -5,8 +5,10 @@ import pytest
 from conscious_entity.body.protocol import (
     BodyProtocolError,
     DriveIntent,
+    MotorTestCommand,
     build_discrete_command,
     build_drive_command,
+    build_motor_test_command,
     build_stop_command,
     drive_intent_from_payload,
 )
@@ -15,6 +17,13 @@ from conscious_entity.body.protocol import (
 def test_body_protocol_builds_drive_command_from_teleop_intent():
     assert build_drive_command(DriveIntent(throttle=80, turn=0, duration_ms=180)) == "drive 80 0 180"
     assert build_drive_command(DriveIntent(throttle=-80, turn=60, duration_ms=180)) == "drive -80 60 180"
+    assert build_drive_command(DriveIntent(throttle=0, turn=40, duration_ms=180, expressive=True)) == "expressive 0 40 180"
+
+
+def test_body_protocol_builds_single_motor_test_commands():
+    assert build_motor_test_command(MotorTestCommand(motor=2, duty=80, direction="forward", duration_ms=800)) == "motor 2 80 800"
+    assert build_motor_test_command(MotorTestCommand(motor=2, duty=80, direction="reverse", duration_ms=800)) == "motor 2 -80 800"
+    assert build_motor_test_command(MotorTestCommand(motor=3, duty=80, direction="stop", duration_ms=800)) == "motor 3 0 800"
 
 
 def test_body_protocol_clamps_drive_intent():
@@ -22,14 +31,30 @@ def test_body_protocol_clamps_drive_intent():
 
     assert command == "drive 250 -250 500"
 
+    with pytest.raises(BodyProtocolError):
+        build_drive_command(DriveIntent(throttle=20, turn=30, expressive=True))
+
+
+def test_body_protocol_clamps_single_motor_test_command():
+    command = build_motor_test_command(MotorTestCommand(motor=9, duty=999, direction="reverse", duration_ms=99999))
+
+    assert command == "motor 4 -250 30000"
+
 
 def test_body_protocol_allows_only_discrete_debug_commands():
     assert build_discrete_command("  Avoidance   OFF ") == "avoidance off"
     assert build_discrete_command(" imu ") == "imu"
+    assert build_discrete_command(" disarm ") == "disarm"
+    assert build_discrete_command(" line ") == "line"
+    assert build_discrete_command(" line   calibrate   floor ") == "line calibrate floor"
+    assert build_discrete_command("reacquire start") == "reacquire start"
     assert build_stop_command() == "motors off"
 
     with pytest.raises(BodyProtocolError):
         build_discrete_command("motor 1 250 30000")
+
+    with pytest.raises(BodyProtocolError):
+        build_motor_test_command(MotorTestCommand(motor=1, duty=80, direction="sideways", duration_ms=800))
 
 
 def test_body_protocol_parses_json_teleop_payload():

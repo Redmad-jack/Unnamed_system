@@ -2,6 +2,7 @@
 
 #include "chassis.h"
 #include "imu_monitor.h"
+#include "line_sensors.h"
 #include "motor_driver.h"
 #include "obstacle_gate.h"
 #include "roam_controller.h"
@@ -15,11 +16,13 @@ stranger::MotorDriver motorDriver;
 stranger::ChassisController chassis(motorDriver);
 stranger::TofScanner tofScanner;
 stranger::ImuMonitor imuMonitor;
+stranger::LineSensors lineSensors;
 stranger::ObstacleGate obstacleGate(tofScanner);
-stranger::RoamController roamController(motorDriver, chassis, obstacleGate);
+stranger::RoamController roamController(motorDriver, chassis, obstacleGate,
+                                        lineSensors, imuMonitor);
 stranger::SerialProtocol serialProtocol(motorDriver, chassis, tofScanner,
                                         obstacleGate, roamController,
-                                        imuMonitor);
+                                        imuMonitor, lineSensors);
 
 uint32_t lastHeartbeatMs = 0;
 uint32_t lastTelemetryMs = 0;
@@ -35,7 +38,9 @@ void setup() {
   motorDriver.begin();
   tofScanner.begin();
   imuMonitor.begin();
+  lineSensors.begin();
   obstacleGate.update();
+  chassis.setLineSensors(&lineSensors);
   chassis.setObstacleGate(&obstacleGate);
 
   Serial.println();
@@ -49,6 +54,7 @@ void loop() {
   motorDriver.update();
   tofScanner.update();
   imuMonitor.update();
+  lineSensors.update();
   obstacleGate.update();
   roamController.update();
   serialProtocol.update();

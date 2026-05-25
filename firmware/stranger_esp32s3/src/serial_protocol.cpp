@@ -9,13 +9,14 @@ namespace stranger {
 SerialProtocol::SerialProtocol(MotorDriver &motors,
                                ChassisController &chassis, TofScanner &tof,
                                ObstacleGate &gate, RoamController &roam,
-                               ImuMonitor &imu)
+                               ImuMonitor &imu, LineSensors &lineSensors)
     : motors_(motors),
       chassis_(chassis),
       tof_(tof),
       gate_(gate),
       roam_(roam),
-      imu_(imu) {}
+      imu_(imu),
+      lineSensors_(lineSensors) {}
 
 void SerialProtocol::update() {
   while (Serial.available() > 0) {
@@ -36,6 +37,13 @@ void SerialProtocol::printHelp() {
   Serial.println("  scan");
   Serial.println("  tof");
   Serial.println("  imu");
+  Serial.println("  line");
+  Serial.println("  line on");
+  Serial.println("  line off");
+  Serial.println("  line calibrate floor");
+  Serial.println("  line calibrate tape");
+  Serial.println("  reacquire start");
+  Serial.println("  reacquire stop");
   Serial.println("  telemetry on");
   Serial.println("  telemetry off");
   Serial.println("  avoidance on");
@@ -48,16 +56,24 @@ void SerialProtocol::printHelp() {
   Serial.println("  motor <1-4> <duty -250..250> [duration_ms <= 30000]");
   Serial.println(
       "  drive <throttle -250..250> <turn -250..250> [duration_ms <= 30000]");
+  Serial.println(
+      "  expressive <throttle 0 only> <turn -250..250> [duration_ms <= 30000]");
   Serial.println("  spin <duty -250..250> [duration_ms <= 30000]");
   Serial.println("  test <1-4> [duty 1..250] [duration_ms <= 30000]");
   Serial.println("  test all [duty 1..250] [duration_ms <= 30000]");
   Serial.println("JSON examples:");
   Serial.println("  {\"cmd\":\"tof\"}");
   Serial.println("  {\"cmd\":\"imu\"}");
+  Serial.println("  {\"cmd\":\"line\"}");
+  Serial.println("  {\"cmd\":\"line\",\"enabled\":true}");
+  Serial.println("  {\"cmd\":\"line\",\"calibrate\":\"floor\"}");
+  Serial.println("  {\"cmd\":\"reacquire\",\"enabled\":true}");
   Serial.println("  {\"cmd\":\"telemetry\",\"enabled\":false}");
   Serial.println("  {\"cmd\":\"avoidance\",\"enabled\":true}");
   Serial.println("  {\"cmd\":\"roam\",\"enabled\":true}");
   Serial.println("  {\"cmd\":\"drive\",\"throttle\":70,\"turn\":-20,\"ms\":500}");
+  Serial.println(
+      "  {\"cmd\":\"expressive\",\"throttle\":0,\"turn\":30,\"ms\":180}");
   Serial.println("  {\"cmd\":\"motor\",\"m\":1,\"duty\":70,\"ms\":500}");
 }
 
@@ -68,13 +84,19 @@ void SerialProtocol::printStatus() {
       "\"max_test_duty\":%d,\"max_duration_ms\":%u,\"tca_0x70\":%s,"
       "\"sda\":%u,\"scl\":%u,"
       "\"last_left\":%d,\"last_right\":%d,\"avoidance_enabled\":%s,"
-      "\"obstacle_state\":\"%s\",\"roam_enabled\":%s,\"roam_mode\":\"%s\","
+      "\"obstacle_state\":\"%s\",\"line_enabled\":%s,"
+      "\"line_calibrated\":%s,\"line_state\":\"%s\","
+      "\"line_reacquire_state\":\"%s\",\"roam_enabled\":%s,"
+      "\"roam_mode\":\"%s\","
       "\"imu_present\":%s,\"imu_initialized\":%s,\"imu_fresh\":%s,"
       "\"imu_state\":\"%s\"}\n",
       static_cast<unsigned long>(millis()), motors_.isArmed() ? "true" : "false",
       MOTOR_TEST_MAX_DUTY, MOTOR_TEST_MAX_MS,
       tof_.tcaPresent() ? "true" : "false", PIN_I2C_SDA, PIN_I2C_SCL,
       mix.left, mix.right, gate_.enabled() ? "true" : "false", gate_.stateName(),
+      lineSensors_.enabled() ? "true" : "false",
+      lineSensors_.calibrated() ? "true" : "false",
+      lineSensors_.stateName(), lineSensors_.state().reacquireState,
       roam_.enabled() ? "true" : "false", roam_.mode(),
       imu_.present() ? "true" : "false",
       imu_.initialized() ? "true" : "false", imu_.fresh() ? "true" : "false",
@@ -82,6 +104,7 @@ void SerialProtocol::printStatus() {
   motors_.printStatus(Serial);
   gate_.printState(Serial);
   imu_.printTelemetry(Serial);
+  lineSensors_.printTelemetry(Serial);
 }
 
 void SerialProtocol::printHeartbeat() {
@@ -93,6 +116,7 @@ void SerialProtocol::printTelemetry() {
   tof_.printTelemetry(Serial);
   gate_.printState(Serial);
   imu_.printTelemetry(Serial);
+  lineSensors_.printTelemetry(Serial);
 }
 
 bool SerialProtocol::telemetryEnabled() const { return telemetryEnabled_; }
@@ -131,6 +155,34 @@ void SerialProtocol::handleText(String command) {
   }
   if (command == "imu") {
     imu_.printTelemetry(Serial);
+    return;
+  }
+  if (command == "line") {
+    lineSensors_.printTelemetry(Serial);
+    return;
+  }
+  if (command == "line on") {
+    setLineTracking(true);
+    return;
+  }
+  if (command == "line off") {
+    setLineTracking(false);
+    return;
+  }
+  if (command == "line calibrate floor") {
+    calibrateLine("floor");
+    return;
+  }
+  if (command == "line calibrate tape") {
+    calibrateLine("tape");
+    return;
+  }
+  if (command == "reacquire start") {
+    setReacquire(true);
+    return;
+  }
+  if (command == "reacquire stop") {
+    setReacquire(false);
     return;
   }
   if (command == "telemetry on") {
@@ -200,6 +252,23 @@ void SerialProtocol::handleText(String command) {
       printAck("drive");
     } else {
       printError(chassis_.lastError());
+    }
+    return;
+  }
+
+  throttle = 0;
+  turn = 0;
+  durationMs = MOTOR_TEST_DEFAULT_MS;
+  if (sscanf(command.c_str(), "expressive %d %d %d", &throttle, &turn,
+             &durationMs) >= 2) {
+    if (throttle != 0) {
+      printError("expressive_motion_only_supports_in_place_turn");
+      return;
+    }
+    if (chassis_.driveLineSearch(throttle, turn, durationMs)) {
+      printMotionResult("expressive", "completed", "drive_line_search");
+    } else {
+      printMotionResult("expressive", "blocked", chassis_.lastError());
     }
     return;
   }
@@ -281,6 +350,22 @@ void SerialProtocol::handleJson(const String &line) {
     imu_.printTelemetry(Serial);
     return;
   }
+  if (strcmp(cmd, "line") == 0) {
+    if (doc["enabled"].is<bool>()) {
+      setLineTracking(doc["enabled"] | true);
+      return;
+    }
+    if (doc["calibrate"].is<const char *>()) {
+      calibrateLine(doc["calibrate"] | "");
+      return;
+    }
+    lineSensors_.printTelemetry(Serial);
+    return;
+  }
+  if (strcmp(cmd, "reacquire") == 0) {
+    setReacquire(doc["enabled"] | true);
+    return;
+  }
   if (strcmp(cmd, "telemetry") == 0) {
     setTelemetry(doc["enabled"] | true);
     return;
@@ -316,6 +401,21 @@ void SerialProtocol::handleJson(const String &line) {
     }
     return;
   }
+  if (strcmp(cmd, "expressive") == 0) {
+    const int throttle = doc["throttle"] | 0;
+    const int turn = doc["turn"] | 0;
+    const int durationMs = doc["ms"] | MOTOR_TEST_DEFAULT_MS;
+    if (throttle != 0) {
+      printError("expressive_motion_only_supports_in_place_turn");
+      return;
+    }
+    if (chassis_.driveLineSearch(throttle, turn, durationMs)) {
+      printMotionResult("expressive", "completed", "drive_line_search");
+    } else {
+      printMotionResult("expressive", "blocked", chassis_.lastError());
+    }
+    return;
+  }
   if (strcmp(cmd, "spin") == 0) {
     const int duty = doc["duty"] | 0;
     const int durationMs = doc["ms"] | MOTOR_TEST_DEFAULT_MS;
@@ -339,6 +439,15 @@ void SerialProtocol::setAvoidance(bool enabled) {
                 enabled ? "true" : "false");
 }
 
+void SerialProtocol::setLineTracking(bool enabled) {
+  if (!enabled) {
+    roam_.stop();
+  }
+  lineSensors_.setEnabled(enabled);
+  Serial.printf("{\"type\":\"ack\",\"action\":\"line\",\"enabled\":%s}\n",
+                enabled ? "true" : "false");
+}
+
 void SerialProtocol::setRoam(bool enabled) {
   if (roam_.setEnabled(enabled)) {
     Serial.printf("{\"type\":\"ack\",\"action\":\"roam\",\"enabled\":%s}\n",
@@ -354,6 +463,33 @@ void SerialProtocol::setTelemetry(bool enabled) {
                 enabled ? "true" : "false");
 }
 
+void SerialProtocol::calibrateLine(const char *target) {
+  bool ready = false;
+  const char *normalized = target == nullptr ? "" : target;
+  if (strcmp(normalized, "floor") == 0) {
+    ready = lineSensors_.calibrateFloor();
+  } else if (strcmp(normalized, "tape") == 0) {
+    ready = lineSensors_.calibrateTape();
+  } else {
+    printError("line_calibration_target_must_be_floor_or_tape");
+    return;
+  }
+  Serial.printf(
+      "{\"type\":\"ack\",\"action\":\"line_calibrate\",\"target\":\"%s\","
+      "\"calibrated\":%s}\n",
+      normalized, ready ? "true" : "false");
+}
+
+void SerialProtocol::setReacquire(bool enabled) {
+  if (enabled) {
+    lineSensors_.requestReacquire(imu_.yawDeg(), imu_.yawAvailable());
+  } else {
+    lineSensors_.stopReacquire();
+  }
+  Serial.printf("{\"type\":\"ack\",\"action\":\"reacquire\",\"enabled\":%s}\n",
+                enabled ? "true" : "false");
+}
+
 void SerialProtocol::printAck(const char *action) {
   Serial.printf("{\"type\":\"ack\",\"action\":\"%s\"}\n", action);
 }
@@ -362,6 +498,14 @@ void SerialProtocol::printAckValue(const char *action, const char *key,
                                    int value) {
   Serial.printf("{\"type\":\"ack\",\"action\":\"%s\",\"%s\":%d}\n", action,
                 key, value);
+}
+
+void SerialProtocol::printMotionResult(const char *intent, const char *status,
+                                       const char *detail) {
+  Serial.printf(
+      "{\"type\":\"motion_result\",\"intent\":\"%s\",\"status\":\"%s\","
+      "\"detail\":\"%s\",\"line_state\":\"%s\",\"obstacle_state\":\"%s\"}\n",
+      intent, status, detail, lineSensors_.stateName(), gate_.stateName());
 }
 
 void SerialProtocol::printError(const char *error) {

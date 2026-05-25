@@ -12,6 +12,12 @@ TOF_CHANNELS = [
     {"channel": 3, "name": "right"},
 ]
 
+LINE_SENSORS = [
+    {"name": "line_left", "pin": 1},
+    {"name": "line_center", "pin": 2},
+    {"name": "line_right", "pin": 14},
+]
+
 MOTOR_POSITIONS = {
     1: "front_left",
     2: "front_right",
@@ -101,6 +107,21 @@ def _default_imu_state() -> dict[str, Any]:
     }
 
 
+def _default_line_sensor(name: str, pin: int) -> dict[str, Any]:
+    return {
+        "name": name,
+        "pin": pin,
+        "raw": None,
+        "confidence": None,
+        "detected": False,
+        "floor_raw": None,
+        "tape_raw": None,
+        "fresh": False,
+        "age_ms": None,
+        "last_update_ms": None,
+    }
+
+
 class BodyTelemetryStore:
     """Small in-process cache for ESP32 body telemetry."""
 
@@ -111,7 +132,13 @@ class BodyTelemetryStore:
         self._status: dict[str, Any] = {}
         self._obstacle: dict[str, Any] = {}
         self._imu_state: dict[str, Any] = _default_imu_state()
+        self._line_state: dict[str, Any] = {}
+        self._line_sensors: dict[str, dict[str, Any]] = {
+            item["name"]: _default_line_sensor(item["name"], item["pin"])
+            for item in LINE_SENSORS
+        }
         self._motor_output: dict[str, Any] = {}
+        self._last_motion_result: dict[str, Any] | None = None
         self._last_ack: dict[str, Any] | None = None
         self._last_error: dict[str, Any] | None = None
         self._tof_sensors: dict[int, dict[str, Any]] = {
@@ -142,12 +169,17 @@ class BodyTelemetryStore:
             self._ingest_status_imu_fields(payload, now)
         elif msg_type == "imu":
             self._ingest_imu(payload, now)
+        elif msg_type == "line":
+            self._ingest_line(payload, now)
         elif msg_type == "motor_state":
             self._ingest_motor_state(payload, now)
         elif msg_type == "motor_output":
             self._motor_output = {**payload, "last_update_ms": now}
+        elif msg_type == "motion_result":
+            self._last_motion_result = {**payload, "last_update_ms": now}
         elif msg_type == "ack":
             self._last_ack = {**payload, "last_update_ms": now}
+            self._ingest_ack_effect(payload, now)
         elif msg_type == "error":
             self._last_error = {**payload, "last_update_ms": now}
 
@@ -163,6 +195,7 @@ class BodyTelemetryStore:
         last_age = None if self._last_packet_ms is None else max(0, now - self._last_packet_ms)
         telemetry_fresh = last_age is not None and last_age <= self.stale_after_ms
         tof_sensors = [copy.deepcopy(self._tof_sensors[item["channel"]]) for item in TOF_CHANNELS]
+        line_sensors = [copy.deepcopy(self._line_sensors[item["name"]]) for item in LINE_SENSORS]
         motor_states = [copy.deepcopy(self._motor_states[motor]) for motor in sorted(self._motor_states)]
         tca_connected = self._tca_connected()
         return {
@@ -184,10 +217,24 @@ class BodyTelemetryStore:
                 "imu_initialized": self._status.get("imu_initialized", self._imu_state.get("initialized")),
                 "imu_fresh": self._status.get("imu_fresh", self._imu_state.get("fresh")),
                 "imu_state": self._status.get("imu_state", self._imu_state.get("state")),
+                "line_enabled": self._status.get("line_enabled", self._line_state.get("enabled")),
+                "line_calibrated": self._status.get("line_calibrated", self._line_state.get("calibrated")),
+                "line_state": self._status.get("line_state", self._line_state.get("state")),
+                "line_reacquire_state": self._status.get(
+                    "line_reacquire_state",
+                    self._line_state.get("reacquire_state"),
+                ),
             },
             "motion": self._motion_summary(motor_states),
+            "motion_result": copy.deepcopy(self._last_motion_result),
             "obstacle": self._obstacle_summary(),
             "imu": copy.deepcopy(self._imu_state),
+            "line": {
+                "expected_count": len(LINE_SENSORS),
+                "fresh_count": sum(1 for sensor in line_sensors if sensor.get("fresh")),
+                **self._line_summary(),
+                "sensors": line_sensors,
+            },
             "tof": {
                 "tca_0x70": tca_connected,
                 "expected_count": len(TOF_CHANNELS),
@@ -267,6 +314,55 @@ class BodyTelemetryStore:
             "last_update_ms": now,
         }
 
+    def _ingest_ack_effect(self, payload: dict[str, Any], now: int) -> None:
+        action = str(payload.get("action") or "").lower()
+        if action == "arm":
+            self._status.update({"motor_armed": True, "last_update_ms": now})
+            return
+        if action in {"disarm", "motors_off", "stop"}:
+            self._status.update({
+                "motor_armed": False,
+                "roam_enabled": False,
+                "last_update_ms": now,
+            })
+            return
+        if action == "avoidance" and "enabled" in payload:
+            enabled = bool(payload.get("enabled"))
+            self._status.update({"avoidance_enabled": enabled, "last_update_ms": now})
+            if self._obstacle:
+                self._obstacle = {**self._obstacle, "avoidance_enabled": enabled, "last_update_ms": now}
+            return
+        if action == "line" and "enabled" in payload:
+            enabled = bool(payload.get("enabled"))
+            self._line_state = {**self._line_state, "enabled": enabled, "last_update_ms": now}
+            self._status.update({"line_enabled": enabled, "last_update_ms": now})
+            return
+        if action == "line_calibrate" and "calibrated" in payload:
+            calibrated = bool(payload.get("calibrated"))
+            self._line_state = {**self._line_state, "calibrated": calibrated, "last_update_ms": now}
+            self._status.update({"line_calibrated": calibrated, "last_update_ms": now})
+            return
+        if action == "reacquire" and "enabled" in payload:
+            enabled = bool(payload.get("enabled"))
+            self._line_state = {
+                **self._line_state,
+                "reacquire_active": enabled,
+                "reacquire_state": "scanning" if enabled else "idle",
+                "last_update_ms": now,
+            }
+            self._status.update({
+                "line_reacquire_state": self._line_state["reacquire_state"],
+                "last_update_ms": now,
+            })
+            return
+        if action == "roam" and "enabled" in payload:
+            enabled = bool(payload.get("enabled"))
+            self._status.update({
+                "roam_enabled": enabled,
+                "roam_mode": "line_follow" if enabled else "stopped",
+                "last_update_ms": now,
+            })
+
     def _ingest_imu(self, payload: dict[str, Any], now: int) -> None:
         state = str(payload.get("state") or payload.get("status") or "unknown")
         quat = payload.get("quat") if isinstance(payload.get("quat"), dict) else {}
@@ -310,6 +406,78 @@ class BodyTelemetryStore:
             "imu_fresh": self._imu_state["fresh"],
             "imu_state": self._imu_state["state"],
         })
+
+    def _ingest_line(self, payload: dict[str, Any], now: int) -> None:
+        self._line_state = {
+            **self._line_state,
+            "enabled": bool(payload.get("enabled", self._line_state.get("enabled", True))),
+            "calibrated": bool(payload.get("calibrated", self._line_state.get("calibrated", False))),
+            "state": str(payload.get("state") or self._line_state.get("state") or "unknown"),
+            "reason": payload.get("reason", self._line_state.get("reason")),
+            "detected_bits": str(payload.get("detected_bits") or self._line_state.get("detected_bits") or "000"),
+            "position": _int_or_none(payload.get("position")),
+            "error": _int_or_none(payload.get("error")),
+            "previous_error": _int_or_none(payload.get("previous_error")),
+            "correction": _int_or_none(payload.get("correction")),
+            "last_valid_error": _int_or_none(payload.get("last_valid_error")),
+            "lost_for_ms": _int_or_none(payload.get("lost_for_ms")),
+            "reacquire_state": str(payload.get("reacquire_state") or self._line_state.get("reacquire_state") or "idle"),
+            "reacquire_active": bool(payload.get("reacquire_active", self._line_state.get("reacquire_active", False))),
+            "imu_assist": bool(payload.get("imu_assist", self._line_state.get("imu_assist", False))),
+            "reacquire_start_yaw_deg": _float_or_none(payload.get("reacquire_start_yaw_deg")),
+            "last_update_ms": now,
+        }
+        self._status.update({
+            "line_enabled": self._line_state["enabled"],
+            "line_calibrated": self._line_state["calibrated"],
+            "line_state": self._line_state["state"],
+            "line_reacquire_state": self._line_state["reacquire_state"],
+        })
+
+        sensors = payload.get("sensors")
+        if not isinstance(sensors, list):
+            return
+        for sensor in sensors:
+            if not isinstance(sensor, dict):
+                continue
+            name = str(sensor.get("name") or "")
+            if name not in self._line_sensors:
+                continue
+            self._line_sensors[name] = {
+                **self._line_sensors[name],
+                **sensor,
+                "pin": _int_or_none(sensor.get("pin")),
+                "raw": _int_or_none(sensor.get("raw")),
+                "confidence": _float_or_none(sensor.get("confidence")),
+                "detected": bool(sensor.get("detected")),
+                "floor_raw": _int_or_none(sensor.get("floor_raw")),
+                "tape_raw": _int_or_none(sensor.get("tape_raw")),
+                "fresh": bool(sensor.get("fresh")),
+                "age_ms": _int_or_none(sensor.get("age_ms")),
+                "last_update_ms": now,
+            }
+
+    def _line_summary(self) -> dict[str, Any]:
+        if self._line_state:
+            return copy.deepcopy(self._line_state)
+        return {
+            "enabled": None,
+            "calibrated": False,
+            "state": "unknown",
+            "reason": None,
+            "detected_bits": "000",
+            "position": None,
+            "error": None,
+            "previous_error": None,
+            "correction": None,
+            "last_valid_error": None,
+            "lost_for_ms": None,
+            "reacquire_state": "idle",
+            "reacquire_active": False,
+            "imu_assist": False,
+            "reacquire_start_yaw_deg": None,
+            "last_update_ms": None,
+        }
 
     def _ingest_motor_state(self, payload: dict[str, Any], now: int) -> None:
         motor = _int_or_none(payload.get("motor"))
