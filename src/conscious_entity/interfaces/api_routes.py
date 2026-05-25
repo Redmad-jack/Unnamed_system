@@ -59,6 +59,7 @@ from conscious_entity.interfaces.api_models import (
 from conscious_entity.interfaces.api_runtime import (
     _active_embedding_client,
     _active_llm_client,
+    _apply_face_capture_identity_locked,
     _append_visitor_identity_signature,
     _blank_to_none,
     _client_from_settings,
@@ -74,6 +75,7 @@ from conscious_entity.interfaces.api_runtime import (
     _env_llm_config,
     _enrich_identity_context_locked,
     _first_unit_gate_default,
+    _identity_match_should_persist,
     _json_dict,
     _llm_settings_from_request,
     _log_curation,
@@ -513,6 +515,8 @@ async def identity_config_update(body: IdentityConfigRequest, request: Request):
     controller = _identity_controller(request)
     return controller.configure_identity(
         auto_bind_high_confidence=body.auto_bind_high_confidence,
+        handoff_after_primary_leave_enabled=body.handoff_after_primary_leave_enabled,
+        primary_leave_grace_seconds=body.primary_leave_grace_seconds,
     )
 
 
@@ -521,7 +525,7 @@ async def identity_match(body: IdentityMatchRequest, request: Request):
     controller = _identity_controller(request)
     result = _identity_match_result_from_request(body)
     context = controller.apply_identity_match(result)
-    if result.candidate_visitor_id:
+    if _identity_match_should_persist(result):
         _update_visitor_identity_metadata(
             request.app.state.conn,
             result.candidate_visitor_id,
@@ -576,33 +580,25 @@ async def identity_face_capture(request: Request, body: FaceCaptureRequest | Non
         raise HTTPException(status_code=400, detail="No vision frame available for face capture")
 
     outcome = manager.capture_and_match(frame)
-    controller.record_face_capture_diagnostic(
-        in_flight=False,
-        accepted=outcome.accepted,
-        rejection_reason=None if outcome.accepted else outcome.reason,
-        source="manual",
-    )
     identity_status_payload = None
-    result = outcome.match_result
-    if (
-        (body.apply_to_gating if body is not None else True)
-        and outcome.accepted
-        and result is not None
-        and result.candidate_visitor_id is not None
-    ):
-        context = controller.apply_identity_match(result)
-        _update_visitor_identity_metadata(
-            request.app.state.conn,
-            result.candidate_visitor_id,
-            {
-                "latest_match": result.to_public_dict(),
-                "confirmation_state": context.get("confirmation_state", {}),
-            },
-        )
-        request.app.state.conn.commit()
-        if context.get("session_decision") == SessionDecision.VISITOR_BOUND.value:
-            await _bind_current_visitor_from_identity(request, context["primary_visitor_id"])
+    apply_to_gating = body.apply_to_gating if body is not None else True
+    if apply_to_gating:
+        async with request.app.state.loop_lock:
+            _apply_face_capture_identity_locked(
+                request,
+                manager,
+                outcome,
+                source="manual",
+                apply_to_gating=True,
+            )
         identity_status_payload = controller.status()
+    else:
+        controller.record_face_capture_diagnostic(
+            in_flight=False,
+            accepted=outcome.accepted,
+            rejection_reason=None if outcome.accepted else outcome.reason,
+            source="manual",
+        )
 
     return {
         "face_identity": manager.status(),

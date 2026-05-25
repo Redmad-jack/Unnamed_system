@@ -23,8 +23,14 @@ This file tracks tests that require real devices, supplier APIs, exhibition spac
 
 - [ ] Encounter and Intent Gating field test: passing by, watching from a distance, stopping nearby, looking at Stranger, and answering a greeting must be distinguished.
 - [ ] Normal low-distortion front camera face quality gate: verify face size, blur, angle, occlusion, and lighting thresholds before identity matching or storage.
-- [ ] Face confidence threshold test: verify high-confidence confirmation, medium-confidence candidate behavior, and low-confidence new-visitor behavior; voice / combined confidence remains optional P1.
-- [ ] Existing dialogue interruption test: a new speaker should not replace the current primary visitor in V1; record an interruption event and preserve the current session.
+- [ ] Face confidence threshold test: verify known high and known medium both enter candidate confirmation only after A has been released; verify low/no known match with accepted single-face capture auto-creates a new visitor only in unidentified ready state; voice / combined confidence remains optional P1.
+- [ ] New visitor auto-provision field test: after A's primary track has been released and a new unidentified session is current, let an unknown B speak with a clean single-face frame; verify a new `visitor-*` profile is created, a face signature is enrolled, the current session is bound before the turn is written, and no old visitor memory is recalled.
+- [ ] New visitor rejection field test: unknown B with no frame, multi-face, blur, small face, strong pose, or near-medium ambiguous known cluster should remain unidentified and must not create a profile or candidate.
+- [ ] Existing dialogue interruption test: while A remains the primary visitor and primary track is alive, B should not replace A; record an interruption / refuse-switch event and preserve the current session.
+- [ ] Primary-leave grace test: after A's locked primary track is lost, keep A for the 35-second grace window; if A returns within grace, continue A's session.
+- [ ] Grace-window unscoped input test: if B speaks while A's primary track is missing but still inside the 35-second grace window, route the turn to an unscoped `visitor_id=NULL` session, do not bind B, and do not read or write A/B visitor memory.
+- [ ] Primary-leave handoff test: after A's locked primary track is lost for more than 35 seconds, release A, start or promote a new unidentified session, and only then allow B to enter candidate / confirmation.
+- [ ] Ambiguous track test: when A/B are in frame together before a stable primary track can be locked, do not auto-release A or bind the remaining single track as A; if no primary track was ever locked, an empty scene must not clear A unless the operator explicitly clears it.
 - [ ] Idle state session test: only create or restore a dialogue session when intent is clear, not merely because a person appears.
 - [ ] Identity confirmation copy test: asking "Are you X?" should be natural and non-blocking; if the visitor does not answer, the dialogue should continue without confirmed identity.
 - [ ] Visitor memory continuity observation: known facts tied to the same `visitor_id` should be retrieved across sessions without leaking to unrelated visitors.

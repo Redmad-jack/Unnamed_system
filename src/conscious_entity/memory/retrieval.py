@@ -5,7 +5,7 @@ import logging
 import re
 import sqlite3
 from datetime import datetime, timezone
-from typing import Iterable
+from typing import Any, Iterable
 
 from conscious_entity.llm.embedding_client import EmbeddingClient
 from conscious_entity.memory.managed import MemoryProvider
@@ -386,21 +386,31 @@ class MemoryRetriever:
         event_types: set[str],
         protocol_keys: set[str],
     ) -> list[RetrievedMemory]:
+        visitor_expr = "COALESCE(e.visitor_id, s.visitor_id)"
+        if self._visitor_id:
+            visitor_filter = (
+                f"(e.session_id = ? OR {visitor_expr} IS NULL OR {visitor_expr} = ?)"
+            )
+            visitor_params: list[Any] = [self._session_id, self._visitor_id]
+        else:
+            visitor_filter = f"(e.session_id = ? OR {visitor_expr} IS NULL)"
+            visitor_params = [self._session_id]
         rows = self._conn.execute(
-            """
+            f"""
             SELECT e.id, e.session_id, COALESCE(e.visitor_id, s.visitor_id) AS visitor_id,
                    e.created_at, e.event_type, e.content, e.raw_text,
                    e.salience, e.metadata, e.embedding, e.embedding_model
             FROM episodic_memories e
             JOIN sessions s ON s.id = e.session_id
             WHERE s.session_type = ? AND e.embedding IS NOT NULL AND e.memory_status = 'active'
+              AND {visitor_filter}
             ORDER BY
                 CASE WHEN e.session_id = ? THEN 0 ELSE 1 END,
                 e.created_at DESC,
                 e.id DESC
             LIMIT 300
             """,
-            (self._session_type, self._session_id),
+            (self._session_type, *visitor_params, self._session_id),
         ).fetchall()
 
         results: list[RetrievedMemory] = []
@@ -441,21 +451,31 @@ class MemoryRetriever:
         return results
 
     def _embedded_reflective(self, query_embedding: list[float]) -> list[RetrievedMemory]:
+        visitor_expr = "COALESCE(r.visitor_id, s.visitor_id)"
+        if self._visitor_id:
+            visitor_filter = (
+                f"(r.session_id = ? OR {visitor_expr} IS NULL OR {visitor_expr} = ?)"
+            )
+            visitor_params: list[Any] = [self._session_id, self._visitor_id]
+        else:
+            visitor_filter = f"(r.session_id = ? OR {visitor_expr} IS NULL)"
+            visitor_params = [self._session_id]
         rows = self._conn.execute(
-            """
+            f"""
             SELECT r.id, r.session_id, COALESCE(r.visitor_id, s.visitor_id) AS visitor_id,
                    r.created_at, r.content, r.embedding, r.embedding_model
             FROM reflective_summaries r
             JOIN sessions s ON s.id = r.session_id
             WHERE s.session_type = ? AND r.active = 1 AND r.embedding IS NOT NULL
               AND r.memory_status = 'active'
+              AND {visitor_filter}
             ORDER BY
                 CASE WHEN r.session_id = ? THEN 0 ELSE 1 END,
                 r.created_at DESC,
                 r.id DESC
             LIMIT 100
             """,
-            (self._session_type, self._session_id),
+            (self._session_type, *visitor_params, self._session_id),
         ).fetchall()
 
         results: list[RetrievedMemory] = []

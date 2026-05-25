@@ -25,7 +25,7 @@ session:
   decay_per_turn: true         # v0.1: apply decay per turn (not on a clock)
 
 first_unit_speech_gate:
-  default_enabled: false
+  default_enabled: true
   min_chinese_chars: 12
   min_english_words: 8
   silent_short_chinese_chars: 6

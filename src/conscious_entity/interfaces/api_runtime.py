@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import sqlite3
 import asyncio
 import uuid
@@ -10,6 +11,7 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager, suppress
 from datetime import datetime, timezone
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, Optional
 
 from fastapi import HTTPException, Request
@@ -22,10 +24,14 @@ from conscious_entity.db.connection import get_connection
 from conscious_entity.db.migrations import run_migrations
 from conscious_entity.audio import AudioConfig, AudioManager
 from conscious_entity.identity import (
+    ConfidenceLevel,
     FaceIdentityError,
     FaceIdentityConfig,
     FaceIdentityManager,
+    IdentityGatingConfig,
+    IdentityMatchResult,
     IdentitySignatureReference,
+    SessionDecision,
     VisitorSessionGatingController,
 )
 from conscious_entity.interfaces.api_models import EmbeddingConfigRequest, LLMConfigRequest
@@ -214,7 +220,27 @@ async def _run_dialog_turn(
                     "identity_status": "unidentified",
                     "error": "identity_gating_failed",
                 }
-        loop = request.app.state.loop
+        use_unscoped_grace = _identity_context_requires_unscoped_grace(
+            turn_metadata.get("identity_session")
+        )
+        if not use_unscoped_grace:
+            capture_context = await _run_pre_turn_face_identity_capture_locked(
+                request,
+                source="pre_turn",
+            )
+            if capture_context is not None:
+                turn_metadata["identity_pre_turn_capture"] = capture_context
+                identity_context = capture_context.get("identity_session")
+                if (
+                    capture_context.get("action") in {"candidate_pending", "auto_provisioned"}
+                    and isinstance(identity_context, dict)
+                ):
+                    turn_metadata["identity_session"] = identity_context
+        loop = (
+            _ensure_unscoped_grace_loop_locked(request)
+            if use_unscoped_grace
+            else request.app.state.loop
+        )
         if loop is None:
             raise HTTPException(status_code=503, detail="Loop not initialised")
         output = await asyncio.get_running_loop().run_in_executor(
@@ -228,7 +254,8 @@ async def _run_dialog_turn(
     manager = getattr(request.app.state, "vision_manager", None)
     if manager is not None:
         manager.mark_activity()
-    _maybe_schedule_background_face_capture(request.app)
+    if not use_unscoped_grace:
+        _maybe_schedule_background_face_capture(request.app)
     _maybe_schedule_body_motion(request.app, output, source=source)
 
     return output
@@ -276,7 +303,27 @@ async def _run_dialog_turn_progressive(
                     "identity_status": "unidentified",
                     "error": "identity_gating_failed",
                 }
-        loop = request.app.state.loop
+        use_unscoped_grace = _identity_context_requires_unscoped_grace(
+            turn_metadata.get("identity_session")
+        )
+        if not use_unscoped_grace:
+            capture_context = await _run_pre_turn_face_identity_capture_locked(
+                request,
+                source="pre_turn",
+            )
+            if capture_context is not None:
+                turn_metadata["identity_pre_turn_capture"] = capture_context
+                identity_context = capture_context.get("identity_session")
+                if (
+                    capture_context.get("action") in {"candidate_pending", "auto_provisioned"}
+                    and isinstance(identity_context, dict)
+                ):
+                    turn_metadata["identity_session"] = identity_context
+        loop = (
+            _ensure_unscoped_grace_loop_locked(request)
+            if use_unscoped_grace
+            else request.app.state.loop
+        )
         if loop is None:
             raise HTTPException(status_code=503, detail="Loop not initialised")
 
@@ -308,7 +355,8 @@ async def _run_dialog_turn_progressive(
             manager = getattr(request.app.state, "vision_manager", None)
             if manager is not None:
                 manager.mark_activity()
-            _maybe_schedule_background_face_capture(request.app)
+            if not use_unscoped_grace:
+                _maybe_schedule_background_face_capture(request.app)
             motion_decision = _maybe_schedule_body_motion(request.app, output, source=source)
             plan = output.response_plan.to_dict() if output.response_plan is not None else None
             yield {
@@ -357,13 +405,24 @@ def _apply_natural_identity_confirmation_locked(
         return
     if not hasattr(controller, "status"):
         return
+    if hasattr(controller, "expire_pending_candidate_if_needed"):
+        controller.expire_pending_candidate_if_needed()
     status_payload = controller.status()
     status = status_payload.get("status") if isinstance(status_payload, dict) else None
     if not isinstance(status, dict) or not status.get("waiting_for_identity_confirmation"):
         return
 
     candidate = _blank_to_none(status.get("candidate_visitor_id"))
-    decision = _parse_identity_confirmation(text)
+    candidate_display_name = (
+        _visitor_display_name(request.app.state.conn, candidate)
+        if candidate is not None and hasattr(request.app.state, "conn")
+        else None
+    )
+    decision = _parse_identity_confirmation(
+        text,
+        candidate_display_name=candidate_display_name,
+        candidate_visitor_id=candidate,
+    )
     if decision is None:
         context = controller.record_natural_confirmation(
             status="unclear",
@@ -408,44 +467,448 @@ def _bind_current_visitor_locked(request: Request, visitor_id: str) -> None:
     _rebuild_loop(request, llm_client, embedding_client)
 
 
-def _parse_identity_confirmation(text: str) -> str | None:
-    compact = " ".join(str(text or "").strip().lower().split())
+def _identity_context_requires_unscoped_grace(context: Any) -> bool:
+    if not isinstance(context, dict):
+        return False
+    return (
+        context.get("session_decision") == SessionDecision.CONTINUE_UNSCOPED.value
+        or context.get("visitor_scope_mode") == "unscoped_grace"
+    )
+
+
+def _ensure_unscoped_grace_loop_locked(request: Request) -> Any:
+    app = request.app
+    loop = getattr(app.state, "unscoped_grace_loop", None)
+    session_id = getattr(app.state, "unscoped_grace_session_id", None)
+    if loop is not None and session_id:
+        return loop
+
+    conn = app.state.conn
+    current_session_id = app.state.session_id
+    session_id = str(uuid.uuid4())
+    current_type = _session_type(conn, current_session_id)
+    conn.execute(
+        "INSERT INTO sessions (id, session_type, visitor_id, notes) VALUES (?, ?, NULL, ?)",
+        (
+            session_id,
+            current_type,
+            "Temporary unscoped session while the primary visitor is in leave grace.",
+        ),
+    )
+    conn.commit()
+    if isinstance(getattr(app.state, "configs", None), dict) and "entity_profile" in app.state.configs:
+        _save_initial_state(conn, session_id, app.state.configs)
+
+    try:
+        llm_client = _active_llm_client(request)
+        embedding_client = _active_embedding_client(request)
+    except ClaudeConfigurationError as exc:
+        app.state.llm_error = str(exc)
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    loop = InteractionLoop(
+        conn,
+        session_id,
+        app.state.configs,
+        app.state.prompts_dir,
+        llm_client=llm_client,
+        embedding_client=embedding_client,
+        visitor_id=None,
+    )
+    app.state.unscoped_grace_session_id = session_id
+    app.state.unscoped_grace_loop = loop
+    return loop
+
+
+async def _run_pre_turn_face_identity_capture_locked(
+    request: Request,
+    *,
+    source: str,
+) -> dict[str, Any] | None:
+    app = request.app
+    controller = getattr(app.state, "identity_gating", None)
+    manager = getattr(app.state, "face_identity_manager", None)
+    vision = getattr(app.state, "vision_manager", None)
+    if controller is None or manager is None or vision is None:
+        return None
+    if not _identity_capture_routing_allowed(app):
+        return None
+    frame = vision.latest_frame_jpeg()
+    if frame is None:
+        controller.record_face_capture_diagnostic(
+            in_flight=False,
+            rejection_reason="no_vision_frame",
+            source=source,
+        )
+        return {
+            "action": "no_frame",
+            "source": source,
+            "identity_session": controller.status().get("status", {}),
+        }
+    outcome = await asyncio.get_running_loop().run_in_executor(
+        None,
+        manager.capture_and_match,
+        frame,
+    )
+    return _apply_face_capture_identity_locked(
+        request,
+        manager,
+        outcome,
+        source=source,
+        apply_to_gating=True,
+    )
+
+
+def _apply_face_capture_identity_locked(
+    request: Request,
+    manager: Any,
+    outcome: Any,
+    *,
+    source: str,
+    apply_to_gating: bool = True,
+) -> dict[str, Any]:
+    controller = getattr(request.app.state, "identity_gating", None)
+    if controller is None:
+        return {"action": "identity_disabled", "source": source}
+    action = "ignored"
+    context: dict[str, Any] | None = None
+    result = getattr(outcome, "match_result", None)
+    routing_allowed = _identity_capture_routing_allowed(request.app)
+    if apply_to_gating and getattr(outcome, "accepted", False) and routing_allowed:
+        if (
+            result is not None
+            and result.candidate_visitor_id is not None
+            and result.combined_level in {ConfidenceLevel.HIGH, ConfidenceLevel.MEDIUM}
+        ):
+            context = controller.apply_identity_match(result)
+            action = "candidate_pending"
+            if _identity_match_should_persist(result):
+                _update_visitor_identity_metadata(
+                    request.app.state.conn,
+                    result.candidate_visitor_id,
+                    {
+                        "latest_match": result.to_public_dict(),
+                        "confirmation_state": context.get("confirmation_state", {}),
+                    },
+                )
+                request.app.state.conn.commit()
+        elif not _has_ambiguous_known_face_cluster(manager, outcome):
+            provisioned = _provision_new_face_visitor_locked(
+                request,
+                manager,
+                outcome,
+                source=source,
+            )
+            if provisioned is not None:
+                action = provisioned.get("action", "auto_provisioned")
+                context = provisioned.get("identity_session")
+    elif apply_to_gating and getattr(outcome, "accepted", False):
+        action = "routing_blocked"
+    controller.record_face_capture_diagnostic(
+        in_flight=False,
+        accepted=getattr(outcome, "accepted", False),
+        rejection_reason=None if getattr(outcome, "accepted", False) else getattr(outcome, "reason", None),
+        source=source,
+    )
+    if context is None:
+        status = controller.status().get("status", {})
+        if isinstance(status, dict):
+            context = dict(status)
+            if hasattr(request.app.state, "conn"):
+                _enrich_identity_context_locked(request.app.state.conn, context)
+    return {
+        "action": action,
+        "source": source,
+        "capture": outcome.to_public_dict() if hasattr(outcome, "to_public_dict") else None,
+        "identity_session": context,
+    }
+
+
+def _provision_new_face_visitor_locked(
+    request: Request,
+    manager: Any,
+    outcome: Any,
+    *,
+    source: str,
+) -> dict[str, Any] | None:
+    app = request.app
+    if not _new_face_visitor_provision_allowed(app, outcome):
+        return None
+    try:
+        llm_client = _active_llm_client(request)
+        embedding_client = _active_embedding_client(request)
+    except ClaudeConfigurationError as exc:
+        app.state.llm_error = str(exc)
+        logger.error("Could not provision new face visitor before loop rebuild: %s", exc)
+        return {"action": "provision_failed", "reason": str(exc)}
+
+    conn = app.state.conn
+    visitor_id = f"visitor-{uuid.uuid4().hex[:12]}"
+    initial_capture = (
+        outcome.capture.to_public_dict()
+        if getattr(outcome, "capture", None) is not None
+        else None
+    )
+    identity_metadata = {
+        "schema_version": 1,
+        "auto_provisioned": True,
+        "provisioned_source": source,
+        "provisioned_at": datetime.now(timezone.utc).isoformat(),
+        "initial_capture": initial_capture,
+    }
+    _ensure_visitor_profile(
+        conn,
+        visitor_id,
+        metadata={"identity": identity_metadata},
+    )
+    try:
+        capture = getattr(outcome, "capture", None)
+        if hasattr(manager, "enroll_capture"):
+            signature = manager.enroll_capture(visitor_id, capture)
+        else:
+            signature = manager.enroll_pending(visitor_id)
+    except FaceIdentityError as exc:
+        _update_visitor_identity_metadata(
+            conn,
+            visitor_id,
+            {
+                **identity_metadata,
+                "provision_failed": True,
+                "provision_failure_reason": str(exc),
+            },
+        )
+        conn.commit()
+        logger.error("Could not enroll auto-provisioned face visitor: %s", exc)
+        return {"action": "provision_failed", "visitor_id": visitor_id, "reason": str(exc)}
+
+    try:
+        _append_visitor_identity_signature(conn, visitor_id, signature)
+        cursor = conn.execute(
+            "UPDATE sessions SET visitor_id = ? WHERE id = ? AND visitor_id IS NULL",
+            (visitor_id, app.state.session_id),
+        )
+        if cursor.rowcount <= 0:
+            raise RuntimeError("current session is no longer unidentified")
+        conn.commit()
+    except Exception as exc:
+        conn.rollback()
+        failed_signature = None
+        with suppress(Exception):
+            failed_signature = manager.deactivate_signature(
+                visitor_id=visitor_id,
+                signature_id=signature.signature_id,
+            )
+        failure_patch = {
+            **identity_metadata,
+            "provision_failed": True,
+            "provision_failure_reason": str(exc),
+        }
+        if failed_signature is not None:
+            failure_patch["signatures"] = {
+                "face": [failed_signature.to_public_dict()],
+            }
+        _update_visitor_identity_metadata(
+            conn,
+            visitor_id,
+            failure_patch,
+        )
+        conn.commit()
+        logger.error("Could not bind auto-provisioned face visitor: %s", exc)
+        return {"action": "provision_failed", "visitor_id": visitor_id, "reason": str(exc)}
+
+    app.state.visitor_id = visitor_id
+    identity_controller = getattr(app.state, "identity_gating", None)
+    if identity_controller is not None:
+        identity_controller.set_primary_visitor(visitor_id)
+    _rebuild_loop(request, llm_client, embedding_client)
+    app.state.llm_error = None
+    status = identity_controller.status().get("status", {}) if identity_controller else {}
+    if isinstance(status, dict) and hasattr(app.state, "conn"):
+        _enrich_identity_context_locked(app.state.conn, status)
+        status.update({
+            "session_decision": SessionDecision.VISITOR_BOUND.value,
+            "visitor_scope_mode": "primary",
+            "visitor_memory_allowed": True,
+        })
+    return {
+        "action": "auto_provisioned",
+        "visitor_id": visitor_id,
+        "signature": signature.to_public_dict(),
+        "identity_session": status,
+    }
+
+
+def _identity_capture_routing_allowed(app: Any) -> bool:
+    controller = getattr(app.state, "identity_gating", None)
+    if controller is None:
+        return False
+    if getattr(app.state, "visitor_id", None) is not None:
+        return False
+    if _session_visitor_id(app.state.conn, app.state.session_id) is not None:
+        return False
+    status_payload = controller.status()
+    status = status_payload.get("status") if isinstance(status_payload, dict) else None
+    if not isinstance(status, dict):
+        return False
+    if status.get("primary_visitor_id"):
+        return False
+    if status.get("candidate_visitor_id") or status.get("waiting_for_identity_confirmation"):
+        return False
+    if status.get("visitor_scope_mode") == "unscoped_grace":
+        return False
+    return bool(
+        status.get("intent_status") == "confirmed_by_input"
+        or status.get("runtime_state") in {"in_dialogue", "identity_confirming"}
+    )
+
+
+def _new_face_visitor_provision_allowed(app: Any, outcome: Any) -> bool:
+    if not _identity_capture_routing_allowed(app):
+        return False
+    if not getattr(outcome, "accepted", False):
+        return False
+    if getattr(outcome, "capture", None) is None:
+        return False
+    result = getattr(outcome, "match_result", None)
+    if (
+        result is not None
+        and result.candidate_visitor_id is not None
+        and result.combined_level in {ConfidenceLevel.HIGH, ConfidenceLevel.MEDIUM}
+    ):
+        return False
+    return True
+
+
+def _has_ambiguous_known_face_cluster(manager: Any, outcome: Any) -> bool:
+    matches = [
+        item for item in getattr(outcome, "matches", []) or []
+        if getattr(item, "visitor_id", None)
+    ]
+    if len(matches) < 2:
+        return False
+    config = getattr(manager, "gating_config", None) or IdentityGatingConfig()
+    lower = float(config.medium_confidence_threshold) - 0.10
+    upper = float(config.medium_confidence_threshold)
+    near = [
+        item for item in matches
+        if lower <= float(getattr(item, "score", 0.0)) < upper
+    ]
+    if len({str(getattr(item, "visitor_id")) for item in near[:2]}) < 2:
+        return False
+    first, second = near[0], near[1]
+    return abs(float(first.score) - float(second.score)) <= 0.06
+
+
+def _parse_identity_confirmation(
+    text: str,
+    *,
+    candidate_display_name: str | None = None,
+    candidate_visitor_id: str | None = None,
+) -> str | None:
+    raw = str(text or "").strip().lower()
+    compact = _normalize_identity_confirmation_text(raw)
     if not compact:
         return None
-    reject_markers = (
+    if _is_explicit_identity_rejection(compact):
+        return "rejected"
+    if _looks_like_identity_question(raw, compact):
+        return None
+    if _is_explicit_identity_acceptance(
+        compact,
+        candidate_display_name=candidate_display_name,
+        candidate_visitor_id=candidate_visitor_id,
+    ):
+        return "accepted"
+    return None
+
+
+def _normalize_identity_confirmation_text(text: str) -> str:
+    without_punctuation = re.sub(r"[，。！？、,.!?;；:：\"'“”‘’（）()\[\]{}]", " ", text)
+    return " ".join(without_punctuation.split())
+
+
+def _squash_identity_confirmation_text(text: str) -> str:
+    return re.sub(r"[\W_]+", "", text, flags=re.UNICODE)
+
+
+def _is_explicit_identity_rejection(compact: str) -> bool:
+    reject_exact = {
         "不是",
         "不对",
-        "认错",
         "不是我",
         "不是的",
+        "不是本人",
         "no",
         "nope",
         "not me",
         "wrong person",
         "you are wrong",
+    }
+    return compact in reject_exact or "认错" in compact
+
+
+def _looks_like_identity_question(raw: str, compact: str) -> bool:
+    return (
+        "?" in raw
+        or "？" in raw
+        or compact.endswith("吗")
+        or "是不是" in compact
     )
-    if any(marker in compact for marker in reject_markers):
-        return "rejected"
-    accept_markers = (
-        "是",
-        "是的",
-        "对",
-        "对的",
-        "没错",
-        "嗯",
-        "我是",
+
+
+def _is_explicit_identity_acceptance(
+    compact: str,
+    *,
+    candidate_display_name: str | None,
+    candidate_visitor_id: str | None,
+) -> bool:
+    squashed = _squash_identity_confirmation_text(compact)
+    accept_exact = {
+        "是我",
+        "是的是我",
+        "对是我",
+        "对的是我",
+        "没错是我",
         "就是我",
-        "yes",
-        "yeah",
-        "yep",
-        "that's me",
-        "that is me",
-        "it is me",
-        "i am",
-    )
-    if compact in accept_markers or any(marker in compact for marker in accept_markers):
-        return "accepted"
-    return None
+        "是本人",
+        "是的是本人",
+        "yesthatsme",
+        "yesthatisme",
+        "yesitisme",
+        "thatsme",
+        "thatstheone",
+        "thatisme",
+        "itisme",
+    }
+    if squashed in accept_exact:
+        return True
+    aliases = _candidate_identity_aliases(candidate_display_name, candidate_visitor_id)
+    if not aliases:
+        return False
+    for prefix in ("我是", "我就是", "iam", "im"):
+        if squashed.startswith(prefix) and squashed[len(prefix):] in aliases:
+            return True
+    return False
+
+
+def _candidate_identity_aliases(
+    candidate_display_name: str | None,
+    candidate_visitor_id: str | None,
+) -> set[str]:
+    aliases: set[str] = set()
+    for value in (candidate_display_name, candidate_visitor_id):
+        cleaned = _blank_to_none(value)
+        if cleaned is None:
+            continue
+        squashed = _squash_identity_confirmation_text(cleaned.lower())
+        if squashed:
+            aliases.add(squashed)
+        if cleaned.lower().startswith("visitor-"):
+            suffix = cleaned[8:]
+            suffix_squashed = _squash_identity_confirmation_text(suffix.lower())
+            if suffix_squashed:
+                aliases.add(suffix_squashed)
+    return aliases
 
 
 def _maybe_schedule_body_motion(app: Any, output: Any, *, source: str) -> dict[str, Any] | None:
@@ -484,7 +947,10 @@ def _enrich_identity_context_locked(
 ) -> None:
     if not isinstance(context, dict):
         return
-    context["visitor_memory_allowed"] = bool(context.get("primary_visitor_id"))
+    context["visitor_memory_allowed"] = (
+        bool(context.get("primary_visitor_id"))
+        and context.get("visitor_scope_mode") != "unscoped_grace"
+    )
     candidate = _blank_to_none(context.get("candidate_visitor_id"))
     if candidate:
         display_name = _visitor_display_name(conn, candidate)
@@ -566,26 +1032,10 @@ async def _run_background_face_capture(app: Any, frame: bytes) -> None:
         )
         reason = outcome.reason
         async with app.state.loop_lock:
-            result = outcome.match_result
-            if (
-                outcome.accepted
-                and result is not None
-                and result.candidate_visitor_id is not None
-            ):
-                context = controller.apply_identity_match(result)
-                _update_visitor_identity_metadata(
-                    app.state.conn,
-                    result.candidate_visitor_id,
-                    {
-                        "latest_match": result.to_public_dict(),
-                        "confirmation_state": context.get("confirmation_state", {}),
-                    },
-                )
-                app.state.conn.commit()
-            controller.record_face_capture_diagnostic(
-                in_flight=False,
-                accepted=outcome.accepted,
-                rejection_reason=None if outcome.accepted else outcome.reason,
+            _apply_face_capture_identity_locked(
+                SimpleNamespace(app=app),
+                manager,
+                outcome,
                 source="auto",
             )
     except Exception as exc:
@@ -624,7 +1074,138 @@ async def _vision_event_dispatcher(app: Any) -> None:
                     await asyncio.get_running_loop().run_in_executor(
                         None, loop.handle_system_event, event_type
                     )
+            identity_controller = getattr(app.state, "identity_gating", None)
+            if identity_controller is not None and hasattr(manager, "person_tracking_status"):
+                try:
+                    handoff_context = identity_controller.update_primary_presence(
+                        manager.person_tracking_status()
+                    )
+                except Exception as exc:
+                    logger.error("Primary visitor presence tracking failed; continuing: %s", exc)
+                else:
+                    if handoff_context.get("primary_released"):
+                        await _start_unidentified_session_after_primary_leave(
+                            app,
+                            handoff_context,
+                        )
+                    elif (
+                        handoff_context.get("visitor_scope_mode") == "primary"
+                        and handoff_context.get("primary_presence_status") == "present"
+                    ):
+                        await _archive_unscoped_grace_session_if_needed(
+                            app,
+                            reason="primary_returned_within_grace",
+                        )
         await asyncio.sleep(0.2)
+
+
+async def _start_unidentified_session_after_primary_leave(
+    app: Any,
+    handoff_context: dict[str, Any],
+) -> None:
+    if not handoff_context.get("primary_released"):
+        return
+    async with app.state.loop_lock:
+        released_visitor_id = handoff_context.get("released_visitor_id")
+        if released_visitor_id and getattr(app.state, "visitor_id", None) != released_visitor_id:
+            return
+        conn = app.state.conn
+        old_session_id = app.state.session_id
+        old_loop = getattr(app.state, "loop", None)
+        pending_session_id = getattr(app.state, "unscoped_grace_session_id", None)
+        pending_loop = getattr(app.state, "unscoped_grace_loop", None)
+        new_session_id = pending_session_id or str(uuid.uuid4())
+        current_type = _session_type(conn, old_session_id)
+        request_like = SimpleNamespace(app=app)
+        llm_client = None
+        embedding_client = None
+        if pending_loop is None:
+            try:
+                llm_client = _active_llm_client(request_like)
+                embedding_client = _active_embedding_client(request_like)
+            except ClaudeConfigurationError as exc:
+                app.state.llm_error = str(exc)
+                logger.error("Could not rebuild loop after primary handoff: %s", exc)
+                return
+
+        conn.execute(
+            "UPDATE sessions SET ended_at = datetime('now') WHERE id = ? AND ended_at IS NULL",
+            (old_session_id,),
+        )
+        if pending_session_id is not None:
+            conn.execute(
+                """
+                UPDATE sessions
+                SET visitor_id = NULL,
+                    notes = COALESCE(notes || ' ', '') || ?
+                WHERE id = ?
+                """,
+                ("Promoted after primary visitor left the tracked dialogue window.", new_session_id),
+            )
+        else:
+            conn.execute(
+                "INSERT INTO sessions (id, session_type, visitor_id, notes) VALUES (?, ?, NULL, ?)",
+                (
+                    new_session_id,
+                    current_type,
+                    "Started automatically after primary visitor left the tracked dialogue window.",
+                ),
+            )
+        conn.commit()
+
+        if (
+            pending_session_id is None
+            and isinstance(getattr(app.state, "configs", None), dict)
+            and "entity_profile" in app.state.configs
+        ):
+            _save_initial_state(conn, new_session_id, app.state.configs)
+        app.state.session_id = new_session_id
+        app.state.visitor_id = None
+        app.state.unscoped_grace_session_id = None
+        app.state.unscoped_grace_loop = None
+        identity_controller = getattr(app.state, "identity_gating", None)
+        if identity_controller is not None:
+            identity_controller.configure_session(
+                session_id=new_session_id,
+                primary_visitor_id=None,
+                decision=SessionDecision.VISITOR_CLEARED,
+            )
+            if hasattr(identity_controller, "record_primary_release_session"):
+                identity_controller.record_primary_release_session(new_session_id)
+        if pending_loop is not None:
+            if old_loop is not None:
+                old_loop.close(wait_for_background=True)
+            app.state.loop = pending_loop
+        else:
+            _rebuild_loop(request_like, llm_client, embedding_client)
+        app.state.llm_error = None
+        logger.info(
+            "Primary visitor %s left; started unidentified session %s.",
+            released_visitor_id,
+            new_session_id,
+        )
+
+
+async def _archive_unscoped_grace_session_if_needed(app: Any, *, reason: str) -> None:
+    async with app.state.loop_lock:
+        session_id = getattr(app.state, "unscoped_grace_session_id", None)
+        if not session_id or session_id == getattr(app.state, "session_id", None):
+            return
+        loop = getattr(app.state, "unscoped_grace_loop", None)
+        app.state.conn.execute(
+            """
+            UPDATE sessions
+            SET ended_at = datetime('now'),
+                notes = COALESCE(notes || ' ', '') || ?
+            WHERE id = ? AND ended_at IS NULL
+            """,
+            (f"Archived after {reason}.", session_id),
+        )
+        app.state.conn.commit()
+        if loop is not None:
+            loop.close(wait_for_background=True)
+        app.state.unscoped_grace_session_id = None
+        app.state.unscoped_grace_loop = None
 
 
 def _read_conn(request: Request) -> sqlite3.Connection:
@@ -727,6 +1308,13 @@ def _update_visitor_identity_metadata(
                 **identity_patch,
             }
         },
+    )
+
+
+def _identity_match_should_persist(result: IdentityMatchResult) -> bool:
+    return (
+        result.candidate_visitor_id is not None
+        and result.combined_level == ConfidenceLevel.HIGH
     )
 
 

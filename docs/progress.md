@@ -8,8 +8,8 @@
 
 - 当前进行中：无
 - 当前可运行形态：CLI + 本地 FastAPI 开发者 API + Web 看板 + progressive text/audio NDJSON + 可选 Vision 面板 + 可选 Audio Adapter + `/visitor` 临时身体表面 + `/art` 情绪粒子身体表面 + ESP32-S3 下位机固件原型；观众侧最终呈现方向是身体，不是传统 UI
-- 当前核心能力：Stranger 文本协议、最高优先级艺术运行 context、热加载 prompt partial、本轮语言强制优先与错语言兜底、非否认式能力边界正向模板与输入通道防自我否认约束、含“恋旧” memory_gravity 的新心理状态机、带上一轮轻量 bridge 的 pre-memory 轻量 `first_unit` + 已说出口 first 去重续写的 memory-aware `second_unit` 按句文本/audio progressive 输出、main LLM 后端 streaming buffer、two-stage / sentence-queued TTS、短期/情节/反思记忆、匿名 visitor profile 与跨 session visitor 记忆召回、Visitor Identity & Session Gating V1（含结构化 match result / candidate confirmation 调试 API、自然确认解析、visitor memory permission 和开发者面板 auto-bind high confidence 开关）、本地 face signature capture / quality gate / 私有向量库 / historical matching / 后台 face candidate capture / signature deactivate、可解释/可选 embedding 召回、Memory Preview、managed memory proposal → commit、influence log / curation、Runtime Harness Trace、JSONL 端到端 latency 日志、可选 YOLO person presence detection（含 camera index 扫描/切换与 Browser Camera fallback）、可选火山 ASR 2.0 / TTS 2.0 双向流式 Audio Adapter、开发者面板 Audio playback queue / watchdog / barge-in / next-stream prefetch 诊断
-- 当前验证基线：`.venv/bin/python -m pytest -p no:debugging`，最近一次完整结果为 `639 passed`
+- 当前核心能力：Stranger 文本协议、最高优先级艺术运行 context、热加载 prompt partial、本轮语言强制优先与错语言兜底、非否认式能力边界正向模板与输入通道防自我否认约束、含“恋旧” memory_gravity 的新心理状态机、带上一轮轻量 bridge 的 pre-memory 轻量 `first_unit` + 已说出口 first 去重续写的 memory-aware `second_unit` 按句文本/audio progressive 输出、main LLM 后端 streaming buffer、two-stage / sentence-queued TTS、短期/情节/反思记忆、匿名 visitor profile 与跨 session visitor 记忆召回、Visitor Identity & Session Gating V1（含结构化 match result / candidate confirmation 调试 API、保守自然确认解析、known high/medium candidate confirmation、unknown accepted face auto-provision、candidate TTL / turn expiry、主访客 track 锁、离开后 handoff、visitor memory permission 和开发者面板 auto-bind high confidence / handoff 开关）、本地 face signature capture / quality gate / 私有向量库 / historical matching / pre-turn/manual/background face identity capture / signature deactivate、可解释/可选 embedding 召回、Memory Preview、managed memory proposal → commit、influence log / curation、Runtime Harness Trace、JSONL 端到端 latency 日志、可选 YOLO person presence detection（含轻量 person track、camera index 扫描/切换与 Browser Camera fallback）、可选火山 ASR 2.0 / TTS 2.0 双向流式 Audio Adapter、开发者面板 Audio playback queue / watchdog / barge-in / next-stream prefetch 诊断
+- 当前验证基线：`.venv/bin/python -m pytest -p no:debugging`，最近一次完整结果为 `672 passed`
 - 当前交接重点：下一步不再优先扩展 UI；voice signature 与 face/voice combined confidence 暂列 P1 optional，P0 收束为 face-only visitor identity 的现场阈值校准、数据库污染测试和 visitor memory continuity 验证；行为测试与调优继续按 `docs/testlist.md` 执行
 - 当前硬件参考方案：`docs/references/hardware.md` 与 `docs/references/system_logic.md` 已更新为单 Stranger 移动身体方向：Mac mini 随身上位机 + 1 片 ESP32-S3 + TCA9548A + 当前固件 4 路 VL53L1X ToF + 三个 TCRT5000 `A0` + BNO085 SPI IMU + 四路有刷电机驱动 + 4 个 36JP555；`firmware/stranger_esp32s3` 已有 PlatformIO 下位机固件，包含串口协议、ToF telemetry / obstacle gate、BNO085 observation telemetry、TCRT 黑/白校准、line confidence / position / error、line gate、reacquire state、四路电机测试、4WD 差速底盘开环控制和 ESP32 本地低速 line-guided roam；Dashboard Hardware tab 已能通过 BodyBridge 做键盘 / Xbox 手柄 teleop，控制前必须显式开启对应 Teleop 开关；下一阶段硬件/运动待办重点是现场校准 TCRT 阈值、ToF 稳定性、IMU 控制接入和场馆 track-guided roam 策略
 - 当前注意事项：`AGENTS.md` 与 `CLAUDE.md` 有用户侧未提交差异；除非明确要求，不应在常规任务中触碰
@@ -22,7 +22,7 @@
 
 - [ ] Face-only 访客库闭环现场验收
   - 基于当前 Visitor Identity & Session Gating V1 继续做，不要求观众硬性输入身份
-  - Face signature capture、质量门控、私有向量库、face historical matching、后台 candidate capture、自然确认和 visitor memory permission 已接入；后续完成真实展场阈值校准、污染测试和 visitor memory continuity 验证
+  - Face signature capture、质量门控、私有向量库、face historical matching、pre-turn/manual/background identity capture、known candidate confirmation、unknown auto-provision、自然确认和 visitor memory permission 已接入；后续完成真实展场阈值校准、污染测试和 visitor memory continuity 验证
   - Voice signature 与 face/voice combined confidence 暂列 P1 optional；当前不能误读为已完成多模态身份闭环
 - [ ] 行为测试与调优
   - 统一按 `docs/testlist.md` 执行和记录；这里不展开具体测试项
@@ -155,6 +155,96 @@
   - `~/.platformio/penv/bin/pio run -d firmware/stranger_esp32s3`
   - `~/.platformio/penv/bin/pio run -d firmware/stranger_esp32s3 -t upload --upload-port /dev/cu.usbmodem5C4D0378301`
   - `python3 -m pytest -p no:debugging tests/unit/test_body_protocol.py tests/unit/test_body_telemetry.py`（`13 passed`）
+
+### 2026-05-25：展前清理本地测试人脸数据
+
+- [x] 保留 face capture / unknown auto-provision / visitor gating / handoff / memory scope 代码与文档能力，未回滚今日功能
+- [x] 删除本地 `data/signatures/face/*.npz`，清理 `data/memory.db` 中本次自动建档 visitor profile、session visitor 绑定、signature reference、visitor-scoped managed memory / proposal / influence / operation log
+- [x] 保留 latency logs 与既有 backup，不新增 `.gitignore` 规则；停止本地 API 进程以清空 latest frame / pending capture / identity gating runtime 内存态
+- [x] `memory.db` 已 checkpoint / `VACUUM`，`strings data/memory.db` 未扫到本次 visitor / signature / capture / `local://face` 残留
+- [x] 验证：
+  - `sqlite3 data/memory.db "PRAGMA integrity_check;"`（`ok`）
+  - `find data/signatures/face -maxdepth 1 -type f -name '*.npz'`（无输出）
+  - `node --check src/conscious_entity/interfaces/static/dashboard.js`
+  - `.venv/bin/python -m pytest -p no:debugging tests/unit/test_identity_session_gating.py tests/unit/test_api_identity.py tests/unit/test_vision_runtime.py tests/unit/test_memory_retrieval.py tests/unit/test_face_identity.py tests/unit/test_context_builder.py -q`（`138 passed`）
+  - `.venv/bin/python -m pytest -p no:debugging -q`（`672 passed`）
+
+### 2026-05-25：Browser Camera 人脸建档现场阈值校准
+
+- [x] 定位新人 auto-provision 未触发的现场原因：handoff / unidentified session / pre-turn capture 均已进入，实际阻塞点是 face quality gate；后端实际帧 sharpness 为 `14.3`，低于原默认 `35.0`
+- [x] 将 Browser Camera 上传 JPEG 质量从 `0.76` 提高到 `0.95`，减少浏览器帧压缩对 InsightFace quality gate 的影响
+- [x] 将 face identity 默认 `min_sharpness` 从 `35.0` 调整为 `12.0`；同一后端实际帧在新阈值下可 accepted
+- [x] 现场验证 unknown face auto-provision 成功：创建 `visitor-144aba033834`，写入 active face signature，当前 face signature count 为 `1`
+- [x] 验证：`py_compile src/conscious_entity/identity/face.py`、`tests/unit/test_face_identity.py`（`7 passed`）、`git diff --check`
+
+### 2026-05-24：访客库全链路审计修复
+
+- [x] 审计 Visitor Identity & Session Gating、Vision person track、pre-turn/manual/background face capture、session handoff、InteractionLoop visitor scope、managed / episodic / reflective memory retrieval 路径
+- [x] 修复 auto-provision enrollment 的并发边界：新 visitor 建档时不再依赖可被 manual/background capture 覆盖的 `pending_capture`，而是 enroll 触发本次路由决策的 `outcome.capture`
+- [x] 修复 semantic embedding retrieval 的 visitor scope：candidate / unidentified 状态只允许当前 session 与无 visitor 的 generic same-label pool；已确认 visitor 只允许当前 session、同一 visitor 历史和 generic pool，不再跨访客读 embedding memory
+- [x] 新增回归测试覆盖 capture 被覆盖仍 enroll 原始 capture、unidentified 不读其他 visitor embedding memory、confirmed visitor 不读其他 visitor embedding memory
+- [x] 验证：
+  - `.venv/bin/python -m pytest tests/unit/test_api_identity.py::test_auto_provision_enrolls_the_capture_that_made_the_routing_decision tests/unit/test_api_identity.py::test_pre_turn_unknown_face_auto_provisions_new_visitor tests/unit/test_api_identity.py::test_pre_turn_auto_provision_and_background_capture_do_not_duplicate -q`（`3 passed`）
+  - `.venv/bin/python -m pytest tests/unit/test_memory_retrieval.py::test_semantic_retrieval_excludes_visitor_scoped_memory_when_unidentified tests/unit/test_memory_retrieval.py::test_semantic_retrieval_keeps_current_visitor_scope_only tests/unit/test_memory_retrieval.py::test_semantic_retrieval_uses_same_session_type_pool -q`（`3 passed`）
+  - `.venv/bin/python -m py_compile src/conscious_entity/identity/session_gating.py src/conscious_entity/identity/face.py src/conscious_entity/interfaces/api_runtime.py src/conscious_entity/interfaces/api_routes.py src/conscious_entity/vision/runtime.py src/conscious_entity/memory/retrieval.py`
+  - `.venv/bin/python -m pytest tests/unit/test_identity_session_gating.py tests/unit/test_api_identity.py tests/unit/test_vision_runtime.py tests/unit/test_memory_retrieval.py -q`（`72 passed`）
+  - `.venv/bin/python -m pytest tests/unit/test_managed_memory.py tests/unit/test_context_builder.py tests/integration/test_full_loop.py -q`（`128 passed`）
+  - `.venv/bin/python -m pytest -p no:debugging`（`672 passed`）
+  - `git diff --check`
+
+### 2026-05-24：新访客自动建档链路
+
+- [x] 精准移除上一轮误加的 `_auto_provision_new_face_visitor_locked(...)` 半成品调用，并清理 `agents/task-registry.md` 中 `2026-05-24 20:15 CST` 的错误 `in_progress` 记录；未回滚 primary handoff / 35 秒 grace / unscoped grace 改动
+- [x] 新增共享 pre-turn / manual / background face identity capture 路由：只在当前 session `visitor_id=NULL`、无 primary、无 pending candidate、非 `unscoped_grace`、dialogue intent 已确认时运行；A active 或 A missing grace 内不会 candidate、不会建档
+- [x] Known high / medium face match 在 unidentified ready 中只进入 candidate confirmation，不绑定 visitor，不读取该 visitor memory；medium 不再只是 dashboard-only
+- [x] Unknown accepted single face 在无 medium/high known match、无 near-medium ambiguous known cluster 时，自动创建 `visitor-*` profile、enroll pending face signature、绑定当前 unidentified session、更新 identity gating primary、重建 `InteractionLoop(visitor_id=new_id)`，再执行本轮 turn
+- [x] No frame / multi-face / low quality / rejected capture 保持 unidentified；known low 且 ambiguous cluster 不建新 profile，避免把相似旧访客拆成新人
+- [x] 新 visitor metadata 写入 `identity.auto_provisioned`、`provisioned_source`、redacted `initial_capture`，face signature reference 继续走 `metadata.identity.signatures.face[]`；不写 raw image / face crop / embedding 原值
+- [x] 文档同步 `docs/APP_FLOW.md`、`docs/BACKEND_STRUCTURE.md`、`docs/visitor_identity_behavior_test.md`、`docs/testlist.md`
+- [x] 验证：
+  - `rg "_auto_provision_new_face_visitor_locked" src/conscious_entity/interfaces/api_runtime.py`（无结果）
+  - `rg "2026-05-24 20:15 CST" agents/task-registry.md`（无结果）
+  - `.venv/bin/python -m py_compile src/conscious_entity/identity/session_gating.py src/conscious_entity/interfaces/api_runtime.py src/conscious_entity/interfaces/api_routes.py src/conscious_entity/identity/face.py src/conscious_entity/vision/runtime.py`
+  - `.venv/bin/python -m pytest tests/unit/test_identity_session_gating.py tests/unit/test_api_identity.py`（`49 passed`）
+  - `.venv/bin/python -m pytest tests/unit/test_identity_session_gating.py tests/unit/test_api_identity.py tests/unit/test_vision_runtime.py tests/unit/test_api_vision.py tests/unit/test_face_identity.py tests/unit/test_context_builder.py tests/unit/test_short_term_memory.py tests/unit/test_managed_memory.py tests/unit/test_memory_retrieval.py tests/integration/test_full_loop.py tests/integration/test_runtime_context_minimal_contract.py`（`239 passed`）
+  - `.venv/bin/python -m pytest -p no:debugging`（`669 passed`）
+
+### 2026-05-24：主访客离开后再交接
+
+- [x] Vision runtime 在 YOLO person detection 上新增轻量 person track：用 bbox IoU + 中心点距离跨帧关联，snapshot / status 暴露 `track_id`、`tracks`、`last_seen_at`，不新增 DeepSORT / ByteTrack / BoT-SORT 依赖
+- [x] Identity gating 新增 primary visitor 画面锁：确认 primary 后只在单人稳定 track 下锁定 `primary_track_id`；primary track alive 时 B high confidence 只能进入 `refuse_switch` / interruption，不能替换 A
+- [x] Primary track 丢失后先进入默认 `primary_leave_grace_seconds=35.0` 的 `missing_grace`；grace 内输入隔离到 `visitor_id=NULL` 临时 unscoped session，不读写 A/B visitor memory，也不设置 B candidate
+- [x] Primary track 连续丢失超过 grace 后释放当前 visitor，并由 API runtime 原子切到 unidentified session；若 grace 期间已有临时 unscoped session，则提升为新的 current session
+- [x] Handoff 后的新 unidentified session 不受 `auto_bind_high_confidence` 调试开关影响；B high confidence 仍只进入 candidate，明确确认后才绑定 visitor memory
+- [x] 多人同框导致无法可靠锁定时进入 `ambiguous`，不会把后续剩下的单人 track 反向当成 A；如果 confirmed primary 从未锁定过 track，也不会因为场景为空直接释放 primary
+- [x] Dashboard 新增 `主访客离开后允许下一位接管` 开关，对应运行时字段 `handoff_after_primary_leave_enabled`，默认开启；关闭时 primary 离开后也不自动交接
+- [x] 文档同步 `docs/APP_FLOW.md`、`docs/BACKEND_STRUCTURE.md`、`docs/visitor_identity_behavior_test.md`、`docs/testlist.md`
+- [x] 验证：
+  - `.venv/bin/python -m py_compile src/conscious_entity/vision/runtime.py src/conscious_entity/vision/__init__.py src/conscious_entity/identity/session_gating.py src/conscious_entity/interfaces/api_runtime.py src/conscious_entity/interfaces/api_routes.py src/conscious_entity/interfaces/api_models.py`
+  - `node --check src/conscious_entity/interfaces/static/dashboard.js`
+  - `.venv/bin/python -m pytest -p no:debugging tests/unit/test_vision_runtime.py tests/unit/test_identity_session_gating.py tests/unit/test_api_identity.py`（`53 passed`）
+  - `.venv/bin/python -m pytest -p no:debugging tests/unit/test_vision_runtime.py tests/unit/test_identity_session_gating.py tests/unit/test_api_identity.py tests/unit/test_face_identity.py tests/unit/test_context_builder.py tests/unit/test_memory_retrieval.py tests/integration/test_full_loop.py`（`190 passed`）
+  - `.venv/bin/python -m pytest -p no:debugging`（`662 passed`）
+  - `git diff --check`
+
+### 2026-05-24：First Unit 短输入静默 Gate 默认开启
+
+- [x] 将 `config/entity_profile.yaml` 的 `first_unit_speech_gate.default_enabled` 从 `false` 改为 `true`
+- [x] 现在 API / Dashboard 每次重新启动后默认启用 `Short First Silent`；需要临时关闭时仍可在 Dashboard 手动切换
+- [x] 验证：
+  - `.venv/bin/python - <<'PY' ...`（`first_unit_gate_default=true`）
+  - `.venv/bin/python -m pytest -p no:debugging tests/unit/test_first_unit_gate.py tests/unit/test_api_audio.py`（`24 passed`）
+
+### 2026-05-24：Visitor Identity Gating 收束
+
+- [x] 自然身份确认改为保守解析：只接受明确身份确认句或带 candidate display name / visitor id 的确认；问句、元对话、含糊回答和“我是另一个人”保持 `unclear`，不绑定 visitor
+- [x] `medium` confidence 改为 dashboard-only 诊断：不设置 `candidate_visitor_id`、不进入 confirmation prompt、不写入 `visitor_profiles.metadata.identity.latest_match`
+- [x] High candidate 增加内存态过期策略：默认 2 个未确认 turn 或 90 秒后自动 `expired`，过期后不再向 prompt 注入 identity confirmation cue
+- [x] API / 后台 face capture 只对 high match 持久化 identity latest_match；medium / low 只返回诊断，不创建或更新 visitor profile
+- [x] 验证：
+  - `.venv/bin/python -m pytest -p no:debugging tests/unit/test_identity_session_gating.py tests/unit/test_api_identity.py tests/unit/test_context_builder.py`（`90 passed`）
+  - `.venv/bin/python -m pytest -p no:debugging tests/unit/test_identity_session_gating.py tests/unit/test_api_identity.py tests/unit/test_face_identity.py tests/unit/test_context_builder.py tests/unit/test_memory_retrieval.py tests/integration/test_full_loop.py`（`168 passed`）
+  - `.venv/bin/python -m pytest -p no:debugging`（`648 passed`）
 
 ### 2026-05-24：硬件 / 运动系统待办整理
 

@@ -258,6 +258,71 @@ def test_semantic_retrieval_uses_same_session_type_pool(in_memory_db):
     assert shared.metadata["session_type"] == "test"
 
 
+def test_semantic_retrieval_excludes_visitor_scoped_memory_when_unidentified(in_memory_db):
+    class FakeEmbeddingClient:
+        enabled = True
+        model = "test-embedding"
+
+        def embed(self, text: str) -> list[float]:
+            return [1.0, 0.0]
+
+    _session(in_memory_db, "current", "test")
+    _session(in_memory_db, "visitor-session", "test")
+    _session(in_memory_db, "generic-session", "test")
+    _visitor(in_memory_db, "visitor-a", "A")
+    _assign_visitor(in_memory_db, "visitor-session", "visitor-a")
+    _episodic(in_memory_db, "visitor-session", "visitor private episodic", embedding=encode_embedding([1.0, 0.0]))
+    _reflective(in_memory_db, "visitor-session", "visitor private reflective", embedding=encode_embedding([1.0, 0.0]))
+    _episodic(in_memory_db, "generic-session", "generic episodic", embedding=encode_embedding([1.0, 0.0]))
+    _reflective(in_memory_db, "generic-session", "generic reflective", embedding=encode_embedding([1.0, 0.0]))
+
+    results = MemoryRetriever(in_memory_db, "current", FakeEmbeddingClient()).retrieve("memory")
+    contents = "\n".join(item.content for item in results)
+
+    assert "generic episodic" in contents
+    assert "generic reflective" in contents
+    assert "visitor private episodic" not in contents
+    assert "visitor private reflective" not in contents
+
+
+def test_semantic_retrieval_keeps_current_visitor_scope_only(in_memory_db):
+    class FakeEmbeddingClient:
+        enabled = True
+        model = "test-embedding"
+
+        def embed(self, text: str) -> list[float]:
+            return [1.0, 0.0]
+
+    _session(in_memory_db, "current", "test")
+    _session(in_memory_db, "own-prior", "test")
+    _session(in_memory_db, "other-prior", "test")
+    _session(in_memory_db, "generic-prior", "test")
+    _visitor(in_memory_db, "visitor-k", "K")
+    _visitor(in_memory_db, "visitor-other", "Other")
+    _assign_visitor(in_memory_db, "current", "visitor-k")
+    _assign_visitor(in_memory_db, "own-prior", "visitor-k")
+    _assign_visitor(in_memory_db, "other-prior", "visitor-other")
+    _episodic(in_memory_db, "own-prior", "own visitor episodic", embedding=encode_embedding([1.0, 0.0]))
+    _reflective(in_memory_db, "own-prior", "own visitor reflective", embedding=encode_embedding([1.0, 0.0]))
+    _episodic(in_memory_db, "other-prior", "other visitor episodic", embedding=encode_embedding([1.0, 0.0]))
+    _reflective(in_memory_db, "other-prior", "other visitor reflective", embedding=encode_embedding([1.0, 0.0]))
+    _episodic(in_memory_db, "generic-prior", "generic episodic", embedding=encode_embedding([1.0, 0.0]))
+
+    results = MemoryRetriever(
+        in_memory_db,
+        "current",
+        FakeEmbeddingClient(),
+        visitor_id="visitor-k",
+    ).retrieve("memory")
+    contents = "\n".join(item.content for item in results)
+
+    assert "own visitor episodic" in contents
+    assert "own visitor reflective" in contents
+    assert "generic episodic" in contents
+    assert "other visitor episodic" not in contents
+    assert "other visitor reflective" not in contents
+
+
 def test_embedding_failure_falls_back_to_deterministic(in_memory_db):
     class BrokenEmbeddingClient:
         enabled = True

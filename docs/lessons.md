@@ -131,7 +131,32 @@
 - 原因：这类措辞本意是输出格式约束，但会和语音能力问题、TTS 现场能力、managed memory 污染叠加，让 Stranger 误以为自己没有声音或不能说话。
 - 如何应用：修改表达格式规则时，同时用 `rg` 检查 runtime prompt、context builder、managed memory 和最近 session history 中是否存在 `no voice`、`text-based`、`voice/audio`、`没有声音`、`用文字回应`、`读字` 等污染短语；必要时 reset 当前 session，避免短期历史继续污染。
 
-**L32：硬件控制 ack 必须更新开发者状态缓存**
+**L32：身份确认 parser 必须保守，candidate 必须会过期**
+- 规则：自然身份确认只能接受明确的“是我 / 我是某 candidate / yes, that's me”这类身份确认；不能用简单 substring 匹配“是 / 对 / no”。Known high / medium candidate 未确认必须按 turn 或时间过期，未确认前绝不读取该 visitor memory。
+- 原因：宽松 parser 会把“你是 AI 吗”“你是不是在问我是谁”“我是另一个人”误绑定为访客身份；长期悬挂 candidate 会让 Stranger 反复暗示身份确认，破坏非强制确认原则。
+- 如何应用：新增确认话术时先加负例测试；known high / medium 可以进入 candidate confirmation，但只在明确确认后绑定和启用 memory；latest_match 持久化仍保持保守，不把 medium 当成已知身份事实。
+
+**L33：访客交接必须以前一位 primary 已离开为前置**
+- 规则：当前 primary visitor 仍在画面中时，任何新候选都不能替换当前对话；high confidence 也只能记录为插入 / refuse-switch。只有已锁定的 primary track 连续丢失超过 grace，才允许释放 primary 并开启下一位的 unidentified session；grace 期间输入必须走 unscoped turn，不读写任何 visitor-scoped memory。
+- 原因：用“画面里有人”或“新候选更像 B”直接切换，会把 A 正在进行的对话改写成 B，造成记忆泄漏和体验断裂；多人同框后只剩一人时也不能反向假定这个人就是 A；camera/tracker 未就绪时的空场景也不能误清当前 primary。
+- 如何应用：身份切换相关改动必须同时覆盖 `primary_track_alive blocks switch`、`primary_missing_grace uses unscoped turn`、`primary_track_lost releases`、`ambiguous does not relock remaining track`、`untracked empty scene does not release` 五类测试；LLM 只接收状态表达，不参与身份绑定或离开判定。
+
+**L34：新访客自动建档不是 consent flow，但必须被 handoff gate 限制**
+- 规则：陌生新人在 A 已 release、当前 session 为 unidentified、dialogue intent 已确认、单人脸质量通过、没有 medium/high known match、没有 ambiguous known cluster 时，直接创建匿名 `visitor-*` profile 并绑定当前 session；不要加入“是否同意记住我”的 consent / onboarding 文案。
+- 原因：展陈链路需要自然形成新的对话身份；把新人建档做成确认流程会卡住主路径。但如果不受 primary / grace / quality / ambiguity gate 限制，又会污染访客库或抢走 A 的对话窗口。
+- 如何应用：自动建档只能走共享 pre-turn / manual / background face identity capture helper；必须覆盖 unknown accepted auto-provision、A grace 内不建档、known high/medium 只 candidate、no frame / multi-face / low quality 不建档、ambiguous low cluster 不建档、pre-turn/background 不重复建档测试。
+
+**L35：建档 enrollment 与语义召回都必须绑定正确 visitor scope**
+- 规则：auto-provision enrollment 必须使用触发本次路由决策的 `FaceCaptureOutcome.capture`，不能依赖可被并发 manual/background capture 覆盖的 `pending_capture`；semantic embedding retrieval 也必须按当前 visitor scope 过滤，unidentified / candidate 不能读其他 visitor 的 embedding memory。
+- 原因：否则新 visitor 可能拿到另一帧 face signature，或未确认身份的 turn 通过 embedding 召回其他访客的记忆，破坏“候选未确认前不使用 visitor memory”的核心边界。
+- 如何应用：修改 face capture 或 memory retrieval 时，同时跑 capture-overwrite enrollment、unidentified semantic isolation、confirmed visitor semantic isolation 三类测试；generic same-label pool 只允许 `visitor_id IS NULL` 的非个人记忆。
+
+**L36：现场 face quality gate 要用后端实际帧校准**
+- 规则：Browser Camera / Vision / Face identity 链路报 `face_blurry`、`face_too_narrow` 或 pose rejection 时，先抓取后端实际 `latest_frame_jpeg` 跑同一套 InsightFace quality 计算，再判断是镜头、压缩、阈值还是姿态问题；不要只看 Dashboard 预览截图。
+- 原因：Dashboard 预览看起来清楚，不代表送入后端的 JPEG、face crop、sharpness 数值能过 gate。现场 Browser Camera 0.76 JPEG 压缩下 sharpness 可能只有十几，原 `35.0` 阈值会误拒绝可用人脸。
+- 如何应用：调整 face quality 相关参数时记录 `detection_score`、face bbox ratio、pose、sharpness、JPEG size；先验证同一后端实际帧在新阈值下 accepted，再做现场 auto-provision 回归。
+
+**L37：硬件控制 ack 必须更新开发者状态缓存**
 - 规则：ESP32 这类下位机命令如果只返回 `ack`，上位机 telemetry store 必须把会改变状态的 ack 转成可见状态更新；不能只等后续 `status` 包。
 - 原因：现场调试常会关闭周期 telemetry 来避免刷屏，此时 `arm`、`disarm`、`avoidance off`、`line off` 等命令虽然已执行，Dashboard 仍可能显示旧状态，误导为后端或硬件失效。
 - 如何应用：新增硬件命令时同步检查 ack payload、`BodyTelemetryStore` 状态映射、Dashboard blocker 提示和单元测试。
