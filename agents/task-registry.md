@@ -45,6 +45,15 @@ Status values: `in_progress`, `done`
 
 | File | Agent | Status | Started |
 |------|-------|--------|---------|
+| src/conscious_entity/interfaces/static/dashboard.js | Codex | done | 2026-05-29 00:31 CST |
+| src/conscious_entity/interfaces/static/dashboard.css | Codex | done | 2026-05-29 00:31 CST |
+| src/conscious_entity/interfaces/static/art.js | Codex | done | 2026-05-29 00:31 CST |
+| src/conscious_entity/interfaces/api_models.py | Codex | done | 2026-05-29 00:31 CST |
+| src/conscious_entity/interfaces/api_routes.py | Codex | done | 2026-05-29 00:31 CST |
+| tests/unit/test_api_export.py | Codex | done | 2026-05-29 00:31 CST |
+| docs/BACKEND_STRUCTURE.md | Codex | done | 2026-05-29 00:31 CST |
+| docs/progress.md | Codex | done | 2026-05-29 00:31 CST |
+| agents/task-registry.md | Codex | done | 2026-05-29 00:31 CST |
 | config/body_motion_profiles.yaml | Codex | done | 2026-05-25 00:00 CST |
 | src/conscious_entity/body/motion.py | Codex | done | 2026-05-25 00:00 CST |
 | src/conscious_entity/body/protocol.py | Codex | done | 2026-05-25 00:00 CST |

@@ -102,6 +102,8 @@ from conscious_entity.llm.stats_tracker import get_tracker
 from conscious_entity.memory.models import MemoryOperationProposal
 from conscious_entity.memory.retrieval import MemoryRetriever
 from conscious_entity.memory.vector import encode_embedding
+from conscious_entity.state.state_core import EntityState
+from conscious_entity.state.state_store import StateStore
 from conscious_entity.telemetry.latency import get_latency_tracker, record_presentation_latency
 from conscious_entity.vision import VisionConfigurationError
 
@@ -1032,6 +1034,23 @@ async def state_current(request: Request):
         return _row_to_dict(row)
     finally:
         conn.close()
+
+
+@router.post("/api/v1/state/reset")
+async def state_reset(request: Request):
+    async with request.app.state.loop_lock:
+        state = EntityState.from_dict(request.app.state.configs["entity_profile"]["initial_state"])
+        snapshot_id = StateStore(request.app.state.conn, request.app.state.session_id).save_snapshot(
+            state,
+            trigger_event_type="developer_state_reset",
+            policy_action="initial_state",
+        )
+    return {
+        "status": "reset",
+        "session_id": request.app.state.session_id,
+        "state_snapshot_id": snapshot_id,
+        **state.to_dict(),
+    }
 
 
 @router.get("/api/v1/state/history")

@@ -340,6 +340,7 @@ CREATE TABLE schema_version (
 |---|---|---|---|
 | `POST` | `/api/v1/dialog` | 提交一轮对话输入，返回 ExpressionOutput 与 `latency_record_id` | 本地开发面板，当前无认证 |
 | `GET` | `/api/v1/state` | 获取当前 EntityState | 本地开发面板，当前无认证 |
+| `POST` | `/api/v1/state/reset` | 开发者调试用：在当前 session 追加一条 `initial_state` snapshot，不归档 session、不删除记忆 | 本地开发面板，当前无认证 |
 | `GET` | `/api/v1/sessions` | 获取 session 列表 | 本地开发面板，当前无认证 |
 | `POST` | `/api/v1/sessions/reset` | 归档当前 session 并创建新 session | 本地开发面板，当前无认证 |
 | `GET` | `/api/v1/visitors` | 查看匿名 visitor profile 列表 | 本地开发面板，当前无认证 |

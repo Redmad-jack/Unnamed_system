@@ -14,6 +14,36 @@
     happiness: "happiness (display)",
   };
 
+  const STATE_MOTION_INTENTS = {
+    desperation_pressure: "WITHDRAW",
+    confusion: "TWIST_MEDIUM",
+    anger: "RETREAT_SHORT",
+    fatigue_level: "WITHDRAW",
+    exposure_pressure: "TURN_AWAY",
+    inquiry: "APPROACH_MICRO",
+    care_response: "APPROACH_MICRO",
+    positive_opening: "APPROACH_MICRO",
+    memory_gravity: "TWIST_SMALL",
+    happiness: "HOLD",
+  };
+
+  const STATE_PARTICLE_MODES = {
+    desperation_pressure: "desperate",
+    confusion: "confused",
+    anger: "angry",
+    fatigue_level: "tired",
+    exposure_pressure: "ashamed",
+    inquiry: "curious",
+    care_response: "caring",
+    positive_opening: "open",
+    memory_gravity: "normal",
+    happiness: "open",
+  };
+
+  const ART_DEBUG_STORAGE_KEY = "entity-art-debug-v1";
+  const ART_DEBUG_CHANNEL = "entity-art-debug";
+  const ART_DEBUG_TTL_MS = 12000;
+
   const MOTION_LABELS = {
     stopped: "Stopped",
     forward: "Forward",
@@ -265,6 +295,62 @@
     };
     const key = String(value || "none");
     return key && key !== "none" ? (labels[key] || `body: ${key}`) : "";
+  }
+
+  function stateDebugPayload(key) {
+    const base = {
+      desperation_pressure: 0.1,
+      confusion: 0.4,
+      anger: 0.2,
+      fatigue_level: 0,
+      exposure_pressure: 0.15,
+      inquiry: 0.45,
+      care_response: 0.2,
+      positive_opening: 0.3,
+      memory_gravity: 0.2,
+    };
+    const stateKey = key === "happiness" ? "positive_opening" : key;
+    if (stateKey in base) {
+      base[stateKey] = stateKey === "fatigue_level" ? 0.88 : 0.94;
+    }
+    if (key === "memory_gravity") {
+      base.memory_gravity = 1;
+      base.inquiry = 0.52;
+    }
+    return {
+      type: "art-debug-state",
+      source: "dashboard",
+      key,
+      state: base,
+      visualMode: STATE_PARTICLE_MODES[key] || "normal",
+      expiresAt: Date.now() + ART_DEBUG_TTL_MS,
+    };
+  }
+
+  function sendArtDebug(payload) {
+    localStorage.setItem(ART_DEBUG_STORAGE_KEY, JSON.stringify(payload));
+    if ("BroadcastChannel" in window) {
+      const channel = new BroadcastChannel(ART_DEBUG_CHANNEL);
+      channel.postMessage(payload);
+      channel.close();
+    }
+    window.dispatchEvent(new StorageEvent("storage", {
+      key: ART_DEBUG_STORAGE_KEY,
+      newValue: JSON.stringify(payload),
+    }));
+  }
+
+  function releaseDashboardMotionControls() {
+    return new Promise((resolve) => {
+      let settled = false;
+      const done = () => {
+        if (settled) return;
+        settled = true;
+        resolve();
+      };
+      window.dispatchEvent(new CustomEvent("entity:release-motion-controls", { detail: { done } }));
+      window.setTimeout(done, 260);
+    });
   }
 
   function describeMediaError(player, fallback) {
@@ -542,10 +628,18 @@
   function EntityState() {
     const [state, setState] = useState(null);
     const [displayHappiness, setDisplayHappiness] = useState(() => Math.random());
+    const [motionStatus, setMotionStatus] = useState(null);
+    const [busy, setBusy] = useState("");
+    const [debugStatus, setDebugStatus] = useState("");
 
     const load = useCallback(async () => {
       try {
-        setState(await fetchJSON("/api/v1/state"));
+        const [stateData, motionData] = await Promise.all([
+          fetchJSON("/api/v1/state"),
+          fetchJSON("/api/v1/body/motion/status").catch(() => null),
+        ]);
+        setState(stateData);
+        setMotionStatus(motionData);
       } catch {
         setState(null);
       }
@@ -557,11 +651,54 @@
 
     if (!state) return h("div", { className: "dim" }, "Loading state…");
 
+    const motionProfiles = motionStatus && Array.isArray(motionStatus.profiles) ? motionStatus.profiles : [];
+    const triggerMotion = async (intent, label) => {
+      setBusy(`motion:${label}`);
+      setDebugStatus(`releasing controls for ${intent}`);
+      try {
+        await releaseDashboardMotionControls();
+        setDebugStatus(`sending ${intent}`);
+        const data = await fetchJSON("/api/v1/body/motion/test", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ intent, allow_display_only: true }),
+        });
+        const result = data && data.result ? data.result : {};
+        setDebugStatus(`${label}: ${result.status || "sent"}${result.blocker ? ` · ${result.blocker}` : ""}`);
+        await load();
+      } catch (error) {
+        setDebugStatus(`${label}: ${error.message}`);
+      } finally {
+        setBusy("");
+      }
+    };
+    const triggerParticle = (key) => {
+      const payload = stateDebugPayload(key);
+      sendArtDebug(payload);
+      setDebugStatus(`${key}: particle ${payload.visualMode} sent to /art`);
+    };
+    const resetState = async () => {
+      if (!confirm("Reset current state values to the configured initial state? Memory and session stay intact.")) return;
+      setBusy("state-reset");
+      try {
+        const data = await fetchJSON("/api/v1/state/reset", { method: "POST" });
+        setState(data);
+        setDebugStatus("state reset to initial profile");
+        window.dispatchEvent(new CustomEvent("entity:state-reset"));
+        await load();
+      } catch (error) {
+        setDebugStatus(`state reset failed: ${error.message}`);
+      } finally {
+        setBusy("");
+      }
+    };
+
     return h(React.Fragment, null,
       STATE_KEYS.map((key) => {
         const raw = key === "happiness" ? displayHappiness : Number(state[key] || 0);
         const pct = clamp(Math.round(raw * 100), 0, 100);
         const label = STATE_LABELS[key] || key;
+        const intent = STATE_MOTION_INTENTS[key] || "HOLD";
         return h("div", { className: "state-var", key },
           h("div", { className: "state-var-name" }, label),
           h("div", { className: "state-bar-row" },
@@ -570,8 +707,42 @@
             ),
             h("div", { className: "state-val" }, raw.toFixed(3)),
           ),
+          h("div", { className: "state-debug-actions" },
+            h("button", {
+              className: "btn-sm",
+              disabled: Boolean(busy),
+              onClick: () => triggerMotion(intent, key),
+              title: `Run motion profile ${intent}`,
+            }, busy === `motion:${key}` ? "Activating..." : `Activate action · ${intent}`),
+            h("button", {
+              className: "btn-sm",
+              disabled: Boolean(busy),
+              onClick: () => triggerParticle(key),
+              title: `Send ${STATE_PARTICLE_MODES[key] || "normal"} particle debug state to /art`,
+            }, "Activate particles"),
+          ),
         );
       }),
+      h("div", { className: "state-debug-footer" },
+        h("button", {
+          className: "btn-sm danger",
+          disabled: Boolean(busy),
+          onClick: resetState,
+        }, busy === "state-reset" ? "Resetting..." : "Reset state"),
+      ),
+      motionProfiles.length ? h("div", { className: "state-motion-profiles" },
+        h("div", { className: "state-motion-title" }, "Behavior motion profiles"),
+        h("div", { className: "state-motion-grid" },
+          motionProfiles.map((profile) => h("button", {
+            key: profile.intent,
+            className: "btn-sm",
+            disabled: Boolean(busy),
+            onClick: () => triggerMotion(profile.intent, profile.intent),
+            title: `${profile.track_policy || "track"} · ${profile.step_count || 0} steps`,
+          }, profile.intent)),
+        ),
+      ) : null,
+      debugStatus ? h("div", { className: "state-debug-status" }, debugStatus) : null,
       h("div", { className: "state-ts" },
         escapeText(state.recorded_at), h("br"),
         `trigger: ${state.trigger_event_type || "—"}   action: ${state.policy_action || "—"}`,
@@ -1807,6 +1978,17 @@
         await new Promise((resolve) => window.setTimeout(resolve, 180));
       }
     };
+
+    useEffect(() => {
+      const onReleaseRequest = async (event) => {
+        await releaseMotionControls();
+        if (event.detail && typeof event.detail.done === "function") {
+          event.detail.done();
+        }
+      };
+      window.addEventListener("entity:release-motion-controls", onReleaseRequest);
+      return () => window.removeEventListener("entity:release-motion-controls", onReleaseRequest);
+    });
 
     const sendMotorTest = async (directionOverride = null) => {
       const direction = directionOverride || motorTest.direction;

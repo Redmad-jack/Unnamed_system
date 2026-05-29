@@ -72,6 +72,21 @@
 
 ## Changelog
 
+### 2026-05-29：Dashboard 状态运动 / 粒子调试入口
+
+- [x] Dashboard 左侧 `Entity State` 每个状态条目新增 `Activate action` 与 `Activate particles` 调试按钮；动作按钮调用已有白名单 Runtime Motion profile，不开放 raw PWM / 任意串口命令
+- [x] 左侧状态栏新增 `Reset state`，通过 `/api/v1/state/reset` 在当前 session 追加 `initial_state` snapshot，不归档 session、不删除 memory
+- [x] Dashboard 左侧新增全部 Runtime Motion profile 快捷按钮，便于开发者直接触发行为运动测试
+- [x] `/art` 粒子身体 surface 新增 Dashboard debug override：通过同源 `BroadcastChannel` / `localStorage` 接收临时状态粒子效果，不写入真实状态或记忆
+- [x] 文档同步 `docs/BACKEND_STRUCTURE.md` 新增 `/api/v1/state/reset`
+- [x] 验证：
+  - `node --check src/conscious_entity/interfaces/static/dashboard.js`
+  - `node --check src/conscious_entity/interfaces/static/art.js`
+  - `python3 -m py_compile src/conscious_entity/interfaces/api_routes.py src/conscious_entity/interfaces/api_models.py`
+  - `python3 -m pytest -p no:debugging tests/unit/test_api_export.py tests/unit/test_api_body_motion.py -q`（`22 passed`）
+  - `git diff --check`
+  - 本地 `PYTHONPATH=src python3 -m uvicorn conscious_entity.interfaces.api:app --host 127.0.0.1 --port 8012` + Browser 验证 Dashboard 左栏按钮渲染、motion blocker 反馈、`/art` canvas 与粒子 debug 触发；无 console error / warning
+
 ### 2026-05-25：Runtime Motion 轨道约束身体表达闭环 V1
 
 - [x] 新增 `config/body_motion_profiles.yaml`，把说话交互模式下的 `HOLD`、`APPROACH_MICRO`、`RETREAT_SHORT`、`TURN_AWAY`、`TWIST_SMALL`、`TWIST_MEDIUM`、`SPIN_ONE_EXPERIMENTAL`、`WITHDRAW`、`REACQUIRE` 配置为可审计 motion profile

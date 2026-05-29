@@ -18,6 +18,8 @@
   const TREND_SAMPLE_DECAY = 0.68;
   const TREND_DELTA_FLOOR = 0.006;
   const INQUIRY_DISPLAY_WEIGHT = 0.65;
+  const ART_DEBUG_STORAGE_KEY = "entity-art-debug-v1";
+  const ART_DEBUG_CHANNEL = "entity-art-debug";
 
   const DEFAULT_STATE = Object.freeze({
     desperation_pressure: 0.1,
@@ -126,6 +128,25 @@
     const response = await fetch(url);
     if (!response.ok) throw new Error(String(response.status));
     return response.json();
+  }
+
+  function readDebugPayload() {
+    try {
+      const raw = localStorage.getItem(ART_DEBUG_STORAGE_KEY);
+      if (!raw) return null;
+      const payload = JSON.parse(raw);
+      if (!payload || payload.source !== "dashboard") return null;
+      if (Number(payload.expiresAt || 0) < Date.now()) {
+        localStorage.removeItem(ART_DEBUG_STORAGE_KEY);
+        return null;
+      }
+      return {
+        state: normalizeState(payload.state),
+        visualMode: payload.visualMode || deriveVisualMode(normalizeState(payload.state)),
+      };
+    } catch {
+      return null;
+    }
   }
 
   function normalizeState(row) {
@@ -786,6 +807,8 @@
   }
 
   async function readSurfacePayload() {
+    const debugPayload = readDebugPayload();
+    if (debugPayload) return debugPayload;
     const state = await fetchJSON("/api/v1/state").catch(() => null);
     const normalized = normalizeState(state);
     return {
@@ -858,13 +881,47 @@
     }, []);
 
     useEffect(() => {
+      const applyDebugPayload = (payload) => {
+        const renderer = rendererRef.current;
+        if (!renderer || !payload) return;
+        const normalized = {
+          state: normalizeState(payload.state),
+          visualMode: payload.visualMode || deriveVisualMode(normalizeState(payload.state)),
+        };
+        renderer.setTarget(normalized);
+        renderer.setTrendSample(normalized.state);
+      };
+      const onStorage = (event) => {
+        if (event.key !== ART_DEBUG_STORAGE_KEY || !event.newValue) return;
+        try {
+          applyDebugPayload(JSON.parse(event.newValue));
+        } catch {
+          // Ignore malformed debug payloads.
+        }
+      };
+      let channel = null;
+      if ("BroadcastChannel" in window) {
+        channel = new BroadcastChannel(ART_DEBUG_CHANNEL);
+        channel.onmessage = (event) => applyDebugPayload(event.data);
+      }
+      window.addEventListener("storage", onStorage);
+      return () => {
+        window.removeEventListener("storage", onStorage);
+        if (channel) channel.close();
+      };
+    }, []);
+
+    useEffect(() => {
       let cancelled = false;
 
       async function pollTrend() {
         const renderer = rendererRef.current;
         if (!renderer) return;
         try {
-          const state = normalizeState(await fetchJSON("/api/v1/state"));
+          const debugPayload = readDebugPayload();
+          const state = debugPayload
+            ? debugPayload.state
+            : normalizeState(await fetchJSON("/api/v1/state"));
           if (!cancelled) renderer.setTrendSample(state);
         } catch {
           // Keep the current trend color; the main surface poll still has its fallback.

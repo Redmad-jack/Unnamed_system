@@ -190,6 +190,54 @@ def test_session_reset_archives_old_session_and_creates_initial_state(tmp_path, 
     conn.close()
 
 
+def test_state_reset_appends_initial_state_without_archiving_session(tmp_path):
+    db_path = tmp_path / "memory.db"
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    run_migrations(conn)
+    conn.execute("INSERT INTO sessions (id, session_type) VALUES (?, ?)", ("current", "test"))
+    conn.execute(
+        """
+        INSERT INTO state_snapshots (
+            session_id, desperation_pressure, confusion, anger, fatigue_level,
+            exposure_pressure, inquiry, care_response, positive_opening,
+            memory_gravity, happiness
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        ("current", 0.9, 0.9, 0.9, 0.9, 0.9, 0.1, 0.1, 0.1, 0.9, 0.1),
+    )
+    conn.commit()
+
+    configs = load_all_configs()
+    request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(
+        conn=conn,
+        session_id="current",
+        configs=configs,
+        loop_lock=asyncio.Lock(),
+    )))
+
+    result = asyncio.run(api_routes.state_reset(request))
+
+    assert result["status"] == "reset"
+    assert result["session_id"] == "current"
+    assert result["confusion"] == configs["entity_profile"]["initial_state"]["confusion"]
+    session = conn.execute("SELECT ended_at FROM sessions WHERE id = ?", ("current",)).fetchone()
+    assert session["ended_at"] is None
+    latest = conn.execute(
+        """
+        SELECT trigger_event_type, policy_action
+        FROM state_snapshots
+        WHERE session_id = ?
+        ORDER BY id DESC
+        LIMIT 1
+        """,
+        ("current",),
+    ).fetchone()
+    assert latest["trigger_event_type"] == "developer_state_reset"
+    assert latest["policy_action"] == "initial_state"
+    conn.close()
+
+
 def test_session_type_update_rebuilds_loop(tmp_path, monkeypatch):
     db_path = tmp_path / "memory.db"
     conn = sqlite3.connect(db_path)
