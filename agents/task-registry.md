@@ -61,9 +61,9 @@ Status values: `in_progress`, `done`
 | docs/TECH_STACK.md | Codex | done | 2026-06-08 04:26 CST |
 | docs/progress.md | Codex | done | 2026-06-08 04:26 CST |
 | agents/task-registry.md | Codex | done | 2026-06-08 04:26 CST |
-| render.yaml | Codex | in_progress | 2026-06-08 05:02 CST |
-| .gitignore | Codex | in_progress | 2026-06-08 05:02 CST |
-| agents/task-registry.md | Codex | in_progress | 2026-06-08 05:02 CST |
+| render.yaml | Codex | done | 2026-06-08 05:02 CST |
+| .gitignore | Codex | done | 2026-06-08 05:02 CST |
+| agents/task-registry.md | Codex | done | 2026-06-08 05:02 CST |
 | /Users/jackzhang/Downloads/CL4R1T4S-main/GOOGLE/Chinese/* | Codex | in_progress | 2026-06-07 23:05 CST |
 | /Users/jackzhang/Downloads/CL4R1T4S-main/OPENAI/Chinese/* | Codex | in_progress | 2026-06-07 23:05 CST |
 | /Users/jackzhang/Downloads/CL4R1T4S-main/ANTHROPIC/Chinese/* | Codex | in_progress | 2026-06-07 23:05 CST |
