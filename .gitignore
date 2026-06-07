@@ -9,6 +9,11 @@ data/memory.backup-*
 data/export.json
 data/embeddings_cache/
 data/latency_logs/
+data/signatures/
+
+# Local generated deploy output and service links
+tmp/
+.netlify/
 
 # Python
 __pycache__/

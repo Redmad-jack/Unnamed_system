@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Stranger</title>
+<link rel="stylesheet" href="/arts/art.css">
+<link rel="stylesheet" href="/arts/arts.css">
+</head>
+<body>
+<main id="art-root" aria-label="Stranger surface"></main>
+<section class="arts-panel" aria-label="Stranger interaction">
+  <div class="presence-row">
+    <div class="presence-title">Stranger</div>
+    <div class="presence-status" id="arts-status">closed</div>
+  </div>
+
+  <form class="gate-form" id="arts-gate-form">
+    <input id="arts-access-code" name="access_code" type="password" autocomplete="current-password" placeholder="access" required>
+    <input id="arts-nickname" name="nickname" type="text" autocomplete="nickname" maxlength="60" placeholder="name" required>
+    <button type="submit">enter</button>
+  </form>
+
+  <div class="dialog-panel" id="arts-dialog" hidden>
+    <div class="turn-log" id="arts-turn-log" aria-live="polite"></div>
+    <form class="composer" id="arts-text-form">
+      <button class="mic-button" id="arts-mic-button" type="button" title="microphone" aria-label="microphone">
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M12 3a3 3 0 0 0-3 3v5a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3Z"></path>
+          <path d="M5 10v1a7 7 0 0 0 14 0v-1"></path>
+          <path d="M12 18v3"></path>
+          <path d="M8 21h8"></path>
+        </svg>
+      </button>
+      <input id="arts-text-input" name="text" type="text" autocomplete="off" maxlength="900" placeholder="say something">
+      <button type="submit">send</button>
+    </form>
+  </div>
+</section>
+
+<script src="/arts/config.js"></script>
+<script src="/arts/app.js"></script>
+<script src="/arts/vendor/react.production.min.js"></script>
+<script src="/arts/vendor/react-dom.production.min.js"></script>
+<script src="/arts/art-surface.js"></script>
+</body>
+</html>

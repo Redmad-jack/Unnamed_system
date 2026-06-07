@@ -96,6 +96,8 @@
 
 访客侧第一版 `/visitor` 仍是原生 HTML/CSS/JS，只作为非 dashboard 的临时 body-facing surface，不暴露内部规则、memory 或 prompt；声音播放只消费后端已创建的 `tts_stream_id`，不允许 visitor raw text TTS。
 
+线上公开试运行新增 `/arts` 静态前端，仍采用原生 HTML/CSS/JS，并通过 `scripts/build_netlify_arts.py` 从现有 `/art` 粒子 surface 和本地 vendor 文件生成 Netlify bundle。该页面由 Netlify 发布，构建时只写入 `STRANGER_RENDER_BASE_URL` 到 `config.js`；访问口令、session token、LLM/audio 凭证都只在 FastAPI/Render 后端处理。公开版只开放文字输入、浏览器麦克风 STT、TTS 播放和粒子状态反馈，不开放 dashboard、memory、prompt、debug trace、视觉、人脸识别或声纹识别。
+
 访客端候选方案（供后续决策参考）：
 
 | 方案 | 优点 | 缺点 | 适合场景 |
@@ -105,7 +107,38 @@
 | React SPA + 构建链 | 适合复杂组件、类型检查和模块拆分 | 需要 Node.js 构建链 | 更复杂运营者面板 |
 | FastAPI + Jinja2 SSR | Python 全栈，无独立前端 | 动态交互受限 | MVP 快速落地 |
 
-在身体外观、投影、屏幕或光的具体方案确认前，不为访客侧呈现引入前端构建工具或框架。开发者面板可使用本地静态 React，但不得让观众侧 `/visitor` 收缩成普通 dashboard。
+在身体外观、投影、屏幕或光的具体方案确认前，不为访客侧呈现引入前端框架或 Node 构建链；`/arts` 只使用 Python 静态复制/配置脚本生成 Netlify bundle。开发者面板可使用本地静态 React，但不得让观众侧 `/visitor` 或 `/arts` 收缩成普通 dashboard。
+
+## 部署技术
+
+| 平台 | 用途 | 当前约束 |
+|---|---|---|
+| Render Free | 试运行 FastAPI public backend | 接受休眠、冷启动；`ENTITY_DB_PATH=/tmp/stranger/memory.db` 为临时 SQLite，不承诺跨重启持久化 |
+| Netlify | 发布公开 `/arts` 静态页面 | 只注入 Render base URL；不存放任何后端密钥 |
+
+Render build command:
+
+```bash
+python -m pip install -e ".[api,audio]"
+```
+
+Render start command:
+
+```bash
+python -m uvicorn conscious_entity.interfaces.api:app --host 0.0.0.0 --port $PORT
+```
+
+Netlify build command:
+
+```bash
+python3 scripts/build_netlify_arts.py
+```
+
+Netlify publish directory:
+
+```text
+tmp/netlify-arts-dist
+```
 
 ---
 
@@ -179,6 +212,14 @@ ENTITY_AUDIO_TTS_STREAM_TTL_SECONDS=120
 ENTITY_AUDIO_MAX_ACTIVE_SESSIONS=4
 ENTITY_AUDIO_QUEUE_MAX_CHUNKS=8
 ENTITY_AUDIO_ALLOW_DEBUG_RAW_TTS=0
+
+# Optional online public mode
+ONLINE_PUBLIC_MODE=0
+# OPERATOR_API_KEY=your_operator_secret
+# STRANGER_PUBLIC_ACCESS_CODE=your_shared_access_code
+# STRANGER_PUBLIC_TOKEN_SECRET=your_session_token_secret
+# STRANGER_PUBLIC_ALLOWED_ORIGINS=https://your-netlify-site.netlify.app
+# STRANGER_RENDER_BASE_URL=https://your-render-service.onrender.com
 ```
 
 ### 开发环境假设

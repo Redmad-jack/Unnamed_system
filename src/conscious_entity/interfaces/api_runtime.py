@@ -106,6 +106,8 @@ async def lifespan(app: Any):
 
     configs = load_all_configs(config_dir)
 
+    if str(db) != ":memory:":
+        db.parent.mkdir(parents=True, exist_ok=True)
     conn = get_connection(db, check_same_thread=False)
     run_migrations(conn)
 
@@ -170,6 +172,9 @@ async def lifespan(app: Any):
     try:
         yield
     finally:
+        public_session_manager = getattr(app.state, "public_session_manager", None)
+        if public_session_manager is not None:
+            await public_session_manager.close_all()
         if getattr(app.state, "body_bridge", None) is not None:
             await app.state.body_bridge.disconnect()
         if getattr(app.state, "loop", None) is not None:

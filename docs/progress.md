@@ -7,10 +7,10 @@
 ## 当前状态
 
 - 当前进行中：无
-- 当前可运行形态：CLI + 本地 FastAPI 开发者 API + Web 看板 + progressive text/audio NDJSON + 可选 Vision 面板 + 可选 Audio Adapter + `/visitor` 临时身体表面 + `/art` 情绪粒子身体表面 + ESP32-S3 下位机固件原型；观众侧最终呈现方向是身体，不是传统 UI
-- 当前核心能力：Stranger 文本协议、最高优先级艺术运行 context、热加载 prompt partial、本轮语言强制优先与错语言兜底、非否认式能力边界正向模板与输入通道防自我否认约束、含“恋旧” memory_gravity 的新心理状态机、带上一轮轻量 bridge 的 pre-memory 轻量 `first_unit` + 已说出口 first 去重续写的 memory-aware `second_unit` 按句文本/audio progressive 输出、main LLM 后端 streaming buffer、two-stage / sentence-queued TTS、短期/情节/反思记忆、匿名 visitor profile 与跨 session visitor 记忆召回、Visitor Identity & Session Gating V1（含结构化 match result / candidate confirmation 调试 API、保守自然确认解析、known high/medium candidate confirmation、unknown accepted face auto-provision、candidate TTL / turn expiry、主访客 track 锁、离开后 handoff、visitor memory permission 和开发者面板 auto-bind high confidence / handoff 开关）、本地 face signature capture / quality gate / 私有向量库 / historical matching / pre-turn/manual/background face identity capture / signature deactivate、可解释/可选 embedding 召回、Memory Preview、managed memory proposal → commit、influence log / curation、Runtime Harness Trace、JSONL 端到端 latency 日志、可选 YOLO person presence detection（含轻量 person track、camera index 扫描/切换与 Browser Camera fallback）、可选火山 ASR 2.0 / TTS 2.0 双向流式 Audio Adapter、开发者面板 Audio playback queue / watchdog / barge-in / next-stream prefetch 诊断
-- 当前验证基线：`.venv/bin/python -m pytest -p no:debugging`，最近一次完整结果为 `672 passed`
-- 当前交接重点：下一步不再优先扩展 UI；voice signature 与 face/voice combined confidence 暂列 P1 optional，P0 收束为 face-only visitor identity 的现场阈值校准、数据库污染测试和 visitor memory continuity 验证；行为测试与调优继续按 `docs/testlist.md` 执行
+- 当前可运行形态：CLI + 本地 FastAPI 开发者 API + Web 看板 + progressive text/audio NDJSON + 可选 Vision 面板 + 可选 Audio Adapter + `/visitor` 临时身体表面 + `/art` 情绪粒子身体表面 + Netlify `/arts` 公开交互静态包 + Render public API 配置 + ESP32-S3 下位机固件原型；观众侧最终呈现方向是身体，不是传统 UI
+- 当前核心能力：Stranger 文本协议、最高优先级艺术运行 context、热加载 prompt partial、本轮语言强制优先与错语言兜底、非否认式能力边界正向模板与输入通道防自我否认约束、含“恋旧” memory_gravity 的新心理状态机、带上一轮轻量 bridge 的 pre-memory 轻量 `first_unit` + 已说出口 first 去重续写的 memory-aware `second_unit` 按句文本/audio progressive 输出、main LLM 后端 streaming buffer、two-stage / sentence-queued TTS、短期/情节/反思记忆、匿名 visitor profile 与跨 session visitor 记忆召回、Visitor Identity & Session Gating V1（含结构化 match result / candidate confirmation 调试 API、保守自然确认解析、known high/medium candidate confirmation、unknown accepted face auto-provision、candidate TTL / turn expiry、主访客 track 锁、离开后 handoff、visitor memory permission 和开发者面板 auto-bind high confidence / handoff 开关）、线上 public nickname session/token 隔离、`ONLINE_PUBLIC_MODE` operator-only 保护、public STT/TTS stream ownership、本地 face signature capture / quality gate / 私有向量库 / historical matching / pre-turn/manual/background face identity capture / signature deactivate、可解释/可选 embedding 召回、Memory Preview、managed memory proposal → commit、influence log / curation、Runtime Harness Trace、JSONL 端到端 latency 日志、可选 YOLO person presence detection（含轻量 person track、camera index 扫描/切换与 Browser Camera fallback）、可选火山 ASR 2.0 / TTS 2.0 双向流式 Audio Adapter、开发者面板 Audio playback queue / watchdog / barge-in / next-stream prefetch 诊断
+- 当前验证基线：`python3 -m pytest -p no:debugging`，最近一次完整结果为 `698 passed`
+- 当前交接重点：线上 `/arts` 第一版已具备 Render + Netlify 配置，但仍需在真实 Render/Netlify 域名设置 `STRANGER_PUBLIC_ALLOWED_ORIGINS`、`STRANGER_RENDER_BASE_URL`、LLM 与火山凭证后做端到端 HTTPS/WSS 验收；Render Free 使用 `/tmp/stranger/memory.db` 只适合试运行。下一步不再优先扩展 UI；voice signature 与 face/voice combined confidence 暂列 P1 optional，P0 收束为 face-only visitor identity 的现场阈值校准、数据库污染测试和 visitor memory continuity 验证；行为测试与调优继续按 `docs/testlist.md` 执行
 - 当前硬件参考方案：`docs/references/hardware.md` 与 `docs/references/system_logic.md` 已更新为单 Stranger 移动身体方向：Mac mini 随身上位机 + 1 片 ESP32-S3 + TCA9548A + 当前固件 4 路 VL53L1X ToF + 三个 TCRT5000 `A0` + BNO085 SPI IMU + 四路有刷电机驱动 + 4 个 36JP555；`firmware/stranger_esp32s3` 已有 PlatformIO 下位机固件，包含串口协议、ToF telemetry / obstacle gate、BNO085 observation telemetry、TCRT 黑/白校准、line confidence / position / error、line gate、reacquire state、四路电机测试、4WD 差速底盘开环控制和 ESP32 本地低速 line-guided roam；Dashboard Hardware tab 已能通过 BodyBridge 做键盘 / Xbox 手柄 teleop，控制前必须显式开启对应 Teleop 开关；下一阶段硬件/运动待办重点是现场校准 TCRT 阈值、ToF 稳定性、IMU 控制接入和场馆 track-guided roam 策略
 - 当前注意事项：`AGENTS.md` 与 `CLAUDE.md` 有用户侧未提交差异；除非明确要求，不应在常规任务中触碰
 
@@ -71,6 +71,187 @@
 ---
 
 ## Changelog
+
+### 2026-06-08：Netlify `/arts` + Render public API 试运行配置
+
+- [x] 新增 `/api/v1/public/*` router：共享访问口令创建匿名 nickname session，signed `session_token` 访问 public state、progressive dialog、STT WebSocket 与 session-owned TTS stream
+- [x] 新增 `ONLINE_PUBLIC_MODE` 安全层：公网模式下除 `/health` 和 public API 外，现有 dashboard/docs/debug/config/memory/vision/body/audio 管理接口均需要 `OPERATOR_API_KEY`
+- [x] 新增 CORS / WebSocket Origin allowlist、public input/STT rate limit、session TTL 清理和 per-session `InteractionLoop` close；Render 启动前会创建 SQLite 父目录，支持 `ENTITY_DB_PATH=/tmp/stranger/memory.db`
+- [x] 新增 `web/arts` 静态前端、`scripts/build_netlify_arts.py` 和 `netlify.toml`：Netlify 发布 `/arts`，复用现有粒子 surface，提供访问口令、昵称、文本输入、浏览器麦克风 STT、TTS 播放和 public state 粒子反馈
+- [x] 同步 `.env.example`、`README.md`、`docs/TECH_STACK.md`、`docs/BACKEND_STRUCTURE.md`
+- [x] 验证：`python3 -m py_compile ...`、`node --check web/arts/app.js`、Netlify bundle build + generated JS syntax check、focused `tests/unit/test_api_security.py tests/unit/test_api_public.py`、Browser 桌面/移动 `/arts` 视觉加载检查、`git diff --check`、完整 `python3 -m pytest -p no:debugging`（`698 passed`）
+
+### 2026-06-06：流程图改为展览现场自动运行口径
+
+- [x] `docs/flowchart_workspace.html` 中项目技术流程图、CC-BOS 技术流程图、用户交互流程图和记忆系统子图统一改为美术馆现场 runtime 口径
+- [x] 移除图表主内容中的 `CLI / Dashboard`、developer side path、operator side path、Memory Preview / Curation、archive / restore 等开发调试态或人工干预表达
+- [x] 将输入改写为观众 / 展场 / 身体侧输入，将记忆系统改写为自动 proposal、automatic commit gate、automatic influence preview、retrieval 和 influence log
+- [x] 验证：HTML parser、inline JS 语法、`tidy` 结构错误检查、`git diff --check`、8 个 hash 路由本地 DOM 渲染与残留开发/人工干预词检查均通过
+
+### 2026-06-06：记忆系统子图平滑箭头
+
+- [x] `docs/flowchart_workspace.html` 中记忆系统子图启用 `edgeStyle: "smooth"`，普通图表仍保留原有折线风格
+- [x] 连线渲染新增三次贝塞尔曲线和圆角手动路径，记忆图长连接线仍绕开节点，但视觉上改为平滑箭头
+- [x] 验证：HTML parser、inline JS 语法、`tidy` 结构错误检查、`git diff --check`、`#memory/main/zh` / `#memory/main/en` 本地 DOM 曲线路径模拟均通过
+
+### 2026-06-06：记忆系统子图可读性修正
+
+- [x] 修正 `docs/flowchart_workspace.html` 里 `#memory/main/zh` 与 `#memory/main/en` 的节点文字溢出：记忆子图节点改用 SVG `foreignObject` + HTML 文本块渲染，英文长句可在节点内换行
+- [x] 加宽记忆系统子图画布与节点，重排主要节点坐标，并把多条跨区连接线改为手动正交绕线路径，减少箭头重合和穿插
+- [x] 验证：
+  - `python3` HTML parser 解析统一页和 5 个旧入口页通过
+  - inline JS 静态语法检查通过
+  - `tidy -qe -utf8 docs/flowchart_workspace.html` 无结构性 `Error:`
+  - `git diff --check -- docs/flowchart_workspace.html docs/progress.md agents/task-registry.md`
+  - 本地 DOM 执行验证 `#memory/main/zh` 和 `#memory/main/en` 路由、版本栏隐藏、SVG `foreignObject` 渲染、手动绕线路径和编辑 key 均通过
+
+### 2026-06-06：记忆系统子图
+
+- [x] `docs/flowchart_workspace.html` 新增第三类图表：`记忆系统子图 / Memory System Subdiagram`
+- [x] 新增 hash 路由：`#memory/main/zh`、`#memory/main/en`；该图隐藏版本选择，仅保留语言切换
+- [x] 子图单独展开记忆机制：当前输入、感知解析、短期记忆、情节记忆、反思摘要、managed memory proposal / commit、visitor scope gate、preview influence、policy / retrieval、expression context、influence log 与 curation
+- [x] 新增子图沿用统一页编辑能力，SVG 文字和下方说明卡片都可编辑并保存到当前浏览器 localStorage
+- [x] 验证：
+  - `python3` HTML parser 解析统一页和 5 个旧入口页通过
+  - inline JS 静态语法检查通过
+  - `tidy -qe -utf8 docs/flowchart_workspace.html` 无结构性 `Error:`
+  - `git diff --check`
+  - 本地 DOM 执行验证 `#memory/main/zh` 和 `#memory/main/en` 路由、版本栏隐藏、SVG 渲染、编辑 key 均通过
+
+### 2026-06-05：统一流程图全页面编辑能力
+
+- [x] `docs/flowchart_workspace.html` 的编辑功能从 CC-BOS 专用扩展为所有图通用：普通技术流程图、CC-BOS 技术流程图、用户交互流程图的中英文版本都可编辑
+- [x] SVG 内文字继续通过右下角编辑面板修改；普通 HTML 标题、说明和说明卡片在编辑模式下可直接改文字
+- [x] 本地保存 key 升级为 `stranger-flowchart-viewer-edits-v2`，并兼容迁移旧的 CC-BOS 本地编辑记录
+- [x] `重置修改` 改为只清除当前图 / 当前语言的本地修改，不影响其他图和其他语言版本
+- [x] 验证：
+  - `python3` HTML parser 解析统一页和 5 个旧入口页通过
+  - inline JS 静态语法检查通过
+  - `tidy -qe -utf8 docs/flowchart_workspace.html` 无结构性 `Error:`
+  - `git diff --check`
+  - 本地 DOM 执行验证 6 个 hash 路由均显示编辑入口，SVG / HTML 文本均带编辑 key，当前图 scoped reset 不会清除其他图修改
+
+### 2026-06-05：统一流程图 HTML 查看器
+
+- [x] `docs/flowchart_workspace.html` 从可拖动块工作台改为统一成品图查看器，默认打开 `项目技术流程图 / 普通版 / 中文`
+- [x] 页面顶部新增层级选择：图表类型、项目技术版本、语言；用户交互流程图下自动隐藏版本选择
+- [x] 整合 6 个 hash 路由：`#technical/standard/zh`、`#technical/standard/en`、`#technical/ccbos/zh`、`#technical/ccbos/en`、`#interaction/main/zh`、`#interaction/main/en`
+- [x] 普通项目技术流程图、CC-BOS 项目技术流程图、用户交互流程图全部迁入统一 HTML；CC-BOS 版本保留页面内编辑和 `localStorage` 保存 / 重置能力
+- [x] 旧入口 `project_technical_flow*.html` 与 `user_interaction_flow*.html` 改为兼容跳转页，分别定位到统一页对应 hash
+- [x] 验证：
+  - `python3` HTML parser 解析统一页和 5 个旧入口页通过
+  - inline JS 静态语法检查通过
+  - `tidy -qe -utf8 docs/flowchart_workspace.html` 无结构性 `Error:`；本机 2006 版 tidy 仍对 HTML5 属性和 JS 模板字符串给出 warning
+  - `git diff --check`
+  - 本地 DOM 执行验证默认路由、6 个 hash 路由、旧入口目标、版本栏显隐、SVG 生成和 CC-BOS 编辑入口均通过
+  - 内置 Browser 因安全策略拒绝直接访问本地 `file://` 页面，未执行实页截图验证
+
+### 2026-06-05：流程图工作台可读性整理
+
+- [x] `docs/flowchart_workspace.html` 默认布局改为主线从左到右阅读：交互流程图和技术流程图的核心节点都按顺序递进，运营者 / 身体输出旁路放在下方或后段
+- [x] 连线绘制从弯曲贝塞尔线改为直角折线，减少大回勾、长斜线和跨画布曲线
+- [x] 浏览器本地存储 key 升级到 `stranger-flowchart-workspace-v2`，避免旧的混乱坐标继续覆盖新的默认布局
+- [x] 验证：
+  - `python3` HTML parser 解析通过
+  - `node --check tmp/flowchart_workspace_inline.js`
+  - `git diff --check -- docs/flowchart_workspace.html agents/task-registry.md docs/progress.md`
+  - 本地 DOM 执行验证交互 / 技术 × 中文 / English 四个默认图均渲染为折线，节点与边数量正确，无明显向左回退的主流程连接；节点编辑与拖动仍可用
+  - in-app Browser 可识别当前 `file://` 标签，但刷新本地文件时被 Browser 安全策略拒绝，因此未做刷新后的浏览器截图
+
+### 2026-06-05：交互 / 技术流程图统一工作台
+
+- [x] 新增 `docs/flowchart_workspace.html`，在同一个 HTML 工作台中通过下拉框切换“用户交互流程图 / 技术流程图”和“中文 / English”
+- [x] `docs/user_interaction_flow.html` 改为统一工作台入口页，刷新当前旧用户交互流程图 URL 会跳转到 `docs/flowchart_workspace.html`
+- [x] 工作台支持编辑块标题与正文、拖动画布块、复制 / 新增 / 删除块、新增 / 更新 / 删除连接，并将当前图的修改保存在浏览器 `localStorage`
+- [x] 右侧面板提供当前图 JSON 导出、复制、导入和重置，便于把编辑后的流程图拿到页面外继续使用
+- [x] 验证：
+  - `python3` HTML parser 解析通过
+  - `node --check tmp/flowchart_workspace_inline.js`
+  - `git diff --check -- docs/flowchart_workspace.html agents/task-registry.md docs/progress.md`
+  - 使用本地 DOM 仿真验证图表切换、语言切换、节点文字编辑、节点拖动、新增 / 删除节点、新增 / 更新 / 删除连接、JSON 数据结构
+  - 内置 Browser 因安全策略拒绝直接访问本地 `file://` 页面，未做 in-app Browser 实页交互；保留页面截图 `tmp/flowchart_workspace_1440.png` 作为视觉检查参考
+
+### 2026-06-05：用户交互流程图中英文分版
+
+- [x] 新增纯英文版 `docs/user_interaction_flow_en.html`，所有可见文本均为英文
+- [x] 新增纯中文版 `docs/user_interaction_flow_zh.html`，所有可见文本均为中文，并将技术缩写改写为中文说明
+- [x] 两版均保留完整交互路径：观众与空间、输入与感知、身份与会话门控、核心交互回合、身体呈现、运营者旁路、单次回合细节和关键边界
+- [x] 验证：
+  - `python3` HTML parser 解析通过
+  - 可见文本语言检查：英文版无中文字符，中文版无英文字母
+  - `git diff --check -- docs/user_interaction_flow_en.html docs/user_interaction_flow_zh.html agents/task-registry.md docs/progress.md`
+  - Chrome headless 渲染截图：`tmp/user_interaction_flow_en_1440.png`、`tmp/user_interaction_flow_zh_1440.png`、`tmp/user_interaction_flow_en_mobile.png`、`tmp/user_interaction_flow_zh_mobile.png`
+
+### 2026-06-04：CC-BOS 技术流程图交互增强
+
+- [x] `docs/project_technical_flow_ccbos.html` 新增中英切换：页面标题、说明、主 SVG 流程图标签、图例和下方说明卡片均可在中文 / English 之间切换
+- [x] 新增页面内编辑模式：HTML 文本可直接编辑，SVG 图中文字可点击后在页面编辑面板中修改；修改内容保存在当前浏览器 `localStorage`，并提供重置修改按钮
+- [x] 验证：
+  - `python3` HTML parser 解析通过
+  - `node --check tmp/project_technical_flow_ccbos_inline.js`
+  - `tidy -q -e -utf8 --new-blocklevel-tags ... docs/project_technical_flow_ccbos.html` 过滤真实结构问题后无 error
+  - Chrome DevTools 临时 profile 交互验证：英文切换、编辑 SVG 标签、本地保存、重置、切回中文均通过
+  - Chrome headless 渲染截图：`tmp/project_technical_flow_ccbos_tools_1440.png`、`tmp/project_technical_flow_ccbos_tools_mobile.png`、`tmp/project_technical_flow_ccbos_tools_english_1440.png`
+
+### 2026-06-04：用户交互流程图 HTML
+
+- [x] 新增 `docs/user_interaction_flow.html`，用静态 HTML/CSS/SVG 绘制完整用户交互流程图，覆盖观众靠近 / 停留 / 说话 / 插话 / 离开 / 返回、输入与感知入口、Identity & Session Gating、核心 turn loop、身体呈现与运营者旁路
+- [x] 图中明确当前边界：presence 不等于对话意图；known high / medium candidate 未确认前不读取 visitor-scoped memory；当前 V1 仍是单 primary visitor session；运营者面板不是观众侧呈现
+- [x] 验证：
+  - `python3` HTML parser 解析通过
+  - `git diff --check -- docs/user_interaction_flow.html agents/task-registry.md docs/progress.md`
+  - Chrome headless 渲染桌面与窄屏截图：`tmp/user_interaction_flow_1440.png`、`tmp/user_interaction_flow_mobile.png`
+
+### 2026-06-04：CC-BOS live 输入链路修正
+
+- [x] 按用户确认，将 `docs/project_technical_flow_ccbos.html` 从此前的“离线研究 / 红队测试支路”修正为 live 输入链路版本
+- [x] 新链路明确为：直接文本 / STT final transcript → Text Normalizer → Safety / Constitution Gate → CC-BOS Transform → Identity / Perception → State / Memory / Policy / Expression → 文字、声音、视觉身体表面与 Motion Intent 输出
+- [x] Safety / Constitution Gate 固定在 CC-BOS 之前；不合规输入进入 Reject / Hold，不进入 CC-BOS，也不进入后续模型表达链路
+- [x] 验证：
+  - `python3` HTML parser 解析两个保留技术流程图通过
+  - `tidy -q -e -utf8 --new-blocklevel-tags ... docs/project_technical_flow_ccbos.html` 过滤真实结构问题后无 error
+  - `git diff --check`
+  - Chrome headless 渲染截图：`tmp/project_technical_flow_ccbos_live_1440.png`、`tmp/project_technical_flow_ccbos_live_mobile.png`
+
+### 2026-06-04：技术流程图版本收束
+
+- [x] 按用户要求只保留两个 HTML 技术流程图版本：
+  - `docs/project_technical_flow.html`：不带 CC-BOS 的正常系统流程图
+  - `docs/project_technical_flow_ccbos.html`：带 CC-BOS live 输入改写链路的系统流程图
+- [x] 删除此前误写的 `docs/project_technical_flow_ccboost.html`，避免和正确的 `CC-BOS` 项目混淆
+- [x] 验证：
+  - `ls docs/project_technical_flow*.html`
+  - `python3` HTML parser 解析两个保留文件通过
+  - `git diff --check`
+
+### 2026-06-04：CC-BOS 项目定位修正
+
+- [x] 用户确认目标项目为 `xunhuang123/CC-BOS`，不是此前误写的 `CC Boost`
+- [x] 依据项目 README，将 CC-BOS 定位修正为 adversarial / jailbreak prompt 优化研究项目，而不是普通模型网关或 runtime adapter；后续已按用户确认把图中位置改为 live 输入链路中的受控改写步骤
+- [x] 旧版曾将 CC-BOS 画成离线红队 / 鲁棒性测试支路；该口径已由上方“CC-BOS live 输入链路修正”替换
+- [x] 验证：
+  - `python3` HTML parser 解析通过
+  - `tidy -q -e -utf8 --new-blocklevel-tags ... docs/project_technical_flow_ccbos.html` 过滤真实结构问题后无 error
+  - Chrome headless 渲染桌面与窄屏截图：`tmp/project_technical_flow_ccbos_1440.png`、`tmp/project_technical_flow_ccbos_mobile.png`
+
+### 2026-06-04：技术流程图重画
+
+- [x] 将 `docs/project_technical_flow.html` 从资料索引式块状页面重画为论文/技术展示式流程图
+- [x] 新版只保留主流程相关内容：输入层、适配/识别、身份与感知、核心 turn loop、表达输出、身体/硬件执行，以及一张 turn loop 放大图
+- [x] 移除旧页中与用户需求无关的“代码与数据”“安全边界”“当前范围与文档差异”等章节
+- [x] 验证：
+  - `python3` HTML parser 解析通过
+  - `tidy -q -e -utf8 --new-blocklevel-tags ... docs/project_technical_flow.html` 过滤真实结构问题后无 error
+  - Chrome headless 渲染桌面与窄屏截图：`tmp/project_technical_flow_redrawn_1440.png`、`tmp/project_technical_flow_redrawn_mobile.png`
+
+### 2026-06-04：项目技术逻辑图 HTML
+
+- [x] 新增 `docs/project_technical_flow.html`，用静态 HTML/CSS 绘制当前项目完整技术逻辑图，覆盖输入/观察、FastAPI adapter、核心 turn loop、数据/治理、表达呈现、移动身体/硬件安全链路
+- [x] 图中明确当前口径：`docs/IMPLEMENTATION_PLAN.md` 为历史归档；当前 P0 以 face-only visitor identity 现场验收为主，voice signature 暂列 P1 optional
+- [x] 验证：
+  - `python3` HTML parser 解析通过
+  - `tidy -q -e -utf8 --new-blocklevel-tags main,section,article,header,nav,aside docs/project_technical_flow.html` 过滤真实结构问题后无 `Error` / unescaped entity
+  - Chrome headless 渲染桌面与窄屏截图：`tmp/project_technical_flow_1440.png`、`tmp/project_technical_flow_mobile.png`
 
 ### 2026-05-29：Dashboard 状态运动 / 粒子调试入口
 

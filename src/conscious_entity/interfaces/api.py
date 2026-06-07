@@ -25,6 +25,8 @@ from conscious_entity.interfaces.api_audio import (
     audio_tts_http_stream,
     audio_tts_ws_stream,
 )
+from conscious_entity.interfaces.api_public import public_router
+from conscious_entity.interfaces.api_security import OnlinePublicModeMiddleware, configure_cors
 from conscious_entity.interfaces.api_models import (
     AudioDebugTTSRequest,
     AudioDialogRequest,
@@ -200,4 +202,7 @@ app = FastAPI(
 )
 app.include_router(router)
 app.include_router(audio_router)
+app.include_router(public_router)
 app.mount("/static", DevStaticFiles(directory=str(_static_dir())), name="static")
+app.add_middleware(OnlinePublicModeMiddleware)
+configure_cors(app)

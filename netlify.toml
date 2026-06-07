@@ -1,0 +1,30 @@
+[build]
+  command = "python3 scripts/build_netlify_arts.py"
+  publish = "tmp/netlify-arts-dist"
+
+[[redirects]]
+  from = "/"
+  to = "/arts/"
+  status = 302
+
+[[redirects]]
+  from = "/arts"
+  to = "/arts/"
+  status = 301
+
+[[redirects]]
+  from = "/arts/*"
+  to = "/arts/index.html"
+  status = 200
+
+[[headers]]
+  for = "/*"
+  [headers.values]
+    X-Content-Type-Options = "nosniff"
+    X-Frame-Options = "DENY"
+    Referrer-Policy = "strict-origin-when-cross-origin"
+
+[[headers]]
+  for = "/arts/*"
+  [headers.values]
+    Cache-Control = "no-store, max-age=0"

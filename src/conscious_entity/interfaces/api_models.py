@@ -9,6 +9,16 @@ class DialogRequest(BaseModel):
     text: str
 
 
+class PublicSessionStartRequest(BaseModel):
+    access_code: str
+    nickname: str
+
+
+class PublicDialogRequest(BaseModel):
+    text: str
+    input_mode: str = "text"
+
+
 class AudioDialogRequest(BaseModel):
     transcript: str
     audio_session_id: Optional[str] = None

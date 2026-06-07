@@ -263,6 +263,38 @@ ENTITY_VOLCENGINE_TTS_VOICE_TYPE=your_volcengine_voice_type_here
 ENTITY_AUDIO_OUTPUT_FORMAT=mp3
 ```
 
+**公开 `/arts` 试运行部署（Render + Netlify）：**
+
+当前公开线上版不是开发者 dashboard。Netlify 发布静态 `/arts` 页面；FastAPI 部署到 Render，只开放 `POST /api/v1/public/session/start`、`GET /api/v1/public/state`、`POST /api/v1/public/dialog/progressive`、public STT WebSocket 和 public TTS stream。视觉、人脸识别、声纹识别、memory curation、prompt/config/debug trace 不对观众开放。
+
+Render:
+
+```bash
+python -m pip install -e ".[api,audio]"
+python -m uvicorn conscious_entity.interfaces.api:app --host 0.0.0.0 --port $PORT
+```
+
+Render 主要环境变量：
+
+```env
+ENTITY_DB_PATH=/tmp/stranger/memory.db
+ENTITY_EMBEDDING_MODE=disabled
+ENTITY_AUDIO_PROVIDER=volcengine
+ENTITY_AUDIO_ENABLED=1
+ONLINE_PUBLIC_MODE=1
+STRANGER_PUBLIC_ACCESS_CODE=your_shared_access_code
+STRANGER_PUBLIC_ALLOWED_ORIGINS=https://your-netlify-site.netlify.app
+OPERATOR_API_KEY=your_operator_secret
+```
+
+Netlify:
+
+```env
+STRANGER_RENDER_BASE_URL=https://your-render-service.onrender.com
+```
+
+Netlify build command 为 `python3 scripts/build_netlify_arts.py`，publish directory 为 `tmp/netlify-arts-dist`。Render Free 可用于第一版试运行，但会休眠、冷启动，并且 `/tmp/stranger/memory.db` 在重启或重新部署后可能丢失，不应承诺长期记忆持久化。
+
 Web 看板顶部的 `Save Dialog` 会把当前 session 的对话导出为 JSON。也可以直接访问：
 
 ```text

@@ -1,0 +1,68 @@
+services:
+  - type: web
+    name: stranger-api
+    runtime: python
+    plan: free
+    buildCommand: python -m pip install -e ".[api,audio]"
+    startCommand: python -m uvicorn conscious_entity.interfaces.api:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: ENTITY_DB_PATH
+        value: /tmp/stranger/memory.db
+      - key: ENTITY_CONFIG_DIR
+        value: config/
+      - key: ENTITY_PROMPTS_DIR
+        value: prompts/
+      - key: ENTITY_LOG_LEVEL
+        value: INFO
+      - key: ENTITY_LLM_DISABLE_SYSTEM_PROXY
+        value: "1"
+      - key: ENTITY_EMBEDDING_MODE
+        value: disabled
+      - key: ENTITY_AUDIO_PROVIDER
+        value: volcengine
+      - key: ENTITY_AUDIO_ENABLED
+        value: "1"
+      - key: ONLINE_PUBLIC_MODE
+        value: "1"
+      - key: ENTITY_VOLCENGINE_AUTH_MODE
+        value: api_key
+      - key: ENTITY_VOLCENGINE_STT_ENDPOINT
+        value: wss://openspeech.bytedance.com/api/v3/sauc/bigmodel_async
+      - key: ENTITY_VOLCENGINE_STT_RESOURCE_ID
+        value: volc.seedasr.sauc.concurrent
+      - key: ENTITY_VOLCENGINE_TTS_ENDPOINT
+        value: wss://openspeech.bytedance.com/api/v3/tts/bidirection
+      - key: ENTITY_VOLCENGINE_TTS_RESOURCE_ID
+        value: seed-icl-2.0
+      - key: ENTITY_AUDIO_OUTPUT_FORMAT
+        value: mp3
+      - key: ENTITY_AUDIO_TTS_SAMPLE_RATE
+        value: "24000"
+      - key: ENTITY_AUDIO_TTS_MAX_SEGMENT_BYTES
+        value: "800"
+      - key: ENTITY_AUDIO_TTS_STREAM_TTL_SECONDS
+        value: "120"
+      - key: ENTITY_AUDIO_MAX_ACTIVE_SESSIONS
+        value: "4"
+      - key: ENTITY_AUDIO_QUEUE_MAX_CHUNKS
+        value: "8"
+      - key: ENTITY_AUDIO_ALLOW_DEBUG_RAW_TTS
+        value: "0"
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: ANTHROPIC_BASE_URL
+        sync: false
+      - key: ENTITY_LLM_MODEL
+        sync: false
+      - key: ENTITY_VOLCENGINE_API_KEY
+        sync: false
+      - key: ENTITY_VOLCENGINE_TTS_VOICE_TYPE
+        sync: false
+      - key: STRANGER_PUBLIC_ACCESS_CODE
+        sync: false
+      - key: STRANGER_PUBLIC_TOKEN_SECRET
+        sync: false
+      - key: STRANGER_PUBLIC_ALLOWED_ORIGINS
+        sync: false
+      - key: OPERATOR_API_KEY
+        sync: false
