@@ -161,6 +161,11 @@
 - 原因：现场调试常会关闭周期 telemetry 来避免刷屏，此时 `arm`、`disarm`、`avoidance off`、`line off` 等命令虽然已执行，Dashboard 仍可能显示旧状态，误导为后端或硬件失效。
 - 如何应用：新增硬件命令时同步检查 ack payload、`BodyTelemetryStore` 状态映射、Dashboard blocker 提示和单元测试。
 
+**L38：线上 public 入口必须覆盖当前场景语境**
+- 规则：public `/arts`、远程网页或其他非现场入口不能只复用全局展厅 runtime context；必须通过 session / turn metadata 给表达 prompt 注入当前 placement override。
+- 原因：`stranger_runtime_context.md` 保留了实体美术馆语境，远程访客如果没有更高优先级的当前场景提示，模型会回答“我在 gallery / 美术馆里看人移动”。
+- 如何应用：新增入口时先定义 `source`、`input_mode` 和 placement metadata；first_unit 与 main response 都要能读取同一 metadata，并增加非 public session 不受影响的 prompt contract 测试。
+
 **L17：跨 session 记忆必须有 visitor scope**
 - 规则：不能依赖 `session_type` 或全局池去模拟“同一个访客”的连续性；跨 session 的个人事实、关系线索和回返感必须经过显式 `visitor_id` 绑定
 - 原因：否则一个访客说过的事实会在另一个访客处泄漏，或者像“K 是谁”这类旧会话事实在新 session 中无法稳定召回

@@ -448,6 +448,7 @@ class ExpressionEngine:
         state: EntityState,
         events: list[Any] | None = None,
         short_term: ShortTermMemory | None = None,
+        turn_metadata: dict[str, Any] | None = None,
     ) -> str:
         """
         Generate the fast first unit before memory preview or retrieval.
@@ -463,6 +464,7 @@ class ExpressionEngine:
             events=events or [],
             style=style,
             short_term=short_term,
+            turn_metadata=turn_metadata,
         )
         try:
             with turn_step(

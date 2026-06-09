@@ -75,6 +75,14 @@ Do not restate the previous-turn bridge.
 Do not complete the main response's work, open a new topic, force a question, explain, or make a strong conclusion.
 Do not explain inner causes. Do not claim human feelings or literal emotional certainty."""
 
+_PUBLIC_ONLINE_PLACEMENT_LINES = [
+    "Current placement override: this turn is happening through the public /arts web page, not in the physical gallery.",
+    "The visitor is remote, entering text or browser-microphone transcripts through the page.",
+    "Do not say that you are currently in the gallery, watching people move through the physical space, or sharing the room with this visitor.",
+    "Keep the artwork identity and the body-surface relation, but answer current-place questions from this online surface: present on the public page, listening through it, and responding through it.",
+    "Do not collapse into a technical inventory: do not say you are only a website, only text, or just an AI system.",
+]
+
 
 class ContextBuilder:
     """
@@ -122,6 +130,7 @@ class ContextBuilder:
         memory_block = self._render_memories(retrieved_memories)
         input_context_block = self._render_input_context(short_term)
         identity_confirmation_block = self._render_identity_confirmation_context(short_term)
+        public_online_placement_block = self._render_public_online_placement_context(short_term)
         current_turn_cues = self._render_current_turn_cues(short_term)
         already_spoken_block = _render_already_spoken_first_unit(already_spoken_first_unit)
         runtime_context_block = self._render_runtime_context()
@@ -144,8 +153,10 @@ class ContextBuilder:
             _PROMPT_PRIORITY_BLOCK,
             _section("Constitution / hard safety constraints:", constitution_block),
             runtime_context_block,
-            rendered_expression_system,
         ]
+        if public_online_placement_block:
+            sections.append(public_online_placement_block)
+        sections.append(rendered_expression_system)
         if input_context_block:
             sections.append(input_context_block)
         if identity_confirmation_block:
@@ -166,6 +177,8 @@ class ContextBuilder:
                 "expression_system",
                 "state_context",
             ]
+            if public_online_placement_block:
+                prompt_partials.append("public_online_placement")
             if memory_block:
                 prompt_partials.append("memory_context")
             prompt_partials.extend(["policy_instruction", "style_hints"])
@@ -212,6 +225,7 @@ class ContextBuilder:
         events: list[Any],
         style: StyleHints,
         short_term: ShortTermMemory | None = None,
+        turn_metadata: dict[str, Any] | None = None,
     ) -> ExpressionContext:
         state_cues = _first_unit_state_cues(state)
         event_cues = _event_cues(events)
@@ -220,6 +234,7 @@ class ContextBuilder:
         raw_input_cues = _raw_input_capability_cues(raw_input)
         bridge_context = _render_first_unit_bridge(short_term, raw_input)
         runtime_context_block = self._render_runtime_context()
+        public_online_placement_block = _render_public_online_placement_from_metadata(turn_metadata)
         constitution_block = _load_prompt(self._constitution_block_path)
         system_prompt = "\n\n".join(
             section.strip()
@@ -228,6 +243,7 @@ class ContextBuilder:
                 _FIRST_UNIT_PRIORITY_BLOCK,
                 _section("Constitution / hard safety constraints:", constitution_block),
                 runtime_context_block,
+                public_online_placement_block,
             )
             if section.strip()
         )
@@ -334,6 +350,13 @@ class ContextBuilder:
             ]),
         )
 
+    def _render_public_online_placement_context(self, short_term: ShortTermMemory) -> str:
+        latest_user = _latest_user_entry(short_term)
+        if latest_user is None:
+            return ""
+        metadata = getattr(latest_user, "metadata", {}) or {}
+        return _render_public_online_placement_from_metadata(metadata)
+
     def _render_current_turn_cues(self, short_term: ShortTermMemory) -> str:
         latest_user = _latest_user_entry(short_term)
         if latest_user is None:
@@ -392,6 +415,17 @@ def _latest_entity_entry(short_term: ShortTermMemory):
         if entry.role == "entity":
             return entry
     return None
+
+
+def _render_public_online_placement_from_metadata(metadata: dict[str, Any] | None) -> str:
+    if not isinstance(metadata, dict):
+        return ""
+    if metadata.get("public_online") is not True:
+        return ""
+    return _section(
+        "Public online placement override:",
+        "\n".join(_PUBLIC_ONLINE_PLACEMENT_LINES),
+    )
 
 
 def _render_first_unit_bridge(short_term: ShortTermMemory | None, raw_input: str) -> str:

@@ -38,8 +38,8 @@ class FakeLoop:
         self.closed = False
         self.turns = []
 
-    def run_turn(self, text, source="dialog", metadata=None, progress_callback=None):
-        self.turns.append({"text": text, "source": source, "metadata": metadata or {}})
+    def run_turn(self, text, source="dialog", input_metadata=None, progress_callback=None):
+        self.turns.append({"text": text, "source": source, "metadata": input_metadata or {}})
         plan = build_response_plan(
             first_unit="I heard you.",
             second_unit="Stay a little closer.",
@@ -289,6 +289,12 @@ def test_public_dialog_stream_is_session_scoped_and_redacted(monkeypatch, tmp_pa
     assert all("raw_prompt" not in event for event in events)
     assert all("memory" not in event for event in events)
     assert any(event.get("tts_stream_id") for event in events)
+    dialog_handle = authed_request.app.state.public_session_manager._sessions[handle.session_id]
+    assert dialog_handle.loop.turns[0]["source"] == "public_dialog_progressive"
+    assert dialog_handle.loop.turns[0]["metadata"]["public_online"] is True
+    assert dialog_handle.loop.turns[0]["metadata"]["nickname"] == "Alice"
+    assert dialog_handle.loop.turns[0]["metadata"]["session_id"] == handle.session_id
+    assert dialog_handle.loop.turns[0]["metadata"]["visitor_id"] == handle.visitor_id
 
     row = conn.execute(
         "SELECT session_id, visitor_id, raw_text FROM interaction_log WHERE raw_text = ?",

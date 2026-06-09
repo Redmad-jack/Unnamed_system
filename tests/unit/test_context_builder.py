@@ -214,6 +214,39 @@ class TestSystemPromptInvariants:
         assert "The state layer decides this turn's tone" in ctx.system_prompt
         assert "The policy layer decides this turn's response action" in ctx.system_prompt
 
+    def test_public_online_session_injects_current_placement_override(self, builder):
+        mem = ShortTermMemory(max_turns=10)
+        mem.add(ShortTermEntry(
+            role="user",
+            content="What are you doing?",
+            timestamp=datetime.now(timezone.utc),
+            metadata={"public_online": True, "input_mode": "text"},
+        ))
+
+        ctx = builder.build(EntityState(), _decision(), _style(), mem, [])
+
+        assert "Public online placement override:" in ctx.system_prompt
+        assert "public /arts web page, not in the physical gallery" in ctx.system_prompt
+        assert "The visitor is remote" in ctx.system_prompt
+        assert "Do not say that you are currently in the gallery" in ctx.system_prompt
+        runtime_idx = ctx.system_prompt.index("Stranger runtime context:")
+        online_idx = ctx.system_prompt.index("Public online placement override:")
+        state_idx = ctx.system_prompt.index("Private state guidance")
+        assert runtime_idx < online_idx < state_idx
+
+    def test_non_public_session_does_not_inject_online_placement_override(self, builder):
+        mem = ShortTermMemory(max_turns=10)
+        mem.add(ShortTermEntry(
+            role="user",
+            content="你现在在哪里？",
+            timestamp=datetime.now(timezone.utc),
+            metadata={"input_mode": "text"},
+        ))
+
+        ctx = builder.build(EntityState(), _decision(), _style(), mem, [])
+
+        assert "Public online placement override:" not in ctx.system_prompt
+
     def test_system_prompt_contains_markdown_and_no_topic_depth_expansion_rules(self, builder):
         ctx = builder.build(EntityState(), _decision(), _style(), _empty_memory(), [])
         assert "Do not use Markdown formatting" in ctx.system_prompt
@@ -749,6 +782,19 @@ class TestFirstUnitPrompt:
         assert "I am truly angry" not in ctx.system_prompt
         assert "Available memory material" not in ctx.raw_prompt
         assert "retrieved" not in ctx.raw_prompt.lower()
+
+    def test_first_unit_prompt_includes_public_online_placement_from_turn_metadata(self, builder):
+        ctx = builder.build_first_unit(
+            raw_input="What are you doing?",
+            state=EntityState(),
+            events=[],
+            style=_style(),
+            turn_metadata={"public_online": True, "source": "public_dialog_progressive"},
+        )
+
+        assert "Public online placement override:" in ctx.system_prompt
+        assert "public /arts web page, not in the physical gallery" in ctx.system_prompt
+        assert "Do not say that you are currently in the gallery" in ctx.system_prompt
 
     def test_first_unit_prompt_gets_capability_and_detail_input_cues(self, builder):
         ctx = builder.build_first_unit(

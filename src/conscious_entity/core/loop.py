@@ -278,6 +278,7 @@ class InteractionLoop:
                                 new_state,
                                 events,
                                 short_term=self._short_term,
+                                turn_metadata=turn_metadata,
                             )
                         else:
                             first_unit = ""
@@ -288,6 +289,7 @@ class InteractionLoop:
                             new_state,
                             events,
                             short_term=self._short_term,
+                            turn_metadata=turn_metadata,
                         )
                     first_style = self._style_mapper.map(
                         new_state,

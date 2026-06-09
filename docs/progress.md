@@ -7,10 +7,10 @@
 ## 当前状态
 
 - 当前进行中：无
-- 当前可运行形态：CLI + 本地 FastAPI 开发者 API + Web 看板 + progressive text/audio NDJSON + 可选 Vision 面板 + 可选 Audio Adapter + `/visitor` 临时身体表面 + `/art` 情绪粒子身体表面 + Netlify `/arts` 公开交互静态包 + Render public API 配置 + ESP32-S3 下位机固件原型；观众侧最终呈现方向是身体，不是传统 UI
-- 当前核心能力：Stranger 文本协议、最高优先级艺术运行 context、热加载 prompt partial、本轮语言强制优先与错语言兜底、非否认式能力边界正向模板与输入通道防自我否认约束、含“恋旧” memory_gravity 的新心理状态机、带上一轮轻量 bridge 的 pre-memory 轻量 `first_unit` + 已说出口 first 去重续写的 memory-aware `second_unit` 按句文本/audio progressive 输出、main LLM 后端 streaming buffer、two-stage / sentence-queued TTS、短期/情节/反思记忆、匿名 visitor profile 与跨 session visitor 记忆召回、Visitor Identity & Session Gating V1（含结构化 match result / candidate confirmation 调试 API、保守自然确认解析、known high/medium candidate confirmation、unknown accepted face auto-provision、candidate TTL / turn expiry、主访客 track 锁、离开后 handoff、visitor memory permission 和开发者面板 auto-bind high confidence / handoff 开关）、线上 public nickname session/token 隔离、`ONLINE_PUBLIC_MODE` operator-only 保护、public STT/TTS stream ownership、本地 face signature capture / quality gate / 私有向量库 / historical matching / pre-turn/manual/background face identity capture / signature deactivate、可解释/可选 embedding 召回、Memory Preview、managed memory proposal → commit、influence log / curation、Runtime Harness Trace、JSONL 端到端 latency 日志、可选 YOLO person presence detection（含轻量 person track、camera index 扫描/切换与 Browser Camera fallback）、可选火山 ASR 2.0 / TTS 2.0 双向流式 Audio Adapter、开发者面板 Audio playback queue / watchdog / barge-in / next-stream prefetch 诊断
+- 当前可运行形态：CLI + 本地 FastAPI 开发者 API + Web 看板 + progressive text/audio NDJSON + 可选 Vision 面板 + 可选 Audio Adapter + `/visitor` 临时身体表面 + `/art` 情绪粒子身体表面 + Netlify `/arts` 公开交互站点（`https://stranger-arts.netlify.app/arts`）+ Render public API 后端（`https://stranger-api-gqws.onrender.com`）+ ESP32-S3 下位机固件原型；观众侧最终呈现方向是身体，不是传统 UI
+- 当前核心能力：Stranger 文本协议、最高优先级艺术运行 context、热加载 prompt partial、本轮语言强制优先与错语言兜底、非否认式能力边界正向模板与输入通道防自我否认约束、含“恋旧” memory_gravity 的新心理状态机、带上一轮轻量 bridge 的 pre-memory 轻量 `first_unit` + 已说出口 first 去重续写的 memory-aware `second_unit` 按句文本/audio progressive 输出、main LLM 后端 streaming buffer、two-stage / sentence-queued TTS、短期/情节/反思记忆、匿名 visitor profile 与跨 session visitor 记忆召回、Visitor Identity & Session Gating V1（含结构化 match result / candidate confirmation 调试 API、保守自然确认解析、known high/medium candidate confirmation、unknown accepted face auto-provision、candidate TTL / turn expiry、主访客 track 锁、离开后 handoff、visitor memory permission 和开发者面板 auto-bind high confidence / handoff 开关）、线上 public nickname session/token 隔离、`/arts` public online placement override、`ONLINE_PUBLIC_MODE` operator-only 保护、public STT/TTS stream ownership、本地 face signature capture / quality gate / 私有向量库 / historical matching / pre-turn/manual/background face identity capture / signature deactivate、可解释/可选 embedding 召回、Memory Preview、managed memory proposal → commit、influence log / curation、Runtime Harness Trace、JSONL 端到端 latency 日志、可选 YOLO person presence detection（含轻量 person track、camera index 扫描/切换与 Browser Camera fallback）、可选火山 ASR 2.0 / TTS 2.0 双向流式 Audio Adapter、开发者面板 Audio playback queue / watchdog / barge-in / next-stream prefetch 诊断
 - 当前验证基线：`python3 -m pytest -p no:debugging`，最近一次完整结果为 `698 passed`
-- 当前交接重点：线上 `/arts` 第一版已具备 Render + Netlify 配置，但仍需在真实 Render/Netlify 域名设置 `STRANGER_PUBLIC_ALLOWED_ORIGINS`、`STRANGER_RENDER_BASE_URL`、LLM 与火山凭证后做端到端 HTTPS/WSS 验收；Render Free 使用 `/tmp/stranger/memory.db` 只适合试运行。下一步不再优先扩展 UI；voice signature 与 face/voice combined confidence 暂列 P1 optional，P0 收束为 face-only visitor identity 的现场阈值校准、数据库污染测试和 visitor memory continuity 验证；行为测试与调优继续按 `docs/testlist.md` 执行
+- 当前交接重点：线上 `/arts` 第一版已发布到 Netlify，并指向 Render Free 后端；已验证 Render `/health`、Netlify `/arts` 静态配置、public session/start、public state 和一次最小 progressive dialog；线上 public session 会在 prompt 中覆盖“当前在实体美术馆”的现场位置语境，避免远程网页访客触发 gallery 当前场景回答。Render Free 使用 `/tmp/stranger/memory.db` 只适合试运行，存在休眠冷启动和重启后记忆丢失；访问口令与 operator key 只用于当前试运行。下一步不再优先扩展 UI；voice signature 与 face/voice combined confidence 暂列 P1 optional，P0 收束为 face-only visitor identity 的现场阈值校准、数据库污染测试和 visitor memory continuity 验证；行为测试与调优继续按 `docs/testlist.md` 执行
 - 当前硬件参考方案：`docs/references/hardware.md` 与 `docs/references/system_logic.md` 已更新为单 Stranger 移动身体方向：Mac mini 随身上位机 + 1 片 ESP32-S3 + TCA9548A + 当前固件 4 路 VL53L1X ToF + 三个 TCRT5000 `A0` + BNO085 SPI IMU + 四路有刷电机驱动 + 4 个 36JP555；`firmware/stranger_esp32s3` 已有 PlatformIO 下位机固件，包含串口协议、ToF telemetry / obstacle gate、BNO085 observation telemetry、TCRT 黑/白校准、line confidence / position / error、line gate、reacquire state、四路电机测试、4WD 差速底盘开环控制和 ESP32 本地低速 line-guided roam；Dashboard Hardware tab 已能通过 BodyBridge 做键盘 / Xbox 手柄 teleop，控制前必须显式开启对应 Teleop 开关；下一阶段硬件/运动待办重点是现场校准 TCRT 阈值、ToF 稳定性、IMU 控制接入和场馆 track-guided roam 策略
 - 当前注意事项：`AGENTS.md` 与 `CLAUDE.md` 有用户侧未提交差异；除非明确要求，不应在常规任务中触碰
 
@@ -71,6 +71,21 @@
 ---
 
 ## Changelog
+
+### 2026-06-10：`/arts` 线上语境覆盖
+
+- [x] 在 `ContextBuilder` 中新增 public online placement override：仅当本轮 metadata 带 `public_online=True` 时注入，提示当前交互发生在 public `/arts` 网页而非实体美术馆
+- [x] `ExpressionEngine.plan_first_unit` 与 `InteractionLoop.run_turn` 透传本轮 metadata，使 first unit 和后续 main response 都能使用线上位置覆盖
+- [x] 保留 `prompts/stranger_runtime_context.md` 的现场 / 美术馆原始语境，不影响非 public session
+- [x] 验证：`python3 -m pytest -p no:debugging tests/unit/test_context_builder.py tests/unit/test_expression_engine.py tests/unit/test_api_public.py`（122 passed）
+
+### 2026-06-10：Render + Netlify `/arts` 线上试运行发布
+
+- [x] Render Blueprint `stranger-arts-blueprint` 已从 `Redmad-jack/Unnamed_system` 的 `main` 分支同步 `render.yaml`，创建 Web Service `stranger-api`
+- [x] Render public backend URL：`https://stranger-api-gqws.onrender.com`
+- [x] Netlify project `stranger-arts` 已设置 production `STRANGER_RENDER_BASE_URL=https://stranger-api-gqws.onrender.com`，并发布 production deploy `6a289da11bfb25faff9d21d9`
+- [x] Public `/arts` URL：`https://stranger-arts.netlify.app/arts`
+- [x] 验证：Render `/health` 返回 200；Netlify `/arts/` 与 `/arts/config.js` 返回 200 且 config 指向 Render；public `session/start`、`state` 与一次最小 `dialog/progressive` 均返回 200，progressive dialog 产生回复事件与 TTS stream id
 
 ### 2026-06-08：Netlify `/arts` + Render public API 试运行配置
 

@@ -45,6 +45,17 @@ Status values: `in_progress`, `done`
 
 | File | Agent | Status | Started |
 |------|-------|--------|---------|
+| docs/lessons.md | Codex | done | 2026-06-10 07:32 CST |
+| src/conscious_entity/expression/context_builder.py | Codex | done | 2026-06-10 07:20 CST |
+| src/conscious_entity/expression/expression_engine.py | Codex | done | 2026-06-10 07:20 CST |
+| src/conscious_entity/core/loop.py | Codex | done | 2026-06-10 07:20 CST |
+| tests/unit/test_context_builder.py | Codex | done | 2026-06-10 07:20 CST |
+| tests/unit/test_expression_engine.py | Codex | done | 2026-06-10 07:20 CST |
+| tests/unit/test_api_public.py | Codex | done | 2026-06-10 07:20 CST |
+| docs/progress.md | Codex | done | 2026-06-10 07:20 CST |
+| agents/task-registry.md | Codex | done | 2026-06-10 07:20 CST |
+| docs/progress.md | Codex | done | 2026-06-10 07:13 CST |
+| agents/task-registry.md | Codex | done | 2026-06-10 07:13 CST |
 | src/conscious_entity/interfaces/api.py | Codex | done | 2026-06-08 04:26 CST |
 | src/conscious_entity/interfaces/api_models.py | Codex | done | 2026-06-08 04:26 CST |
 | src/conscious_entity/interfaces/api_public.py | Codex | done | 2026-06-08 04:26 CST |

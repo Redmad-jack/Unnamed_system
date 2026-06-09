@@ -26,6 +26,7 @@ class _FakeStyleMapper:
 class _FakeContextBuilder:
     def __init__(self):
         self.first_unit_short_term = None
+        self.first_unit_turn_metadata = None
         self.already_spoken_first_unit = None
 
     def build(
@@ -52,8 +53,9 @@ class _FakeContextBuilder:
             raw_prompt="raw prompt",
         )
 
-    def build_first_unit(self, raw_input, state, events, style, short_term=None):
+    def build_first_unit(self, raw_input, state, events, style, short_term=None, turn_metadata=None):
         self.first_unit_short_term = short_term
+        self.first_unit_turn_metadata = turn_metadata
         return SimpleNamespace(
             system_prompt="first unit system: write plain text only",
             messages=[{"role": "user", "content": f"Current input:\n{raw_input}"}],
@@ -687,6 +689,23 @@ def test_plan_first_unit_passes_short_term_bridge_to_context_builder():
     engine.plan_first_unit("你是谁？", EntityState(confusion=0.55), [], short_term=short_term)
 
     assert engine._context_builder.first_unit_short_term is short_term
+
+
+def test_plan_first_unit_passes_turn_metadata_to_context_builder():
+    engine, _ = _build_engine(
+        ClaudeCompletion(text="Hm.", stop_reason="end_turn"),
+        vocal_marker="thinking",
+    )
+    metadata = {"public_online": True, "source": "public_dialog_progressive"}
+
+    engine.plan_first_unit(
+        "What are you doing?",
+        EntityState(confusion=0.55),
+        [],
+        turn_metadata=metadata,
+    )
+
+    assert engine._context_builder.first_unit_turn_metadata is metadata
 
 
 def test_generate_passes_already_spoken_first_unit_to_main_context():
