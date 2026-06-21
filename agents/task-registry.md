@@ -45,6 +45,19 @@ Status values: `in_progress`, `done`
 
 | File | Agent | Status | Started |
 |------|-------|--------|---------|
+| src/conscious_entity/interfaces/api_public.py | Codex | done | 2026-06-22 05:07 CST |
+| src/conscious_entity/interfaces/api_models.py | Codex | done | 2026-06-22 05:07 CST |
+| web/arts/index.html | Codex | done | 2026-06-22 05:07 CST |
+| web/arts/app.js | Codex | done | 2026-06-22 05:07 CST |
+| web/arts/arts.css | Codex | done | 2026-06-22 05:07 CST |
+| tests/unit/test_api_public.py | Codex | done | 2026-06-22 05:07 CST |
+| .env.example | Codex | done | 2026-06-22 05:07 CST |
+| render.yaml | Codex | done | 2026-06-22 05:07 CST |
+| README.md | Codex | done | 2026-06-22 05:07 CST |
+| docs/BACKEND_STRUCTURE.md | Codex | done | 2026-06-22 05:07 CST |
+| docs/TECH_STACK.md | Codex | done | 2026-06-22 05:07 CST |
+| docs/progress.md | Codex | done | 2026-06-22 05:07 CST |
+| agents/task-registry.md | Codex | done | 2026-06-22 05:07 CST |
 | docs/lessons.md | Codex | done | 2026-06-10 07:32 CST |
 | src/conscious_entity/expression/context_builder.py | Codex | done | 2026-06-10 07:20 CST |
 | src/conscious_entity/expression/expression_engine.py | Codex | done | 2026-06-10 07:20 CST |

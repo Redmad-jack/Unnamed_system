@@ -282,7 +282,7 @@ ENTITY_EMBEDDING_MODE=disabled
 ENTITY_AUDIO_PROVIDER=volcengine
 ENTITY_AUDIO_ENABLED=1
 ONLINE_PUBLIC_MODE=1
-STRANGER_PUBLIC_ACCESS_CODE=your_shared_access_code
+STRANGER_PUBLIC_TOKEN_SECRET=your_session_token_secret
 STRANGER_PUBLIC_ALLOWED_ORIGINS=https://your-netlify-site.netlify.app
 OPERATOR_API_KEY=your_operator_secret
 ```

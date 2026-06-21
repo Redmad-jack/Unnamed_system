@@ -9,7 +9,6 @@ import json
 import os
 import time
 import uuid
-from collections import defaultdict, deque
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -46,8 +45,6 @@ public_router = APIRouter(prefix="/api/v1/public")
 
 DEFAULT_SESSION_TTL_SECONDS = 60 * 60 * 6
 DEFAULT_TEXT_LIMIT = 900
-DEFAULT_TURNS_PER_MINUTE = 12
-DEFAULT_STT_CONNECTIONS_PER_MINUTE = 6
 
 
 @dataclass
@@ -76,16 +73,8 @@ class PublicSessionManager:
         self._sessions: dict[str, PublicSessionHandle] = {}
         self._lock = asyncio.Lock()
         self._session_ttl_seconds = _env_int("STRANGER_PUBLIC_SESSION_TTL_SECONDS", DEFAULT_SESSION_TTL_SECONDS)
-        self._turn_limiter = InMemoryRateLimiter(_env_int("STRANGER_PUBLIC_TURN_LIMIT_PER_MINUTE", DEFAULT_TURNS_PER_MINUTE), 60)
-        self._stt_limiter = InMemoryRateLimiter(_env_int("STRANGER_PUBLIC_STT_CONNECTIONS_PER_MINUTE", DEFAULT_STT_CONNECTIONS_PER_MINUTE), 60)
 
     async def start(self, request: Request, body: PublicSessionStartRequest) -> PublicSessionHandle:
-        access_code = os.getenv("STRANGER_PUBLIC_ACCESS_CODE")
-        if not access_code:
-            raise HTTPException(status_code=503, detail="public access code is not configured")
-        if not hmac.compare_digest(str(body.access_code or ""), access_code):
-            raise HTTPException(status_code=403, detail="invalid access code")
-
         nickname = _normalize_nickname(body.nickname)
         visitor_id = _visitor_id_for_nickname(nickname)
         session_id = f"online-{uuid.uuid4().hex}"
@@ -126,13 +115,6 @@ class PublicSessionManager:
         except HTTPException:
             await websocket.close(code=1008, reason="session no longer exists")
             raise WebSocketDisconnect(code=1008)
-
-    async def consume_turn(self, key: str) -> None:
-        if not self._turn_limiter.consume(key):
-            raise HTTPException(status_code=429, detail="turn rate limit exceeded")
-
-    async def consume_stt(self, key: str) -> bool:
-        return self._stt_limiter.consume(key)
 
     async def stream_allowed(self, request: Request, stream_id: str) -> PublicSessionHandle:
         handle = await self.from_request(request)
@@ -235,24 +217,6 @@ class PublicSessionManager:
             handle.close()
 
 
-class InMemoryRateLimiter:
-    def __init__(self, limit: int, window_seconds: int) -> None:
-        self.limit = max(1, int(limit))
-        self.window_seconds = max(1, int(window_seconds))
-        self._events: dict[str, deque[float]] = defaultdict(deque)
-
-    def consume(self, key: str) -> bool:
-        now = time.time()
-        events = self._events[key]
-        cutoff = now - self.window_seconds
-        while events and events[0] < cutoff:
-            events.popleft()
-        if len(events) >= self.limit:
-            return False
-        events.append(now)
-        return True
-
-
 @public_router.post("/session/start")
 async def public_session_start(body: PublicSessionStartRequest, request: Request):
     _assert_request_origin_allowed(request)
@@ -287,7 +251,6 @@ async def public_dialog_progressive(body: PublicDialogRequest, request: Request)
         raise HTTPException(status_code=400, detail="text is required")
     if len(text) > text_limit:
         raise HTTPException(status_code=413, detail="text is too long")
-    await manager.consume_turn(f"{_client_host(request)}:{handle.session_id}")
     input_mode = "voice_transcript" if body.input_mode == "voice_transcript" else "text"
 
     async def stream():
@@ -311,9 +274,6 @@ async def public_audio_stt_stream(websocket: WebSocket):
         return
     manager = _public_session_manager(websocket.app)
     handle = await manager.from_websocket(websocket)
-    if not await manager.consume_stt(f"{websocket.client.host if websocket.client else 'unknown'}:{handle.session_id}"):
-        await websocket.close(code=1008, reason="stt rate limit exceeded")
-        return
 
     await websocket.accept()
     audio_manager = _audio_manager(websocket)
@@ -583,7 +543,6 @@ def _visitor_id_for_nickname(nickname: str) -> str:
 def _token_secret() -> str:
     secret = (
         os.getenv("STRANGER_PUBLIC_TOKEN_SECRET")
-        or os.getenv("STRANGER_PUBLIC_ACCESS_CODE")
         or os.getenv("OPERATOR_API_KEY")
     )
     if not secret:
@@ -641,10 +600,6 @@ def _token_from_headers(headers) -> str | None:
     if auth and auth.lower().startswith("bearer "):
         return auth[7:].strip()
     return None
-
-
-def _client_host(request: Request) -> str:
-    return request.client.host if request.client else "unknown"
 
 
 def _ndjson(payload: dict[str, Any]) -> str:

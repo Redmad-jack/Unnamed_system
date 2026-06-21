@@ -45,9 +45,8 @@
 
     gateForm.addEventListener("submit", async (event) => {
       event.preventDefault();
-      const accessCode = byId("arts-access-code").value.trim();
       const nickname = byId("arts-nickname").value.trim();
-      await startSession(accessCode, nickname);
+      await startSession(nickname);
     });
 
     textForm.addEventListener("submit", async (event) => {
@@ -68,8 +67,8 @@
     });
   }
 
-  async function startSession(accessCode, nickname) {
-    if (!accessCode || !nickname) return;
+  async function startSession(nickname) {
+    if (!nickname) return;
     setBusy(true);
     setStatus("opening");
     try {
@@ -77,7 +76,6 @@
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          access_code: accessCode,
           nickname,
         }),
       });

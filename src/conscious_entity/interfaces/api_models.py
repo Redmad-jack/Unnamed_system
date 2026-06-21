@@ -10,7 +10,6 @@ class DialogRequest(BaseModel):
 
 
 class PublicSessionStartRequest(BaseModel):
-    access_code: str
     nickname: str
 
 

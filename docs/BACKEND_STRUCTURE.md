@@ -167,7 +167,7 @@ CREATE TABLE visitor_profiles (
 );
 ```
 
-**说明：** 这是开发者/展陈路由用的匿名访客注册表，不是观众账户系统；不包含密码或登录态。线上 `/arts` public mode 也复用该表：共享访问口令通过后，昵称会确定性映射为 `public-*` visitor id，并为浏览器会话创建独立 `online-*` session；同昵称可被冒用，不代表真实身份认证。当前 `metadata.identity` 已预留识别结构：`schema_version`、face / voice signature reference、latest match summary、confirmation state，以及新访客自动建档审计字段 `auto_provisioned`、`provisioned_source`、`initial_capture`。signature 只保存安全 reference、质量摘要和状态；`initial_capture` 只保存 redacted quality summary / capture id / provider / model，不在开发者面板暴露原始人脸、原始音频或 embedding 向量。
+**说明：** 这是开发者/展陈路由用的匿名访客注册表，不是观众账户系统；不包含密码或登录态。线上 `/arts` public mode 也复用该表：昵称会确定性映射为 `public-*` visitor id，并为浏览器会话创建独立 `online-*` session；同昵称可被冒用，不代表真实身份认证。当前 `metadata.identity` 已预留识别结构：`schema_version`、face / voice signature reference、latest match summary、confirmation state，以及新访客自动建档审计字段 `auto_provisioned`、`provisioned_source`、`initial_capture`。signature 只保存安全 reference、质量摘要和状态；`initial_capture` 只保存 redacted quality summary / capture id / provider / model，不在开发者面板暴露原始人脸、原始音频或 embedding 向量。
 
 ---
 
@@ -328,7 +328,7 @@ CREATE TABLE schema_version (
 | `src/conscious_entity/interfaces/api_runtime.py` | lifespan、runtime 配置、DB helper、loop rebuild、vision/audio manager 生命周期 |
 | `src/conscious_entity/interfaces/api_routes.py` | HTTP 路由处理 |
 | `src/conscious_entity/interfaces/api_audio.py` | 可选 audio adapter 路由：STT stream、audio dialog、TTS stream |
-| `src/conscious_entity/interfaces/api_public.py` | 线上 `/arts` public API：访问口令、匿名 session、public dialog/STT/TTS |
+| `src/conscious_entity/interfaces/api_public.py` | 线上 `/arts` public API：匿名 nickname session、public dialog/STT/TTS |
 | `src/conscious_entity/interfaces/api_security.py` | `ONLINE_PUBLIC_MODE` operator-only 保护、CORS 和 Origin 校验 |
 | `src/conscious_entity/harness/` | Runtime Harness trace 类型、recorder 和进程内 ring buffer |
 | `src/conscious_entity/identity/` | Visitor Identity & Session Gating V1 + 本地 face signature：记录 encounter、intent、primary visitor、插入事件、安全开发者状态、InsightFace/ArcFace capture、私有 signature store、本地历史匹配和新访客自动建档输入 |
@@ -399,13 +399,13 @@ CREATE TABLE schema_version (
 
 | 方法 | 路径 | 说明 | 认证 |
 |---|---|---|---|
-| `POST` | `/api/v1/public/session/start` | 校验共享访问口令，接收昵称，创建/复用匿名 `visitor_profiles` 并创建独立 `online-*` session，返回 signed `session_token` | `STRANGER_PUBLIC_ACCESS_CODE` |
+| `POST` | `/api/v1/public/session/start` | 接收昵称，创建/复用匿名 `visitor_profiles` 并创建独立 `online-*` session，返回 signed `session_token` | 无邀请码；token 由 `STRANGER_PUBLIC_TOKEN_SECRET` 或 `OPERATOR_API_KEY` 签名 |
 | `GET` | `/api/v1/public/state` | 使用 `session_token` 返回当前 public session 的 `EntityState`，供 `/arts` 粒子 surface 渲染 | signed session token |
 | `POST` | `/api/v1/public/dialog/progressive` | 使用 `session_token` 在该 session 自己的 `InteractionLoop` 中执行文本或 STT final transcript 回合，返回 NDJSON progressive event 和合法 TTS stream id | signed session token |
 | `WS` | `/api/v1/public/audio/stt/stream` | 校验 Origin 和 `session_token` 后代理火山 STT；partial 只回传前端，final transcript 由前端再提交 public dialog endpoint | signed session token + allowed Origin |
 | `GET` | `/api/v1/public/audio/tts/stream/{stream_id}` | 只允许同一 session 拉取本 session 产生的 TTS stream 音频 | signed session token + stream ownership |
 
-Public API 不返回完整 prompt、memory internals、dashboard config、raw audio、face data、embedding、identity debug 或 Runtime Harness trace。它使用 in-memory TTL session manager 清理每个 public `InteractionLoop`，并对文字 turn、STT 连接和输入长度做轻量 rate limit。
+Public API 不返回完整 prompt、memory internals、dashboard config、raw audio、face data、embedding、identity debug 或 Runtime Harness trace。它使用 in-memory TTL session manager 清理每个 public `InteractionLoop`，并保留最大输入长度限制。
 
 **Latency 日志边界：**
 - `turn-latency.jsonl`、`audio-latency.jsonl`、`llm-latency.jsonl`、`presentation-latency.jsonl` 自动写入 `data/latency_logs/`，每个文件滚动保留最近 50 条。
@@ -462,7 +462,7 @@ Public API 不返回完整 prompt、memory internals、dashboard config、raw au
 **线上 public mode 安全边界：**
 - `ONLINE_PUBLIC_MODE=1` 时，除 `/health` 和 `/api/v1/public/*` 外，HTTP 与 WebSocket 路由都需要 `OPERATOR_API_KEY`；支持 Bearer token、`X-Operator-Api-Key` 或 operator query token。
 - `STRANGER_PUBLIC_ALLOWED_ORIGINS` 非空时，public HTTP request 和 public STT WebSocket 必须来自 allowlist 中的 Netlify origin。
-- 共享访问口令只用于创建 public session；后续请求使用 signed `session_token`，token secret 可由 `STRANGER_PUBLIC_TOKEN_SECRET` 单独配置。
+- 线上 `/arts` 不再要求共享访问口令；访客输入昵称即可创建 public session。后续请求使用 signed `session_token`，token secret 可由 `STRANGER_PUBLIC_TOKEN_SECRET` 单独配置，未设置时回退到 `OPERATOR_API_KEY`。
 - 线上 public mode 不公开视觉、人脸识别、声纹识别、memory curation、LLM config 修改、debug raw TTS、harness trace 或 dashboard。
 - Render Free 试运行使用 `/tmp/stranger/memory.db` 时，SQLite 数据可能随重启/重新部署丢失，不视为长期记忆持久化方案。
 
@@ -471,18 +471,18 @@ Public API 不返回完整 prompt、memory internals、dashboard config、raw au
 ## 4. 认证方式
 
 - **本地访客端：** `/visitor` / `/art` 可无认证用于本地或展场内侧呈现
-- **线上 `/arts` public 端：** 共享访问口令创建 session，之后使用 signed session token；昵称不是账号或真实身份
+- **线上 `/arts` public 端：** 昵称创建匿名 public session，之后使用 signed session token；昵称不是账号或真实身份
 - **当前开发者面板：** 本地开发用途，尚未实现认证；不得直接暴露到公网或未经隔离的局域网
 - **线上运营者 / 调试接口：** `ONLINE_PUBLIC_MODE=1` 时通过 `OPERATOR_API_KEY` 保护
 
 ```env
 OPERATOR_API_KEY=your_secret_here
 ONLINE_PUBLIC_MODE=1
-STRANGER_PUBLIC_ACCESS_CODE=shared_code_here
+STRANGER_PUBLIC_TOKEN_SECRET=session_token_secret_here
 STRANGER_PUBLIC_ALLOWED_ORIGINS=https://your-netlify-site.netlify.app
 ```
 
-公网部署时必须开启 `ONLINE_PUBLIC_MODE=1`，并设置 `OPERATOR_API_KEY`、`STRANGER_PUBLIC_ACCESS_CODE` 和 Netlify origin allowlist。不开启 public mode 的开发者 API 仍只适合本地或受控网络。
+公网部署时必须开启 `ONLINE_PUBLIC_MODE=1`，并设置 `OPERATOR_API_KEY`、`STRANGER_PUBLIC_TOKEN_SECRET` 和 Netlify origin allowlist。不开启 public mode 的开发者 API 仍只适合本地或受控网络。
 
 ---
 
@@ -492,7 +492,7 @@ STRANGER_PUBLIC_ALLOWED_ORIGINS=https://your-netlify-site.netlify.app
 |---|---|
 | 早期文本 MVP | 全部共用 `session_id="shared"`，无访客区分 |
 | 当前系统 | 开发者可创建匿名 `visitor_profiles`，系统也可在 unidentified ready session 中用 accepted unknown face 自动创建 `visitor-*` 并绑定当前 session；同一 visitor 的旧 session 可参与记忆召回；Identity & Session Gating V1 已支持结构化 match result、candidate、confirmation、运行期 auto-bind 调试开关、主访客 track 锁、离开后 handoff、pre-turn / manual / background face identity capture、known high/medium candidate、unknown auto-provision、自然确认解析、face signature deactivate 和 visitor memory permission 状态；本地 face signature capture、质量门控、私有向量库和 face historical matching 已接入 |
-| 线上 `/arts` 试运行 | 共享访问口令 + 昵称；昵称确定性映射为 `public-*` visitor id，每个浏览器访问创建独立 `online-*` session 和独立 `InteractionLoop`；不做账号、实名、face 或 voice signature 身份认证 |
+| 线上 `/arts` 试运行 | 昵称确定性映射为 `public-*` visitor id，每个浏览器访问创建独立 `online-*` session 和独立 `InteractionLoop`；不做账号、实名、face 或 voice signature 身份认证 |
 | 下一优先级 | 做 face-only 现场阈值校准、数据库污染测试和真实展场 visitor memory continuity 观察；voice signature 与 face/voice combined confidence 暂列 P1 optional |
 | 后续展览阶段 | 多人 routing / 仲裁策略仍待现场测试；当前先收束为单 primary visitor session |
 

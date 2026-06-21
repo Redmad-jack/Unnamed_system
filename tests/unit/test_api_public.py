@@ -191,19 +191,21 @@ async def _collect_streaming_response(response):
     ]
 
 
-def test_public_access_code_required_and_wrong_code_rejected(monkeypatch, tmp_path):
+def test_public_session_start_does_not_require_access_code(monkeypatch, tmp_path):
     _install_fakes(monkeypatch)
     conn, db_path = _db_file(tmp_path)
     request = _request(conn, db_path, tmp_path)
     manager = api_public.PublicSessionManager(request.app)
-    body = PublicSessionStartRequest(access_code="wrong", nickname="Visitor")
+    body = PublicSessionStartRequest(nickname="Visitor")
 
-    monkeypatch.setenv("STRANGER_PUBLIC_ACCESS_CODE", "open")
+    monkeypatch.setenv("STRANGER_PUBLIC_TOKEN_SECRET", "test-token-secret")
 
-    with pytest.raises(HTTPException) as exc:
-        asyncio.run(manager.start(request, body))
+    handle = asyncio.run(manager.start(request, body))
 
-    assert exc.value.status_code == 403
+    assert handle.nickname == "Visitor"
+    assert handle.session_id.startswith("online-")
+    assert handle.visitor_id.startswith("public-")
+    asyncio.run(manager.close_all())
     conn.close()
 
 
@@ -212,15 +214,15 @@ def test_public_nickname_identity_is_deterministic_but_sessions_are_separate(mon
     conn, db_path = _db_file(tmp_path)
     request = _request(conn, db_path, tmp_path)
     manager = api_public.PublicSessionManager(request.app)
-    monkeypatch.setenv("STRANGER_PUBLIC_ACCESS_CODE", "open")
+    monkeypatch.setenv("STRANGER_PUBLIC_TOKEN_SECRET", "test-token-secret")
 
     first = asyncio.run(manager.start(
         request,
-        PublicSessionStartRequest(access_code="open", nickname="  Alice  "),
+        PublicSessionStartRequest(nickname="  Alice  "),
     ))
     second = asyncio.run(manager.start(
         request,
-        PublicSessionStartRequest(access_code="open", nickname="alice"),
+        PublicSessionStartRequest(nickname="alice"),
     ))
 
     assert first.visitor_id == second.visitor_id
@@ -241,15 +243,15 @@ def test_public_tokens_keep_sessions_and_tts_streams_isolated(monkeypatch, tmp_p
     conn, db_path = _db_file(tmp_path)
     request = _request(conn, db_path, tmp_path)
     manager = api_public.PublicSessionManager(request.app)
-    monkeypatch.setenv("STRANGER_PUBLIC_ACCESS_CODE", "open")
+    monkeypatch.setenv("STRANGER_PUBLIC_TOKEN_SECRET", "test-token-secret")
 
     alice = asyncio.run(manager.start(
         request,
-        PublicSessionStartRequest(access_code="open", nickname="Alice"),
+        PublicSessionStartRequest(nickname="Alice"),
     ))
     bob = asyncio.run(manager.start(
         request,
-        PublicSessionStartRequest(access_code="open", nickname="Bob"),
+        PublicSessionStartRequest(nickname="Bob"),
     ))
     alice.tts_stream_ids.add("tts_alice")
 
@@ -271,11 +273,11 @@ def test_public_dialog_stream_is_session_scoped_and_redacted(monkeypatch, tmp_pa
     audio_manager = FakeAudioManager()
     request = _request(conn, db_path, tmp_path, audio_manager=audio_manager)
     manager = api_public.PublicSessionManager(request.app)
-    monkeypatch.setenv("STRANGER_PUBLIC_ACCESS_CODE", "open")
+    monkeypatch.setenv("STRANGER_PUBLIC_TOKEN_SECRET", "test-token-secret")
 
     handle = asyncio.run(manager.start(
         request,
-        PublicSessionStartRequest(access_code="open", nickname="Alice"),
+        PublicSessionStartRequest(nickname="Alice"),
     ))
     authed_request = _request(conn, db_path, tmp_path, token=handle.token, audio_manager=audio_manager)
 
@@ -325,11 +327,11 @@ def test_public_manager_does_not_close_shared_memory_connection(monkeypatch, tmp
     conn = _memory_db()
     request = _request(conn, ":memory:", tmp_path)
     manager = api_public.PublicSessionManager(request.app)
-    monkeypatch.setenv("STRANGER_PUBLIC_ACCESS_CODE", "open")
+    monkeypatch.setenv("STRANGER_PUBLIC_TOKEN_SECRET", "test-token-secret")
 
     asyncio.run(manager.start(
         request,
-        PublicSessionStartRequest(access_code="open", nickname="Alice"),
+        PublicSessionStartRequest(nickname="Alice"),
     ))
     asyncio.run(manager.close_all())
 

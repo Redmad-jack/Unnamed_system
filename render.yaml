@@ -58,8 +58,6 @@ services:
         sync: false
       - key: ENTITY_VOLCENGINE_TTS_VOICE_TYPE
         sync: false
-      - key: STRANGER_PUBLIC_ACCESS_CODE
-        sync: false
       - key: STRANGER_PUBLIC_TOKEN_SECRET
         sync: false
       - key: STRANGER_PUBLIC_ALLOWED_ORIGINS

@@ -96,7 +96,7 @@
 
 访客侧第一版 `/visitor` 仍是原生 HTML/CSS/JS，只作为非 dashboard 的临时 body-facing surface，不暴露内部规则、memory 或 prompt；声音播放只消费后端已创建的 `tts_stream_id`，不允许 visitor raw text TTS。
 
-线上公开试运行新增 `/arts` 静态前端，仍采用原生 HTML/CSS/JS，并通过 `scripts/build_netlify_arts.py` 从现有 `/art` 粒子 surface 和本地 vendor 文件生成 Netlify bundle。该页面由 Netlify 发布，构建时只写入 `STRANGER_RENDER_BASE_URL` 到 `config.js`；访问口令、session token、LLM/audio 凭证都只在 FastAPI/Render 后端处理。公开版只开放文字输入、浏览器麦克风 STT、TTS 播放和粒子状态反馈，不开放 dashboard、memory、prompt、debug trace、视觉、人脸识别或声纹识别。
+线上公开试运行新增 `/arts` 静态前端，仍采用原生 HTML/CSS/JS，并通过 `scripts/build_netlify_arts.py` 从现有 `/art` 粒子 surface 和本地 vendor 文件生成 Netlify bundle。该页面由 Netlify 发布，构建时只写入 `STRANGER_RENDER_BASE_URL` 到 `config.js`；session token、LLM/audio 凭证都只在 FastAPI/Render 后端处理。公开版只开放昵称进入、文字输入、浏览器麦克风 STT、TTS 播放和粒子状态反馈，不开放 dashboard、memory、prompt、debug trace、视觉、人脸识别或声纹识别。
 
 访客端候选方案（供后续决策参考）：
 
@@ -216,7 +216,6 @@ ENTITY_AUDIO_ALLOW_DEBUG_RAW_TTS=0
 # Optional online public mode
 ONLINE_PUBLIC_MODE=0
 # OPERATOR_API_KEY=your_operator_secret
-# STRANGER_PUBLIC_ACCESS_CODE=your_shared_access_code
 # STRANGER_PUBLIC_TOKEN_SECRET=your_session_token_secret
 # STRANGER_PUBLIC_ALLOWED_ORIGINS=https://your-netlify-site.netlify.app
 # STRANGER_RENDER_BASE_URL=https://your-render-service.onrender.com
